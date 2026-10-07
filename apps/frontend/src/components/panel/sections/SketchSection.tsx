@@ -1,21 +1,30 @@
 import React from 'react';
 import { RefreshCw } from 'lucide-react';
-import { NumberField, PairRow, Row, Section, SegmentedControl } from '../grammar';
-import { FillStyleIcon, HatchAngleGlyph, ShadingDensityIcon, SketchLevelIcon } from '../sketchIcons';
-import { HACHURE_ANGLE, SHADING_DENSITIES } from '../../../engine/model/rough';
+import { NumberField, Note, PairRow, PanelSubjectContext, Row, Section, SegmentedControl } from '../grammar';
 import {
+  CleanLookGlyph,
+  FillStyleIcon,
+  HatchAngleGlyph,
+  ShadingDensityIcon,
+  SketchLevelIcon,
+  SketchLookGlyph,
+} from '../sketchIcons';
+import { HACHURE_ANGLE, SHADING_DENSITIES, SKETCH_LEVELS } from '../../../engine/model/rough';
+import { DEFAULT_BOARD_SKETCH, resolveSketch, sketchPatch, sketchSource } from '../../../engine/model/roughMode';
+import { useBoardSketch } from '../../../engine/model/roughBoard';
+import {
+  FILL_STYLE_LABELS,
+  FILL_STYLE_NAMES,
+  FILL_STYLE_ORDER,
   SHADING_DENSITY_HINTS,
   SHADING_DENSITY_LABELS,
-  FILL_STYLE_LABELS,
   SKETCH_LEVEL_LABELS,
+  SKETCH_LEVEL_NAMES,
+  SKETCH_LOOK_LABELS,
 } from '../../../engine/model/shadingLabels';
-import type {
-  Appearance,
-  FillStyle,
-  ShadingDensity,
-  SketchLevel,
-} from '../../../engine/model/schema';
+import type { Appearance, FillStyle, ShadingDensity, SketchLevel } from '../../../engine/model/schema';
 import type { Shared } from '../../../engine/model/selection';
+import './sketch.css';
 
 interface SketchSectionProps {
   capabilities: { supportsFill?: boolean };
@@ -28,44 +37,17 @@ interface SketchSectionProps {
   setAppearance: (patch: Partial<Appearance>) => void;
 }
 
-const SKETCH_LABELS: Record<SketchLevel, string> = {
-  light: 'Light',
-  medium: 'Medium',
-  heavy: 'Heavy',
-};
-
 /**
- * Short forms, for the header.
+ * How the marks are made: crisp or by hand, how rough, and how the inside is
+ * shaded.
  *
- * "Heavy · Cross-hatch" is wider than the badge, so it truncated to
- * "Heavy · Cross-..." — a label that gives up halfway is worse than a shorter
- * one that finishes. These are the names as a person would say them in passing;
- * the full ones are on the tiles, where there is room.
- */
-const FILL_LABELS: Record<Exclude<FillStyle, 'solid'>, string> = {
-  hachure: 'Hatch',
-  crosshatch: 'Cross',
-  zigzag: 'Scribble',
-  dots: 'Stipple',
-};
-
-/**
- * How the marks are made, as its own section.
+ * Its own section rather than part of Stroke, because a sketch decides how the
+ * outline *and* the fill are drawn, and the shading acts on the interior.
  *
- * ## Why it left Stroke
- *
- * These controls lived inside the Stroke accordion, on the reasoning that a
- * sketch is drawn with a pen. But `sketch` is not a property of the stroke: it
- * decides how the **outline and the fill both** are drawn, and the shading
- * controls act on the *interior* — the one part of a shape the Stroke section
- * has nothing else to say about. So that accordion held two subjects, and the
- * one whose name was on the header was the smaller of them.
- *
- * The split is also what let the shading grow. Density and angle inside Stroke
- * would have made it a four-topic section; here they sit under the thing they
- * qualify, and the badge reports the whole look without the section being
- * opened — which for something you set once and then live with is most of what
- * you want from it.
+ * The look is the object's own answer to the board's sketch mode. With the
+ * board crisp, Sketch pins a level on this object. With the board sketched,
+ * the object follows it until it is pinned to another level or set to Clean,
+ * and the section says which of those it is doing, with a way back.
  */
 export const SketchSection: React.FC<SketchSectionProps> = ({
   capabilities,
@@ -75,59 +57,86 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
   sharedPaint,
   setAppearance,
 }) => {
+  const boardLevel = useBoardSketch();
+  // A pencil stroke follows only its own choice (see `BOARD_SKETCH_TYPES`).
+  const subject = React.useContext(PanelSubjectContext);
+  const board = subject === 'path' ? null : boardLevel;
   if (!sketchable || !appearance) return null;
 
-  const level = appearance.sketch;
+  const level = resolveSketch(appearance, board);
   const style: FillStyle = appearance.fillStyle ?? 'solid';
+  const shades = Boolean(capabilities.supportsFill) && allClosed;
 
-  /** The current look, in the header: "Medium · Hachure". */
+  const look = sharedPaint((a) => (resolveSketch(a, board) ? 'sketch' : 'clean'));
+  const roughness = sharedPaint((a) => resolveSketch(a, board) ?? 'off');
+  const overridden = board ? sharedPaint((a) => sketchSource(a, board) !== 'board') : null;
+  const anyOverridden = Boolean(overridden && (overridden.mixed || overridden.value));
+
   const badge = !level
     ? undefined
-    : style === 'solid'
-      ? SKETCH_LABELS[level]
-      : `${SKETCH_LABELS[level]} · ${FILL_LABELS[style]}`;
+    : style === 'solid' || !shades
+      ? SKETCH_LEVEL_NAMES[level]
+      : `${SKETCH_LEVEL_NAMES[level]} · ${FILL_STYLE_NAMES[style]}`;
 
   return (
-    <Section id="style" title="Style" meta={badge}>
-      <Row stack label="Sketch" hint="Draw this by hand. The result is stable and never re-randomises.">
-          {(() => {
-            const sketch = sharedPaint((a) => a.sketch ?? 'off');
-            return (
-              <SegmentedControl
-                ariaLabel="Hand-drawn sketch"
-                fill
-                mixed={sketch.mixed}
-                value={String(sketch.value ?? 'off')}
-                onChange={(v) =>
-                  setAppearance({ sketch: v === 'off' ? undefined : (v as SketchLevel) })
-                }
-                // Named from `shadingLabels`, which the rail's popover also
-                // reads. The two used to hold a hand copy each.
-                segments={(['off', 'light', 'medium', 'heavy'] as const).map((level) => ({
-                  value: level,
-                  label: SKETCH_LEVEL_LABELS[level],
-                  icon: <SketchLevelIcon level={level} />,
-                }))}
-              />
+    <Section id="style" title="Sketch" meta={badge}>
+      <Row label="Look" hint="Draw this by hand. The drawing is seeded, so it never re-randomises.">
+        <SegmentedControl
+          ariaLabel="Look"
+          fill
+          mixed={look.mixed}
+          value={String(look.value ?? 'clean')}
+          onChange={(v) => {
+            // Choosing the look it already has changes nothing: a pinned
+            // level stays pinned.
+            if (!look.mixed && v === look.value) return;
+            setAppearance(
+              v === 'clean'
+                ? sketchPatch('clean', board)
+                : sketchPatch(board ? 'follow' : DEFAULT_BOARD_SKETCH, board)
             );
-          })()}
+          }}
+          segments={[
+            { value: 'clean', label: SKETCH_LOOK_LABELS.clean, icon: <CleanLookGlyph /> },
+            { value: 'sketch', label: SKETCH_LOOK_LABELS.sketch, icon: <SketchLookGlyph /> },
+          ]}
+        />
       </Row>
 
-      {/*
-        The section is two decisions, and the rule says so.
+      {board && (
+        <Note>
+          {anyOverridden ? (
+            <>
+              Set apart from the board&rsquo;s sketch mode.{' '}
+              <button type="button" className="sketch-follow" onClick={() => setAppearance(sketchPatch('follow', board))}>
+                Follow the board
+              </button>
+            </>
+          ) : (
+            <>Following the board&rsquo;s sketch mode ({SKETCH_LEVEL_NAMES[board]}).</>
+          )}
+        </Note>
+      )}
 
-        Above it: how the marks are made — the one choice that changes whether
-        this is a drawing at all. Below it: what happens to the interior, which
-        is a different question and only exists once the first has an answer.
-        Four flat rows read as four unrelated settings; a rule costs a pixel and
-        makes the dependency legible.
-      */}
-      
-      {capabilities.supportsFill && level && allClosed && (
-        /* Stacked, because five tiles do not fit the 84px control column — they
-           wrapped three-and-two, which reads as a mistake next to the four
-           above them that happen to fit. */
-        <Row stack label="Shading" hint="How the inside is filled: flat colour, or pen strokes laid across it.">
+      {level && (
+        <Row label="Roughness" hint="How loose the hand is. Pins this object to the level you pick.">
+          <SegmentedControl
+            ariaLabel="Roughness"
+            fill
+            mixed={roughness.mixed}
+            value={String(roughness.value ?? level)}
+            onChange={(v) => setAppearance(sketchPatch(v as SketchLevel, board))}
+            segments={SKETCH_LEVELS.map((id) => ({
+              value: id,
+              label: SKETCH_LEVEL_LABELS[id],
+              icon: <SketchLevelIcon level={id} />,
+            }))}
+          />
+        </Row>
+      )}
+
+      {level && shades && (
+        <Row stack label="Fill" hint="How the inside is filled: flat colour, or pen marks laid across it.">
           {(() => {
             const picked = sharedPaint((a) => a.fillStyle ?? 'solid');
             return (
@@ -136,13 +145,11 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
                 fill
                 mixed={picked.mixed}
                 value={String(picked.value ?? 'solid')}
-                onChange={(v) =>
-                  setAppearance({ fillStyle: v === 'solid' ? undefined : (v as FillStyle) })
-                }
-                segments={(['solid', 'hachure', 'crosshatch', 'zigzag', 'dots'] as const).map((style) => ({
-                  value: style,
-                  label: FILL_STYLE_LABELS[style],
-                  icon: <FillStyleIcon style={style} />,
+                onChange={(v) => setAppearance({ fillStyle: v === 'solid' ? undefined : (v as FillStyle) })}
+                segments={FILL_STYLE_ORDER.map((id) => ({
+                  value: id,
+                  label: FILL_STYLE_LABELS[id],
+                  icon: <FillStyleIcon style={id} />,
                 }))}
               />
             );
@@ -150,17 +157,8 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
         </Row>
       )}
 
-      {/*
-        Density and angle, on one line.
-
-        They are the two dimensions of one thing — how the shading reads as
-        tone — and they were two labelled rows, so the panel spent 168px of
-        label column saying "Density" and "Angle" beside controls that show
-        what they are. Read together they are also more useful: a dense field
-        at 41° and a light one at 90° are the two decisions you make about a
-        hatch, and you make them against each other.
-      */}
-      {capabilities.supportsFill && level && allClosed && style !== 'solid' && (
+      {/* Density and angle together: the two dimensions of how shading reads as tone. */}
+      {level && shades && style !== 'solid' && (
         <PairRow>
           {(() => {
             const density = sharedPaint((a) => a.shadingDensity ?? 'medium');
@@ -188,15 +186,6 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
             return (
               <NumberField
                 label="Shading angle"
-                /*
-                  The glyph *is* the value.
-
-                  An angle is the one number in this panel you cannot picture
-                  from the digits — 41° against 90° is a real difference in how
-                  a shape reads, and neither number says which way the strokes
-                  run. Turning the mark to match means the field answers its own
-                  question, and it costs one `rotate`.
-                */
                 glyph={<HatchAngleGlyph degrees={angle.mixed ? 0 : value} />}
                 unit="deg"
                 value={angle.mixed ? 'mixed' : value}
@@ -211,43 +200,27 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
       )}
 
       {/*
-        Draw it again.
-
-        The sketch is seeded from the node id, which is what stops the outline
-        crawling on every re-render — and it also means one shape has exactly
-        one drawing for its whole life. That is right until the drawing is bad:
-        a wobble that clips a corner, an overshoot that reads as a mistake
-        rather than as a hand. The remedy used to be deleting the object and
-        making a new one, because a new id is the only new seed.
-
-        A variant number mixed into the seed gives a different drawing without
-        giving up any of the stability — see `Appearance.sketchSeed`. Every
-        value is as fixed as the original was; there is simply more than one.
-
-        It sits with the shading rather than up with the level,
-        because it is a *verb* and everything above it is a setting. And it is
-        offered whenever there is a sketch, shaded or not: the outline is drawn
-        by hand either way, and the outline is usually what you want redrawn.
+        Draw it again: a variant number mixed into the seed gives a different
+        drawing at the same settings, every one as stable as the first. A verb,
+        so it sits below the settings; offered whenever the object is sketched.
       */}
       {level && (
         <button
-            type="button"
-            className="sketch-redraw"
-            onClick={() => {
-              const current = sharedPaint((a) => a.sketchSeed ?? 0);
-              // Incremented rather than randomised: the number lands in the
-              // document, and a small counter is a thing somebody reading the
-              // JSON can understand. Pressing again keeps walking forward, so
-              // "the one before last" is reachable by going round.
-              const next = (typeof current.value === 'number' ? current.value : 0) + 1;
-              setAppearance({ sketchSeed: next });
-            }}
-            data-tooltip="A different hand, same settings"
-            data-tooltip-pos="left"
-          >
-            <RefreshCw size={13} aria-hidden="true" />
-            Redraw
-          </button>
+          type="button"
+          className="sketch-redraw"
+          onClick={() => {
+            const current = sharedPaint((a) => a.sketchSeed ?? 0);
+            // A counter rather than a random number: it lands in the document,
+            // and walking forward keeps every earlier drawing reachable.
+            const next = (typeof current.value === 'number' ? current.value : 0) + 1;
+            setAppearance({ sketchSeed: next });
+          }}
+          data-tooltip="A different hand, same settings"
+          data-tooltip-pos="left"
+        >
+          <RefreshCw size={13} aria-hidden="true" />
+          Redraw
+        </button>
       )}
     </Section>
   );

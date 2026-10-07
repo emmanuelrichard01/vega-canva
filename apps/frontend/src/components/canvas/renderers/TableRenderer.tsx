@@ -10,6 +10,7 @@ import { drawnHeight } from '../../../engine/table/tableApply';
 import { effectiveSpec, subscribeViews, viewsVersion } from '../../../engine/table/tableView';
 import { subscribeNothing, subscribeVolatile, volatileEpoch } from '../../../engine/table/tableVolatile';
 import { seedFor } from '../../../engine/model/rough';
+import { useSketchLevel } from '../../../engine/model/roughBoard';
 
 /**
  * A table on the board.
@@ -71,7 +72,7 @@ export const TableRenderer: React.FC<{ node: TableNode }> = ({ node }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [spec, node.width, height, crossVersion, minute]
   );
-  const sketch = node.appearance?.sketch;
+  const sketch = useSketchLevel(node.appearance);
   const seed = React.useMemo(() => seedFor(node.id, node.appearance?.sketchSeed), [node.id, node.appearance?.sketchSeed]);
   const sketchPaths = React.useMemo(
     () => (sketch && typeof Path2D !== 'undefined' ? buildSketch(layout, seed, sketch) : null),

@@ -1,0 +1,42 @@
+/* The frame rail's page-colour swatch and theme row. */
+
+.frame-rail-swatch,
+.frame-rail-theme {
+  display: block;
+  width: 17px;
+  height: 17px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+}
+
+/* No background: a struck-through square, the convention for "none". */
+.frame-rail-swatch[data-none],
+.frame-rail-theme[data-none] {
+  background: linear-gradient(
+    to top right,
+    transparent calc(50% - 0.75px),
+    var(--text-tertiary) calc(50% - 0.75px),
+    var(--text-tertiary) calc(50% + 0.75px),
+    transparent calc(50% + 0.75px)
+  );
+}
+
+.frame-rail-themes {
+  display: grid;
+  grid-template-columns: repeat(5, 28px);
+  gap: 4px;
+}
+.frame-rail-theme {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.frame-rail-theme[aria-checked='true'] {
+  box-shadow: 0 0 0 2px var(--surface-elevated), 0 0 0 3.5px var(--text-primary);
+}
+.frame-rail-theme:focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color);
+  outline-offset: 3px;
+}

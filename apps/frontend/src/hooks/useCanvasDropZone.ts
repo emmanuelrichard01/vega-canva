@@ -11,6 +11,15 @@ import { cellAtPoint, freeCellsFrom, gridAtPoint, placeImageInCell } from '../en
 import { importSvg } from '../engine/clipboard/svgImport';
 import { uploadMedia } from '../engine/media/upload';
 import { layoutDroppedImages, type DropRect } from '../engine/media/dropLayout';
+import { insertImageFromUrl } from '../engine/media/imageFromUrl';
+import { createLink } from '../engine/link/linkApply';
+import { canEditObjects } from '../engine/model/permissions';
+
+/** A drop aimed at a text field belongs to the field: an address dropped there is text. */
+const intoTextField = (target: EventTarget | null): boolean => {
+  const el = target as HTMLElement | null;
+  return Boolean(el?.closest?.('input, textarea, [contenteditable=""], [contenteditable="true"]'));
+};
 import { useStore } from './useStore';
 
 const IMAGE_PLACE_MAX = 800;
@@ -307,7 +316,10 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
 
   useEffect(() => {
     const onDragOver = (e: DragEvent) => {
-      if (!e.dataTransfer?.types?.includes('Files')) return;
+      const types = e.dataTransfer?.types;
+      if (!types?.includes('Files') && !types?.includes('text/uri-list')) return;
+      if (!canEditObjects()) return;
+      if (!types.includes('Files') && intoTextField(e.target)) return;
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
       setDropActive(true);
@@ -320,13 +332,35 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
     const onDrop = (e: DragEvent) => {
       const files = Array.from(e.dataTransfer?.files ?? []);
       setDropActive(false);
-      if (files.length === 0) return;
-      e.preventDefault();
       const stage = document.querySelector('.konvajs-content')?.getBoundingClientRect();
       const at = stage
         ? cameraSystem.screenToWorld(e.clientX - stage.left, e.clientY - stage.top)
         : undefined;
-      void placeFiles(files, at);
+      if (files.length > 0) {
+        e.preventDefault();
+        void placeFiles(files, at);
+        return;
+      }
+      /**
+       * A picture dragged from another tab arrives as its address, not as a
+       * file. It is fetched by the server's preview service (never by this
+       * browser) and stored as room media; an address that turns out to be a
+       * page lands as a link card instead, which is what was dropped.
+       */
+      const uri = e.dataTransfer?.getData('text/uri-list')?.split(/\r?\n/).find((l) => l && !l.startsWith('#'));
+      if (!uri || !canEditObjects() || intoTextField(e.target)) return;
+      e.preventDefault();
+      void (async () => {
+        const result = await insertImageFromUrl(uri, at);
+        if (result.ok) {
+          setSelectedIds([result.id]);
+        } else if (result.kind === 'not-image' && at) {
+          const id = createLink(uri, at);
+          if (id) setSelectedIds([id]);
+        } else if (result.kind !== 'read-only') {
+          notify({ tone: 'warning', message: result.reason });
+        }
+      })();
     };
 
     window.addEventListener('dragover', onDragOver);
@@ -337,7 +371,7 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
       window.removeEventListener('dragleave', onDragLeave);
       window.removeEventListener('drop', onDrop);
     };
-  }, [placeFiles]);
+  }, [placeFiles, setSelectedIds]);
 
   return {
     dropActive,

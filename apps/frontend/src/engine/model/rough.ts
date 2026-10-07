@@ -43,7 +43,6 @@
 
 import type { Point } from './schema';
 
-/** The three hands. */
 /**
  * What is in the pencil.
  *
@@ -54,6 +53,10 @@ import type { Point } from './schema';
  */
 export type PencilNib = 'smooth' | SketchLevel;
 
+/**
+ * The three hands, named Neat, Sketchy and Wild in the interface. The stored
+ * values keep their original names so every existing document reads the same.
+ */
 export type SketchLevel = 'light' | 'medium' | 'heavy';
 export const SKETCH_LEVELS: SketchLevel[] = ['light', 'medium', 'heavy'];
 
@@ -1186,6 +1189,18 @@ function zigzagPass(
  * (`M x y l 0.01 0` with round caps) so rendering across zoom frames is instant
  * in GPU Canvas2D rather than parsing thousands of heavy SVG arcs.
  */
+/** How far inside the edge a stipple dot's centre must sit: about its own radius. */
+const DOT_MARGIN = 1.5;
+
+/** Whether `(x, y)` lies inside the rings with at least `margin` to spare along its row. */
+function insideSpan(rings: readonly (readonly Point[])[], x: number, y: number, margin: number): boolean {
+  const crossings = scanCrossings(rings, y);
+  for (let i = 0; i + 1 < crossings.length; i += 2) {
+    if (x >= crossings[i] + margin && x <= crossings[i + 1] - margin) return true;
+  }
+  return false;
+}
+
 function dotsPass(
   input: Rings,
   options: { seed: number; gap: number; angle: number; level?: SketchLevel }
@@ -1244,7 +1259,9 @@ function dotsPass(
    * which, for a shape big enough to reach it, is a shape where nobody can
    * distinguish the two densities anyway.
    */
-  const nib = level === 'heavy' ? 1.35 : level === 'light' ? 2 : 1.65;
+  // The hand nudges the spacing only slightly: tone is the density control's
+  // job, and a wide spread here left a neat stipple with a handful of dots.
+  const nib = level === 'heavy' ? 1.5 : level === 'light' ? 1.8 : 1.65;
   const want = gap * nib;
   const area = Math.max(1, (maxX - minX) * (maxY - minY));
   /**
@@ -1285,7 +1302,11 @@ function dotsPass(
       for (let x = xStart; x < xEnd; x += step) {
         const jx = jitter(step * 0.34, rand);
         const jy = jitter(step * 0.34, rand);
-        const p = back(x + jx, y + jy);
+        // The jitter can carry a dot across a sloped edge or into a hole, so a
+        // dot that lands outside goes back to its place on the row, which is
+        // inside by construction. The jitter is still drawn either way, so
+        // every other dot keeps its position.
+        const p = insideSpan(rot, x + jx, y + jy, DOT_MARGIN) ? back(x + jx, y + jy) : back(x, y);
         paths.push(`M ${r(p.x)} ${r(p.y)} l 0.01 0`);
       }
     }
@@ -1354,6 +1375,34 @@ export const FILL_STYLES: FillStyle[] = ['solid', 'hachure', 'crosshatch', 'zigz
  */
 export function fillsInterior(style: FillStyle | undefined): boolean {
   return (style ?? 'solid') === 'solid';
+}
+
+/**
+ * The pen a sketched outline is drawn with, from the stroke weight.
+ *
+ * Floored, because a hairline sketch reads as a rendering artefact rather than
+ * as a drawing. Shared by the canvas and the exporter so the two draw the same
+ * weight.
+ */
+export function sketchNib(strokeWidth: number | undefined): number {
+  return Math.max(1.2, strokeWidth || 2);
+}
+
+/**
+ * The width pen shading is drawn at.
+ *
+ * Stipple is a dot made by a round cap, so its width is the dot's size and
+ * grows with the hand; the line styles take a lighter pen than the outline so
+ * the shading reads as tone rather than as more outline.
+ */
+export function shadingStrokeWidth(style: FillStyle | undefined, level: SketchLevel | undefined, nib: number): number {
+  if (style === 'dots') return level === 'heavy' ? 3.6 : level === 'light' ? 2.2 : 2.8;
+  return Math.max(0.8, nib * 0.7);
+}
+
+/** The width interior detail (a cylinder's rim, a rack's bays) is drawn at. */
+export function featureStrokeWidth(nib: number): number {
+  return Math.max(0.75, nib * 0.78);
 }
 
 /**

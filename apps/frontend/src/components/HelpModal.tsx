@@ -7,7 +7,9 @@ import { LESSONS } from '../engine/learn/lessons';
 import { learnState } from '../engine/learn/learnState';
 import { walkthroughState } from '../engine/learn/walkthroughState';
 import { tourState } from '../engine/learn/tourState';
-import { TOUR } from '../engine/learn/tour';
+import { stepsFor } from '../engine/learn/tour';
+import { checklistState } from '../engine/learn/tourChecklist';
+import { useRoomPermissions } from '../hooks/useRoomPermissions';
 import { useStore } from '../hooks/useStore';
 import {
   HELP_PAGES,
@@ -354,16 +356,7 @@ const HelpCentre: React.FC<{ initialPage: HelpPageId }> = ({ initialPage }) => {
               </span>
             </span>
           </div>
-          <button
-            type="button"
-            className="dlg-btn dlg-btn--outline hc__tour"
-            onClick={() => {
-              close();
-              tourState.start();
-            }}
-          >
-            Take the {TOUR.length}-step tour
-          </button>
+          <TourButton className="hc__tour" />
         </div>
       </aside>
 
@@ -429,6 +422,19 @@ const HelpCentre: React.FC<{ initialPage: HelpPageId }> = ({ initialPage }) => {
                 Right-click anything to see what it can do. The tour points at each part of the screen in
                 turn, and you can stop it at any step.
               </p>
+              <div className="hc-actions">
+                <TourButton />
+                <button
+                  type="button"
+                  className="dlg-btn dlg-btn--outline"
+                  onClick={() => {
+                    close();
+                    checklistState.reopen();
+                  }}
+                >
+                  Show the getting-started checklist
+                </button>
+              </div>
               <Columns>
                 {groupsOn('start').map((g) => (
                   <ShortcutList key={g.id} group={g} q="" flash={flash} />
@@ -511,6 +517,27 @@ const HelpCentre: React.FC<{ initialPage: HelpPageId }> = ({ initialPage }) => {
         </div>
       </div>
     </div>
+  );
+};
+
+/** Starts the tour, or picks it up where it was left; the label says which. */
+const TourButton: React.FC<{ className?: string }> = ({ className }) => {
+  const { close } = useDialog();
+  const { role } = useRoomPermissions();
+  const tour = useSyncExternalStore(tourState.subscribe, tourState.getSnapshot, tourState.getSnapshot);
+  const resume = tour.resumeAt !== null && tourState.canResume();
+  return (
+    <button
+      type="button"
+      className={`dlg-btn dlg-btn--outline ${className ?? ''}`}
+      onClick={() => {
+        close();
+        if (resume) tourState.start();
+        else tourState.restart();
+      }}
+    >
+      {resume ? 'Resume the tour' : `Take the ${stepsFor(role).length}-step tour`}
+    </button>
   );
 };
 

@@ -1,18 +1,30 @@
 import React, { useEffect, useRef } from 'react';
 import { Droplet } from 'lucide-react';
 import { applyNodePatches, undoManager } from '../../../engine/document';
-import { HACHURE_ANGLE, SHADING_DENSITIES } from '../../../engine/model/rough';
+import { HACHURE_ANGLE, SHADING_DENSITIES, SKETCH_LEVELS } from '../../../engine/model/rough';
+import { boardSketchFor, lookPatch, resolveSketch, sketchPatch, sketchSource } from '../../../engine/model/roughMode';
+import { useBoardSketch } from '../../../engine/model/roughBoard';
 import {
   FILL_STYLE_LABELS,
+  FILL_STYLE_ORDER,
   SHADING_DENSITY_HINTS,
   SHADING_DENSITY_LABELS,
   SKETCH_LEVEL_LABELS,
+  SKETCH_LEVEL_NAMES,
+  SKETCH_LOOK_LABELS,
 } from '../../../engine/model/shadingLabels';
 import { cornerRadiiOf } from '../../../engine/model/cornerRadii';
 import { sharedValue } from '../../../engine/model/selection';
 import { DEFAULT_INK, type AnyNode, type Appearance, type SketchLevel } from '../../../engine/model/schema';
 import { ColorPickerPopover } from '../../ui/ColorPickerPopover';
-import { FillStyleIcon, ShadingDensityIcon, SketchLevelIcon } from '../../panel/sketchIcons';
+import {
+  CleanLookGlyph,
+  FillStyleIcon,
+  ShadingDensityIcon,
+  SketchLevelIcon,
+  SketchLookGlyph,
+  SketchStateIcon,
+} from '../../panel/sketchIcons';
 import { StrokeWeightIcon } from '../../panel/strokeWeightIcon';
 import { PopoverSlider } from '../RailBase';
 import { RailPopover } from '../RailPopover';
@@ -295,123 +307,199 @@ export const CornerRadiusControl: React.FC<{
 
 // ------------------------------------------------------------------ sketch
 
-const SKETCH_LEVELS = ['off', 'light', 'medium', 'heavy'] as const;
-const FILL_STYLES = ['solid', 'hachure', 'crosshatch', 'zigzag', 'dots'] as const;
+/** What a tile in the sketch popover asks for. */
+type SketchChoiceVerb = 'clean' | 'sketch' | 'follow' | SketchLevel;
+
+/**
+ * The patch one choice makes on one object, given the board as it reaches that
+ * object, or null when the object is already there. "Follow" on an object the
+ * board does not reach changes nothing.
+ */
+function patchFor(choice: SketchChoiceVerb, appearance: Appearance | undefined, board: SketchLevel | null) {
+  if (choice === 'clean' || choice === 'sketch') return lookPatch(choice, appearance, board);
+  if (choice === 'follow') return board ? sketchPatch('follow', board) : null;
+  return sketchPatch(choice, board);
+}
+
+/** One square tile in a sketch popover's grid. */
+const SketchTile: React.FC<{
+  pressed: boolean;
+  label: string;
+  hint?: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}> = ({ pressed, label, hint, onClick, children }) => (
+  <button
+    type="button"
+    className="ctx-shape-btn"
+    aria-pressed={pressed}
+    aria-label={label}
+    data-tooltip={hint ?? label}
+    onClick={onClick}
+  >
+    {children}
+  </button>
+);
+
+/**
+ * The look and the roughness, which every sketchable selection offers.
+ *
+ * `current` is the resolved state (undefined for crisp, or mixed); `apply`
+ * writes one override choice to whatever is selected.
+ */
+const LookAndRoughness: React.FC<{
+  current: { level: SketchLevel | undefined; mixed: boolean };
+  board: SketchLevel | null;
+  overridden: boolean;
+  apply: (choice: SketchChoiceVerb) => void;
+}> = ({ current, board, overridden, apply }) => {
+  const sketched = !current.mixed && Boolean(current.level);
+  return (
+    <>
+      <span className="ctx-popover__label">Look</span>
+      <div className="ctx-shape-grid sketch-rail-grid--2">
+        <SketchTile pressed={!current.mixed && !current.level} label={SKETCH_LOOK_LABELS.clean} onClick={() => apply('clean')}>
+          <CleanLookGlyph />
+        </SketchTile>
+        <SketchTile
+          pressed={sketched}
+          label={SKETCH_LOOK_LABELS.sketch}
+          onClick={() => apply('sketch')}
+        >
+          <SketchLookGlyph />
+        </SketchTile>
+      </div>
+      {board && overridden && (
+        <button type="button" className="ctx-popover__action" onClick={() => apply('follow')}>
+          Follow the board ({SKETCH_LEVEL_NAMES[board]})
+        </button>
+      )}
+      {sketched && (
+        <>
+          <span className="ctx-popover__label">Roughness</span>
+          <div className="ctx-shape-grid sketch-rail-grid--3">
+            {SKETCH_LEVELS.map((lvl) => (
+              <SketchTile
+                key={lvl}
+                pressed={current.level === lvl}
+                label={SKETCH_LEVEL_LABELS[lvl]}
+                onClick={() => apply(lvl)}
+              >
+                <SketchLevelIcon level={lvl} />
+              </SketchTile>
+            ))}
+          </div>
+        </>
+      )}
+    </>
+  );
+};
 
 /**
  * Sketch, and the shading that only means something once there is a sketch.
  *
  * The popover grows by exactly what the current choice makes meaningful: no
- * shading without a sketch level, no density or angle without strokes to lay.
+ * roughness or shading while the object is crisp, no density or angle without
+ * strokes to lay.
  */
 export const SketchControl: React.FC<{
   appearance: Appearance;
   /** Whether the object has an interior to shade. Lines and connectors do not. */
   shades: boolean;
+  /** Whether the board's sketch mode reaches this object. Pencil strokes pass false. */
+  followsBoard?: boolean;
   onChange: (patch: Partial<Appearance>) => void;
-}> = ({ appearance, shades, onChange }) => (
-  <RailPopover label="Sketch" trigger={<SketchLevelIcon level={appearance.sketch ?? 'off'} />} align="start">
-    <span className="ctx-popover__label">Sketch</span>
-    <div className="ctx-shape-grid">
-      {SKETCH_LEVELS.map((lvl) => (
-        <button
-          key={lvl}
-          type="button"
-          className="ctx-shape-btn"
-          aria-pressed={(appearance.sketch ?? 'off') === lvl}
-          aria-label={SKETCH_LEVEL_LABELS[lvl]}
-          data-tooltip={SKETCH_LEVEL_LABELS[lvl]}
-          onClick={() => onChange({ sketch: lvl === 'off' ? undefined : lvl })}
-        >
-          <SketchLevelIcon level={lvl} />
-        </button>
-      ))}
-    </div>
-    {appearance.sketch && shades && (
-      <>
-        <span className="ctx-popover__label">Shading</span>
-        <div className="ctx-shape-grid">
-          {FILL_STYLES.map((st) => (
-            <button
-              key={st}
-              type="button"
-              className="ctx-shape-btn"
-              aria-pressed={(appearance.fillStyle ?? 'solid') === st}
-              aria-label={FILL_STYLE_LABELS[st]}
-              data-tooltip={FILL_STYLE_LABELS[st]}
-              onClick={() => onChange({ fillStyle: st === 'solid' ? undefined : st })}
-            >
-              <FillStyleIcon style={st} />
-            </button>
-          ))}
-        </div>
-      </>
-    )}
-    {appearance.sketch && shades && appearance.fillStyle && appearance.fillStyle !== 'solid' && (
-      <>
-        <span className="ctx-popover__label">Density</span>
-        <div className="ctx-shape-grid">
-          {SHADING_DENSITIES.map((d) => (
-            <button
-              key={d}
-              type="button"
-              className="ctx-shape-btn"
-              aria-pressed={(appearance.shadingDensity ?? 'medium') === d}
-              aria-label={SHADING_DENSITY_LABELS[d]}
-              data-tooltip={SHADING_DENSITY_HINTS[d]}
-              onClick={() => onChange({ shadingDensity: d === 'medium' ? undefined : d })}
-            >
-              <ShadingDensityIcon density={d} />
-            </button>
-          ))}
-        </div>
-        <PopoverSlider
-          label="Angle"
-          value={appearance.shadingAngle ?? HACHURE_ANGLE}
-          min={-90}
-          max={90}
-          suffix="°"
-          onChange={(shadingAngle) => onChange({ shadingAngle })}
-        />
-      </>
-    )}
-  </RailPopover>
-);
+}> = ({ appearance, shades, followsBoard = true, onChange }) => {
+  const boardLevel = useBoardSketch();
+  const board = followsBoard ? boardLevel : null;
+  const level = resolveSketch(appearance, board);
+  const style = appearance.fillStyle ?? 'solid';
+  return (
+    <RailPopover label="Sketch" trigger={<SketchStateIcon level={level} />} align="start">
+      <LookAndRoughness
+        current={{ level, mixed: false }}
+        board={board}
+        overridden={sketchSource(appearance, board) !== 'board'}
+        apply={(choice) => {
+          const patch = patchFor(choice, appearance, board);
+          if (patch) onChange(patch);
+        }}
+      />
+      {level && shades && (
+        <>
+          <span className="ctx-popover__label">Fill</span>
+          <div className="ctx-shape-grid sketch-rail-grid--5">
+            {FILL_STYLE_ORDER.map((st) => (
+              <SketchTile
+                key={st}
+                pressed={style === st}
+                label={FILL_STYLE_LABELS[st]}
+                onClick={() => onChange({ fillStyle: st === 'solid' ? undefined : st })}
+              >
+                <FillStyleIcon style={st} />
+              </SketchTile>
+            ))}
+          </div>
+        </>
+      )}
+      {level && shades && style !== 'solid' && (
+        <>
+          <span className="ctx-popover__label">Density</span>
+          <div className="ctx-shape-grid sketch-rail-grid--3">
+            {SHADING_DENSITIES.map((d) => (
+              <SketchTile
+                key={d}
+                pressed={(appearance.shadingDensity ?? 'medium') === d}
+                label={SHADING_DENSITY_LABELS[d]}
+                hint={SHADING_DENSITY_HINTS[d]}
+                onClick={() => onChange({ shadingDensity: d === 'medium' ? undefined : d })}
+              >
+                <ShadingDensityIcon density={d} />
+              </SketchTile>
+            ))}
+          </div>
+          <PopoverSlider
+            label="Angle"
+            value={appearance.shadingAngle ?? HACHURE_ANGLE}
+            min={-90}
+            max={90}
+            suffix="°"
+            onChange={(shadingAngle) => onChange({ shadingAngle })}
+          />
+        </>
+      )}
+    </RailPopover>
+  );
+};
 
 /** Sketch across a selection, merged per node so nobody's fill or stroke is overwritten. */
 export const BulkSketchControl: React.FC<{ nodes: readonly AnyNode[] }> = ({ nodes }) => {
-  const level = sharedValue(nodes, (n) => (n as { appearance?: Appearance }).appearance?.sketch ?? 'off');
-  const current = (level.mixed ? 'off' : (level.value as SketchLevel | 'off')) ?? 'off';
+  const boardLevel = useBoardSketch();
+  const appearanceOf = (n: AnyNode) => (n as { appearance?: Appearance }).appearance;
+  const boardOf = (n: AnyNode) => boardSketchFor(n.type, boardLevel);
+  // The board as the selection sees it: on if it reaches any of it.
+  const board = nodes.some((n) => boardOf(n)) ? boardLevel : null;
+  const level = sharedValue(nodes, (n) => resolveSketch(appearanceOf(n), boardOf(n)) ?? 'off');
+  const current = {
+    level: level.mixed || level.value === 'off' ? undefined : (level.value as SketchLevel | undefined),
+    mixed: level.mixed,
+  };
+  const overridden = nodes.some((n) => boardOf(n) !== null && sketchSource(appearanceOf(n), boardOf(n)) !== 'board');
   return (
-    <RailPopover label="Sketch" trigger={<SketchLevelIcon level={current} />}>
-      <span className="ctx-popover__label">Sketch</span>
-      <div className="ctx-shape-grid">
-        {SKETCH_LEVELS.map((lvl) => (
-          <button
-            key={lvl}
-            type="button"
-            className="ctx-shape-btn"
-            aria-pressed={!level.mixed && (level.value ?? 'off') === lvl}
-            aria-label={SKETCH_LEVEL_LABELS[lvl]}
-            data-tooltip={SKETCH_LEVEL_LABELS[lvl]}
-            onClick={() =>
-              applyNodePatches(
-                nodes.map((n) => ({
-                  id: n.id,
-                  changes: {
-                    appearance: {
-                      ...((n as { appearance?: Appearance }).appearance ?? {}),
-                      sketch: lvl === 'off' ? undefined : lvl,
-                    },
-                  },
-                }))
-              )
-            }
-          >
-            <SketchLevelIcon level={lvl} />
-          </button>
-        ))}
-      </div>
+    <RailPopover label="Sketch" trigger={<SketchStateIcon level={current.level} />}>
+      <LookAndRoughness
+        current={current}
+        board={board}
+        overridden={overridden}
+        apply={(choice) => {
+          applyNodePatches(
+            nodes.map((n) => {
+              const patch = patchFor(choice, appearanceOf(n), boardOf(n));
+              return patch ? { id: n.id, changes: { appearance: { ...(appearanceOf(n) ?? {}), ...patch } } } : null;
+            }).filter((p): p is NonNullable<typeof p> => p !== null)
+          );
+        }}
+      />
     </RailPopover>
   );
 };

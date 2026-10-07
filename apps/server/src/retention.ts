@@ -6,13 +6,13 @@
  *
  * `room_updates` is append-only, one row per document transaction. The room
  * snapshot is the canonical recovery state, so this log only feeds Time
- * Travel and is trimmed to the newest `MAX_UPDATES_PER_ROOM` rows per room,
- * with everything older folded into `rooms.replay_base`.
+ * Travel and is trimmed to the newest `MAX_UPDATES_PER_ROOM` rows per room.
+ * Everything older is folded into `rooms.replay_base`, and each working
+ * session that leaves the log is kept as one autosave in `room_versions` (see
+ * `historyVersions.ts`), so trimming coarsens old history rather than losing it.
  *
- * Applying Yjs updates gets superlinearly slower as a document accumulates
- * them (measured in Chrome: the first two hundred took 489ms, the next two
- * hundred 1,856ms). 400 keeps a replay inside a second and still covers a
- * substantial working session; the baseline means everything before the
- * window is still on screen, just not steppable.
+ * The client reads the log in pages and builds its timeline in time-sliced
+ * chunks, so the window is bounded by storage and load time, not by how long
+ * one synchronous pass may block a tab.
  */
-export const MAX_UPDATES_PER_ROOM = 400;
+export const MAX_UPDATES_PER_ROOM = 1500;

@@ -635,6 +635,22 @@
 
 /* --- the right-click menu --------------------------------------------------- */
 
+.tbled-chartask {
+  position: fixed;
+  z-index: var(--z-context-menu);
+  width: 304px;
+  padding: var(--space-1);
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float), var(--shadow-lg);
+}
+
+/* The panel's preview draws its own border for the sidebar; here the popover is the one surface. */
+.tbled-chartask .data-preview {
+  margin: 0;
+  border: 0;
+}
+
 .tbled-ctx {
   position: fixed;
   z-index: var(--z-context-menu);

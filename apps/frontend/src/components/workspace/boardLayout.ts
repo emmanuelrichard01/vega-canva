@@ -1,4 +1,5 @@
-import { useEffect, type RefObject } from 'react';
+import { useCallback, useEffect, useState, type RefObject } from 'react';
+import { storageGet, storageSet } from '../../utils/safeStorage';
 
 /**
  * The board's frame, published as CSS on `<html>`.
@@ -92,7 +93,8 @@ export function dockLeft(viewport: number, width: number, obstacles: readonly Sp
 /** The open columns, as spans, that share any height with `row`. */
 function columnsBeside(row: DOMRect): Span[] {
   const spans: Span[] = [];
-  for (const el of document.querySelectorAll<HTMLElement>('.hierarchy-panel, .context-inspector')) {
+  // A peeking panel is an overlay, and the dock does not step aside for it.
+  for (const el of document.querySelectorAll<HTMLElement>('.hierarchy-panel:not([data-peek]), .context-inspector:not([data-peek])')) {
     const r = el.getBoundingClientRect();
     if (r.width === 0 || r.bottom <= row.top || r.top >= row.bottom) continue;
     spans.push({ left: r.left, right: r.right });
@@ -186,4 +188,118 @@ export function useRegionCycle(): void {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+}
+
+/* ------------------------------------------------------- panels per board */
+
+/** Which of a board's two columns are open. */
+export interface PanelState {
+  left: boolean;
+  right: boolean;
+}
+
+/** Where each board's columns are remembered: `{ [roomId]: [left, right, lastUsed] }`. */
+export const PANELS_KEY = 'vega_board_panels';
+/** The most boards remembered; the longest unvisited goes first. */
+export const PANELS_CAP = 200;
+/** The last state set anywhere, which a board never opened before starts from. */
+const LAST_LEFT = 'vega_panel_left';
+const LAST_RIGHT = 'vega_panel_right';
+
+type Remembered = Record<string, [0 | 1, 0 | 1, number]>;
+
+interface PanelStorage {
+  get: (key: string) => string | null;
+  set: (key: string, value: string) => unknown;
+}
+
+const browserStorage: PanelStorage = { get: storageGet, set: storageSet };
+
+function readAll(storage: PanelStorage): Remembered {
+  try {
+    const parsed: unknown = JSON.parse(storage.get(PANELS_KEY) ?? '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Remembered = {};
+    for (const [id, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (Array.isArray(v) && v.length === 3 && typeof v[2] === 'number') {
+        out[id] = [v[0] ? 1 : 0, v[1] ? 1 : 0, v[2]];
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * A board's columns as they were left on it. A board never opened here starts
+ * the way the last one was left, and with both closed on a first visit: the
+ * board at nearly full width, with each panel a pill that says what it is.
+ */
+export function readPanelState(roomId: string, storage: PanelStorage = browserStorage): PanelState {
+  const own = readAll(storage)[roomId];
+  if (own) return { left: own[0] === 1, right: own[1] === 1 };
+  return {
+    left: storage.get(LAST_LEFT) === 'expanded',
+    right: storage.get(LAST_RIGHT) === 'expanded',
+  };
+}
+
+/** Remember a board's columns, and make them the start for boards not yet opened. */
+export function writePanelState(
+  roomId: string,
+  state: PanelState,
+  storage: PanelStorage = browserStorage,
+  now: number = Date.now()
+): void {
+  const all = readAll(storage);
+  all[roomId] = [state.left ? 1 : 0, state.right ? 1 : 0, now];
+  const ids = Object.keys(all);
+  if (ids.length > PANELS_CAP) {
+    ids
+      .sort((a, b) => all[a][2] - all[b][2])
+      .slice(0, ids.length - PANELS_CAP)
+      .forEach((id) => delete all[id]);
+  }
+  storage.set(PANELS_KEY, JSON.stringify(all));
+  storage.set(LAST_LEFT, state.left ? 'expanded' : 'collapsed');
+  storage.set(LAST_RIGHT, state.right ? 'expanded' : 'collapsed');
+}
+
+type Next = boolean | ((open: boolean) => boolean);
+
+/**
+ * Each column's open state for this board, remembered per board in this
+ * browser. A working preference rather than a fact about the board, so it is
+ * never written to the document: a collaborator's screen does not change
+ * because you collapsed your own panel. Only a change is written, never the
+ * state a board was opened with.
+ */
+export function useBoardPanels(roomId: string): {
+  left: boolean;
+  right: boolean;
+  setLeft: (next: Next) => void;
+  setRight: (next: Next) => void;
+} {
+  const [entry, setEntry] = useState(() => ({ roomId, ...readPanelState(roomId) }));
+  // Another board in the same mount: read its own state, during render.
+  let current = entry;
+  if (entry.roomId !== roomId) {
+    current = { roomId, ...readPanelState(roomId) };
+    setEntry(current);
+  }
+
+  const update = useCallback((side: 'left' | 'right', next: Next) => {
+    setEntry((prev) => {
+      const value = typeof next === 'function' ? next(prev[side]) : next;
+      if (value === prev[side]) return prev;
+      const updated = { ...prev, [side]: value };
+      writePanelState(prev.roomId, { left: updated.left, right: updated.right });
+      return updated;
+    });
+  }, []);
+  const setLeft = useCallback((next: Next) => update('left', next), [update]);
+  const setRight = useCallback((next: Next) => update('right', next), [update]);
+
+  return { left: current.left, right: current.right, setLeft, setRight };
 }

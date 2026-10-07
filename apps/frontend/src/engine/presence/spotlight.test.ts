@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeSpotlight, describeAudience, followersOf, SPOTLIGHT_MS } from './spotlight';
+import { activeSpotlight, describeAudience, followersOf, offerToShow, SPOTLIGHT_MS } from './spotlight';
 import type { Collaborator } from './collaborators';
 
 const person = (over: Partial<Collaborator> & { clientId: number }): Collaborator => ({
@@ -84,5 +84,25 @@ describe('describeAudience', () => {
 
   it('says nothing about nobody', () => {
     expect(describeAudience([])).toBe('');
+  });
+});
+
+describe('offerToShow', () => {
+  const offer = person({ clientId: 1, spotlightAt: 500 });
+
+  it('shows an offer nobody has answered', () => {
+    expect(offerToShow(offer, null)?.clientId).toBe(1);
+  });
+
+  it('hides an offer the viewer dismissed', () => {
+    expect(offerToShow(offer, 500)).toBeNull();
+  });
+
+  it('shows the same person again when they raise a new offer', () => {
+    expect(offerToShow(person({ clientId: 1, spotlightAt: 900 }), 500)?.spotlightAt).toBe(900);
+  });
+
+  it('has nothing to show when there is no offer', () => {
+    expect(offerToShow(null, null)).toBeNull();
   });
 });

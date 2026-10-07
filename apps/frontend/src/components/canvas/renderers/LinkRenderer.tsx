@@ -31,6 +31,8 @@ import { useStore } from '../../../hooks/useStore';
 
 /** A 14px arrow-up-right, the universal "this leaves the board" mark. */
 const OPEN_GLYPH = 'M4 10 L10 4 M5 4 H10 V9';
+/** A 10px warning triangle with its mark, for the broken-link pill. */
+const WARN_GLYPH = 'M5 0.8 L9.6 9.2 H0.4 Z M5 3.8 V6 M5 7.6 V7.7';
 
 export const LinkRenderer: React.FC<{ node: LinkNode }> = ({ node }) => {
   const { link } = node;
@@ -73,9 +75,11 @@ export const LinkRenderer: React.FC<{ node: LinkNode }> = ({ node }) => {
    * decoding it. Only a picture that has actually *failed* gives its space back.
    */
   const expectsImage = Boolean(meta?.imagePending) || (Boolean(meta?.image) && imageStatus !== 'failed');
-  const layout = layoutLinkCard(display, node.width, node.height, display === 'embed' ? true : expectsImage, Boolean(meta?.description));
   const loading = link.status === 'loading';
   const failed = link.status === 'error';
+  // A failed card keeps a line for its reason, so it says why rather than
+  // leaving an empty band under the address.
+  const layout = layoutLinkCard(display, node.width, node.height, display === 'embed' ? true : expectsImage, Boolean(meta?.description) || failed);
   const domain = siteDomain(link.url);
   const title = meta?.title || (loading ? '' : provider.id === 'web' ? domain : provider.detail ? `${provider.name} · ${provider.detail}` : provider.name);
   const site = meta?.siteName || (provider.id === 'web' ? domain : provider.name);
@@ -230,6 +234,28 @@ export const LinkRenderer: React.FC<{ node: LinkNode }> = ({ node }) => {
         )}
 
         {display === 'embed' && <Rect y={43} width={W} height={1} fill={LINK_CARD.border} />}
+
+        {/*
+          * The broken state says so in words, on the card, where it is seen:
+          * a page that no longer exists is "Broken link", anything else that
+          * kept the preview away is "No preview". The address still opens on
+          * double-click and Refresh preview is on the toolbar.
+          */}
+        {failed && display !== 'compact' && W >= 200 && (() => {
+          const label = /does not exist|not found|gone/i.test(link.error ?? '') ? 'Broken link' : 'No preview';
+          const pillW = Math.round(label.length * 6.6 + 30);
+          const x = W - pillW - 12;
+          // Bottom-right: clear of the title, which runs along the top, and
+          // of the domain, which a vertical card sets at the bottom-left.
+          const y = H - 22 - 12;
+          return (
+            <Group x={x} y={y} listening={false}>
+              <Rect width={pillW} height={22} cornerRadius={11} fill={LINK_CARD.failGround} />
+              <Path x={9} y={6} data={WARN_GLYPH} stroke={LINK_CARD.failInk} strokeWidth={1.4} lineCap="round" lineJoin="round" />
+              <Text x={24} y={0} height={22} verticalAlign="middle" text={label} fontFamily={LINK_CARD.font} fontSize={11.5} fontStyle="600" fill={LINK_CARD.failInk} />
+            </Group>
+          );
+        })()}
 
         {layout.action && (
           <Path x={layout.action.x} y={layout.action.y} data={OPEN_GLYPH} stroke={LINK_CARD.faint} strokeWidth={1.6} lineCap="round" lineJoin="round" scaleX={layout.action.size / 14} scaleY={layout.action.size / 14} />

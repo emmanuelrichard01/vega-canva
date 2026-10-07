@@ -43,7 +43,7 @@ import {
   type DashRatio,
   type StrokeStyleId,
 } from '../engine/model/strokeStyle';
-import { descendantsOfFrame, type FramePreset } from '../engine/model/frames';
+import { descendantsOfFrame } from '../engine/model/frames';
 import { type LayoutGuide } from '../engine/model/layoutGuide';
 import { nodeLabel } from '../engine/model/nodeLabel';
 import { getColorForUser } from '../engine/presence/ColorPalette';
@@ -363,10 +363,6 @@ const PropertiesPanelInner: React.FC<PropertiesPanelProps> = ({ selectedIds, ove
       return { safeArea: empty ? undefined : next };
     });
 
-  /** Resize a frame to a named size, keeping its top-left corner; the preset's safe area comes with it. */
-  const applyFramePreset = (preset: FramePreset) =>
-    patchEach((n) => (n.type === 'frame' ? { width: preset.width, height: preset.height, safeArea: preset.safeArea } : null));
-
   /** Swap a frame's width and height, transposing the safe area so turning twice is the identity. */
   const turnFrame = () =>
     patchEach((n) => {
@@ -568,7 +564,7 @@ const PropertiesPanelInner: React.FC<PropertiesPanelProps> = ({ selectedIds, ove
             </Section>
           )}
           {affords('sticky-theme') && node.type === 'sticky' && (
-            <StickySection node={node} isMulti={isMulti} pickedTheme={pickedTheme} pinned={pinnedShared} set={set} />
+            <StickySection node={node} isMulti={isMulti} pickedTheme={pickedTheme} pinned={pinnedShared} set={set} shared={shared} />
           )}
           <ConnectorSection
             node={node as ConnectorNode}
@@ -585,7 +581,6 @@ const PropertiesPanelInner: React.FC<PropertiesPanelProps> = ({ selectedIds, ove
             shared={shared}
             setGeometry={setGeometry}
             setSafeArea={setSafeArea}
-            applyFramePreset={applyFramePreset}
             turnFrame={turnFrame}
             fitFrameToContents={fitFrameToContents}
             frameChildCount={frameChildCount}

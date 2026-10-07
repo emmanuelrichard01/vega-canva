@@ -1,8 +1,11 @@
-import React from 'react';
-import { ArrowRight, Link2, Plus, UploadCloud } from 'lucide-react';
+import React, { useContext } from 'react';
+import { ArrowRight, Compass, Link2, Plus, UploadCloud } from 'lucide-react';
 import type { Template } from '../../engine/templates/templates';
 import type { BoardPreview } from '../../engine/model/boardPreview';
+import { requestGuidedStart } from '../../engine/learn/tourChecklist';
+import { AuthContext } from '../../hooks/useAuth';
 import { TemplateCard } from './TemplateCard';
+import '../onboarding/quickstart.css';
 
 interface Props {
   templateCount: number;
@@ -18,61 +21,92 @@ interface Props {
   onRestore: () => void;
 }
 
+/** The first name only: "Ada Lovelace" is greeted as Ada. */
+function firstName(name: string | undefined): string | null {
+  const first = name?.trim().split(/\s+/)[0];
+  return first ? first : null;
+}
+
 /**
- * The library with nothing in it: one sentence about what this place is, one
- * accent button that makes a board, and three real templates as pictures —
- * a cover answers "what could this be" faster than any label.
+ * The library with nothing in it, which is the dashboard's first-run moment.
+ *
+ * A greeting, one sentence about the place, and three ways to start that differ
+ * in how much help they bring: a blank board (the one accent), a guided first
+ * board that opens with the tour and the checklist, and the templates below as
+ * their covers. The rarer ways in (a shared link, a backup) are quiet text.
+ * No modal, no wall: everything here is a door, and any of them can be ignored.
  */
 export const QuickStart: React.FC<Props> = ({
   templateCount, starters, previews, peekingId, onBlank, onTemplates, onPeek, onUse, onJoin, onRestore,
-}) => (
-  <div className="qstart">
-    <div className="qstart__intro">
-      <h2 className="qstart__title">Start your first board</h2>
-      <p className="qstart__lede">
-        An infinite canvas for diagrams, notes and sketches, shared with anyone you send the link to.
-      </p>
+}) => {
+  const name = firstName(useContext(AuthContext)?.user?.name);
 
-      <div className="qstart__go">
-        <button type="button" className="qstart__primary" onClick={onBlank}>
-          <Plus size={17} aria-hidden="true" />
-          New blank board
-          <kbd aria-hidden="true">N</kbd>
-        </button>
-        <button type="button" className="qstart__alt" onClick={onJoin}>
-          <Link2 size={15} aria-hidden="true" />
-          Open a shared link
-        </button>
-        <button type="button" className="qstart__alt" onClick={onRestore}>
-          <UploadCloud size={15} aria-hidden="true" />
-          Restore a backup
-        </button>
-      </div>
-    </div>
+  const guided = () => {
+    requestGuidedStart();
+    onBlank();
+  };
 
-    {starters.length > 0 && (
-      <section className="qstart__starters" aria-labelledby="qstart-starters">
-        <header className="qstart__starters-head">
-          <h3 id="qstart-starters" className="qstart__starters-title">Or start from a template</h3>
-          <button type="button" className="lbtn" onClick={onTemplates}>
-            All {templateCount}
-            <ArrowRight size={14} aria-hidden="true" />
+  return (
+    <div className="qstart">
+      <div className="qstart__intro">
+        <h2 className="qstart__title">{name ? `Welcome, ${name}` : 'Welcome to Vega Studio'}</h2>
+        <p className="qstart__lede">
+          An infinite canvas for diagrams, notes and sketches, shared with anyone you send the link to.
+        </p>
+
+        <div className="qstart__go">
+          <button type="button" className="qstart__primary" onClick={onBlank}>
+            <Plus size={17} aria-hidden="true" />
+            New blank board
+            <kbd aria-hidden="true">N</kbd>
           </button>
-        </header>
-        <div className="tgrid tgrid--starters">
-          {starters.map((t) => (
-            <TemplateCard
-              key={t.id}
-              template={t}
-              preview={previews[t.id] ?? null}
-              peeking={peekingId === t.id}
-              scope="starter"
-              onPeek={onPeek}
-              onUse={onUse}
-            />
-          ))}
+          <button type="button" className="qstart__guided" onClick={guided} aria-describedby="qstart-guided-hint">
+            <Compass size={16} aria-hidden="true" />
+            <span className="qstart__guided-text">
+              <span className="qstart__guided-label">Make your first board</span>
+              <span id="qstart-guided-hint" className="qstart__guided-hint">
+                A one-minute tour, then five first moves
+              </span>
+            </span>
+          </button>
         </div>
-      </section>
-    )}
-  </div>
-);
+
+        <p className="qstart__quiet">
+          <button type="button" className="qstart__link" onClick={onJoin}>
+            <Link2 size={14} aria-hidden="true" />
+            Open a shared link
+          </button>
+          <button type="button" className="qstart__link" onClick={onRestore}>
+            <UploadCloud size={14} aria-hidden="true" />
+            Restore a backup
+          </button>
+        </p>
+      </div>
+
+      {starters.length > 0 && (
+        <section className="qstart__starters" aria-labelledby="qstart-starters">
+          <header className="qstart__starters-head">
+            <h3 id="qstart-starters" className="qstart__starters-title">Or start from a template</h3>
+            <button type="button" className="lbtn" onClick={onTemplates}>
+              All {templateCount}
+              <ArrowRight size={14} aria-hidden="true" />
+            </button>
+          </header>
+          <div className="tgrid tgrid--starters">
+            {starters.map((t) => (
+              <TemplateCard
+                key={t.id}
+                template={t}
+                preview={previews[t.id] ?? null}
+                peeking={peekingId === t.id}
+                scope="starter"
+                onPeek={onPeek}
+                onUse={onUse}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+};

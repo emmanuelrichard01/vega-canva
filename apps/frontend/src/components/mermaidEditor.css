@@ -1,0 +1,227 @@
+/* ---------------------------------------------------------------------------
+   DIAGRAM EDITOR — components/MermaidModal.tsx, MermaidTemplateGallery.tsx
+
+   The highlighted source under a transparent textarea, the failing line marked
+   in place, and the template gallery. The dialog shell, bars and gutter are
+   `.mermaid-modal*` / `.mm-*` in index.css.
+   --------------------------------------------------------------------------- */
+
+.mermaid-modal {
+  /* Syntax colours: each holds AA on the editor's ground in its theme. */
+  --mm-tok-keyword: #6D28D9;
+  --mm-tok-direction: #075985;
+  --mm-tok-arrow: #9A3412;
+  --mm-tok-label: #166534;
+  --mm-tok-string: #166534;
+  --mm-tok-number: #1D4ED8;
+  --mm-tok-comment: #5F6672;
+  --mm-tok-punct: #5F6672;
+  --mm-error-row: rgba(220, 38, 38, 0.08);
+  --mm-error-ink: #DC2626;
+  --mm-warn-row: rgba(217, 119, 6, 0.08);
+}
+
+.dark-theme .mermaid-modal {
+  --mm-tok-keyword: #C4B5FD;
+  --mm-tok-direction: #7DD3FC;
+  --mm-tok-arrow: #FCD34D;
+  --mm-tok-label: #86EFAC;
+  --mm-tok-string: #86EFAC;
+  --mm-tok-number: #93C5FD;
+  --mm-tok-comment: #A1A1AA;
+  --mm-tok-punct: #A1A1AA;
+  --mm-error-row: rgba(248, 113, 113, 0.12);
+  --mm-error-ink: #F87171;
+  --mm-warn-row: rgba(251, 191, 36, 0.10);
+}
+
+.mm-code {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-width: 0;
+}
+
+/* Exactly the textarea's box and metrics, behind it. */
+.mm-code__hl {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: var(--space-4);
+  overflow: hidden;
+  pointer-events: none;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-sm);
+  line-height: var(--mm-line);
+  tab-size: 4;
+  white-space: pre;
+  color: var(--text-primary);
+}
+
+.mm-hl-line {
+  display: block;
+  min-height: var(--mm-line);
+  /* Bleeds to the editor's edges so the tint reads as a row, not a word. */
+  margin-inline: calc(-1 * var(--space-4));
+  padding-inline: var(--space-4);
+}
+
+.mm-hl-line.is-error {
+  background: var(--mm-error-row);
+  text-decoration: underline wavy var(--mm-error-ink);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
+.mm-hl-line.is-warn {
+  background: var(--mm-warn-row);
+}
+
+/* The text itself is drawn by the layer below; the textarea keeps only the
+   caret and the selection. */
+.mermaid-modal__code.mm-code__input {
+  position: relative;
+  color: transparent;
+  caret-color: var(--text-primary);
+  background: transparent;
+}
+
+.mermaid-modal__code.mm-code__input::selection {
+  background: color-mix(in srgb, var(--text-primary) 18%, transparent);
+  color: transparent;
+}
+
+.mm-tok--keyword { color: var(--mm-tok-keyword); font-weight: var(--weight-semibold); }
+.mm-tok--direction { color: var(--mm-tok-direction); font-weight: var(--weight-semibold); }
+.mm-tok--arrow { color: var(--mm-tok-arrow); }
+.mm-tok--label { color: var(--mm-tok-label); }
+.mm-tok--string { color: var(--mm-tok-string); }
+.mm-tok--number { color: var(--mm-tok-number); }
+.mm-tok--comment { color: var(--mm-tok-comment); font-style: italic; }
+.mm-tok--punct { color: var(--mm-tok-punct); }
+
+/* ── Template gallery ────────────────────────────────────────────────────── */
+
+.mm-gallery-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.mm-gallery-trigger[aria-expanded='true'] {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.mm-gallery {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 5;
+  width: min(470px, calc(100vw - 96px));
+  max-height: min(460px, 62vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  animation: popIn 160ms var(--ease-settle);
+}
+
+.mm-gallery__group-block + .mm-gallery__group-block {
+  margin-top: var(--space-3);
+}
+
+.mm-gallery__heading {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--text-secondary);
+}
+
+.mm-gallery__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.mm-gallery__tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover);
+}
+
+.mm-gallery__tile:hover {
+  background: var(--surface-hover);
+}
+
+/* The current template is marked in ink, the app's word for "this one". */
+.mm-gallery__tile[aria-pressed='true'] {
+  border-color: var(--text-primary);
+}
+
+.mm-gallery__tile:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+.mm-gallery__thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+}
+
+.mm-gallery__line {
+  stroke: var(--text-tertiary);
+  fill: none;
+}
+
+.mm-gallery__box {
+  fill: var(--surface-primary);
+  stroke: var(--text-secondary);
+}
+
+.mm-gallery__group {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-dasharray: 6 4;
+}
+
+.mm-gallery__wedge { stroke: var(--surface-primary); }
+.mm-gallery__wedge--0 { fill: var(--text-secondary); }
+.mm-gallery__wedge--1 { fill: var(--text-tertiary); }
+.mm-gallery__wedge--2 { fill: var(--border-strong); }
+.mm-gallery__wedge--3 { fill: var(--surface-active); }
+
+.mm-gallery__name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mm-gallery { animation: none; }
+}
+
+@media (prefers-contrast: more) {
+  .mm-gallery__tile { border-color: var(--border-strong); }
+  .mm-gallery__line { stroke: var(--text-secondary); }
+}

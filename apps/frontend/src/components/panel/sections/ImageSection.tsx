@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Contrast, Droplets, Palette, RotateCw, Sun } from 'lucide-react';
-import { Note, NumberField, PairRow, Row, Section } from '../grammar';
+import { AlertTriangle, Contrast, Droplets, Palette, RotateCcw, RotateCw, Square, Sun } from 'lucide-react';
+import { Note, NumberField, PairRow, Row, Section, SegmentedControl, Select } from '../grammar';
 import { retryUpload, canRetryUpload, useUploadState } from '../../../engine/media/upload';
+import { ASPECT_PRESETS, frameModeOf, matchingPreset } from '../../../engine/media/imageFrame';
+import { setImageAspect, setImageFrame, turnImage } from '../../../engine/media/imageEdit';
 import { uploadIdFromSrc } from '../../../utils/pendingMedia';
 import { canEditObjects } from '../../../engine/model/permissions';
+import { cornerRadiiOf, isUniform } from '../../../engine/model/cornerRadii';
 import { MAX_ALT_LENGTH } from '../../../engine/model/schema';
 import {
   ADJUSTMENT_IDS,
@@ -15,6 +18,7 @@ import {
 } from '../../../engine/model/imageAdjustments';
 import type { AnyNode, ImageNode } from '../../../engine/model/schema';
 import type { AffordanceId } from '../../../engine/selection/affordances';
+import './imageSection.css';
 
 interface ImageSectionProps {
   node: ImageNode;
@@ -22,7 +26,7 @@ interface ImageSectionProps {
   affords: (id: AffordanceId) => boolean;
   setAdjustment: (id: AdjustmentId, value: number) => void;
   set: (updates: Partial<AnyNode>) => void;
-  /** One image selected: alt text and upload state describe one picture. */
+  /** One image selected: framing, alt text and upload state describe one picture. */
   single: boolean;
 }
 
@@ -32,6 +36,8 @@ const GLYPHS: Record<string, React.ReactNode> = {
   saturation: <Palette size={12} />,
   blur: <Droplets size={12} />,
 };
+
+const CROP_OPTIONS = ASPECT_PRESETS.map((p) => ({ value: p.id, label: p.label }));
 
 /** Alt text, written when the field is left or Enter is pressed. */
 const AltText: React.FC<{ value: string; onCommit: (alt: string | undefined) => void }> = ({ value, onCommit }) => {
@@ -87,9 +93,83 @@ const UploadProblem: React.FC<{ src: string }> = ({ src }) => {
 };
 
 /**
- * Image: its upload state and alt text, then Adjust (brightness, contrast,
- * saturation and blur, two to a row; zero is as shot). Each field scrubs,
- * previews live and is one undo step.
+ * How the picture sits in its box: fit or fill, a crop ratio, quarter turns,
+ * and the corners.
+ *
+ * A picture in a grid module is framed by the module, so these give way to the
+ * toolbar's Reframe there rather than fighting the grid for the edges.
+ */
+const Framing: React.FC<{ node: ImageNode; set: (updates: Partial<AnyNode>) => void }> = ({ node, set }) => {
+  const natural = { width: node.naturalWidth ?? 0, height: node.naturalHeight ?? 0 };
+  const mode = frameModeOf(node, natural, node.crop);
+  const waiting = mode === null ? 'Available once the picture has loaded' : undefined;
+  const preset = matchingPreset(natural, node.crop);
+  const radii = cornerRadiiOf(node.appearance?.cornerRadius);
+  const radiusMax = Math.max(0, Math.floor(Math.min(node.width, node.height) / 2));
+
+  if (node.gridSlot) {
+    return <Note>This picture is framed by its grid module. Use Reframe on the toolbar to move it inside the module.</Note>;
+  }
+
+  return (
+    <>
+      <Row label="Frame" hint="Fit shows the whole picture. Fill covers the box and crops the edges.">
+        <SegmentedControl
+          ariaLabel="Frame"
+          fill
+          value={mode === 'stretched' ? '' : (mode ?? '')}
+          mixed={mode === 'stretched'}
+          disabledReason={waiting}
+          onChange={(v) => setImageFrame(node, v as 'fit' | 'fill')}
+          segments={[
+            { value: 'fit', label: 'Fit', hint: 'Show the whole picture at its own proportions' },
+            { value: 'fill', label: 'Fill', hint: 'Cover the box, cropping what overhangs' },
+          ]}
+        />
+      </Row>
+      {mode === 'stretched' && <Note>The picture is stretched out of proportion. Fit or Fill restores it.</Note>}
+      <Row label="Crop" hint="Crop to a common ratio around the current centre. Original puts the whole picture back.">
+        <Select
+          label="Crop ratio"
+          value={(preset ?? 'custom') as string}
+          options={preset ? CROP_OPTIONS : [{ value: 'custom', label: 'Custom' }, ...CROP_OPTIONS]}
+          disabledReason={waiting}
+          onChange={(id) => {
+            const p = ASPECT_PRESETS.find((x) => x.id === id);
+            if (p) setImageAspect(node, p.ratio);
+          }}
+        />
+      </Row>
+      <Row label="Turn">
+        <div className="pg-image-turn">
+          <button type="button" className="pg-toggle" aria-label="Turn left 90°" data-tooltip="Turn left 90°" onClick={() => turnImage(node, -1)}>
+            <RotateCcw size={14} aria-hidden />
+          </button>
+          <button type="button" className="pg-toggle" aria-label="Turn right 90°" data-tooltip="Turn right 90°" onClick={() => turnImage(node, 1)}>
+            <RotateCw size={14} aria-hidden />
+          </button>
+        </div>
+      </Row>
+      <Row label="Corners">
+        <NumberField
+          label="Corner radius"
+          glyph={<Square size={12} />}
+          min={0}
+          max={radiusMax}
+          value={isUniform(node.appearance?.cornerRadius) ? radii[0] : 'mixed'}
+          onChange={(v) => set({ appearance: { ...(node.appearance ?? {}), cornerRadius: Math.max(0, Math.min(radiusMax, v)) } } as Partial<AnyNode>)}
+        />
+      </Row>
+    </>
+  );
+};
+
+/**
+ * Image: upload state, framing and alt text, then Adjust (brightness,
+ * contrast, saturation and blur, two to a row; zero is as shot). Border and
+ * shadow are the panel's own Stroke and Effects sections, which images share
+ * with every paintable object. Each field scrubs, previews live and is one
+ * undo step.
  */
 export const ImageSection: React.FC<ImageSectionProps> = ({ node, adjustments, affords, setAdjustment, set, single }) => {
   if (node.type !== 'image') return null;
@@ -115,6 +195,7 @@ export const ImageSection: React.FC<ImageSectionProps> = ({ node, adjustments, a
       {single && (
         <Section id="image" title="Image">
           <UploadProblem src={node.src} />
+          <Framing node={node} set={set} />
           <Row stack label="Alt text" hint="Read aloud by screen readers, and used in exports.">
             <AltText value={node.alt ?? ''} onCommit={(alt) => set({ alt } as Partial<AnyNode>)} />
           </Row>

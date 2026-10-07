@@ -24,3 +24,6 @@ export {
   type ChipPlacement,
   type Point,
 } from './remoteCursor';
+export { cursorHint, type CursorHint } from './cursorHint';
+export { claimable } from './claimCursors';
+export { CURSOR_INVENTORY, type InventoryEntry } from './cursorInventory';

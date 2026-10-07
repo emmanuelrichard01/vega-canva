@@ -32,7 +32,7 @@ const MusicHeaderSlot: React.FC = () => {
   }, []);
 
   return (
-    <span ref={host} className="hdr-music">
+    <span ref={host} className="hdr-music" data-tour="music">
       <MusicButton />
     </span>
   );

@@ -1,0 +1,5 @@
+/* Image section: the two quarter-turn buttons sit together as one control. */
+.pg-image-turn {
+  display: flex;
+  gap: var(--space-1);
+}

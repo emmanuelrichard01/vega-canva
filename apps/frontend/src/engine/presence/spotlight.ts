@@ -89,3 +89,15 @@ export function describeAudience(people: readonly Collaborator[]): string {
   const rest = names.length - 2;
   return `${names[0]}, ${names[1]} and ${rest} ${rest === 1 ? 'other' : 'others'}`;
 }
+
+/**
+ * The offer to show, once the viewer's own answer is taken into account.
+ *
+ * Dismissal is remembered against the offer's own timestamp, not against the
+ * person: declining Ana's first spotlight must not silence her second one, and
+ * raising it again is exactly how a presenter says "I mean it".
+ */
+export function offerToShow(offer: Collaborator | null, dismissedAt: number | null): Collaborator | null {
+  if (!offer) return null;
+  return offer.spotlightAt === dismissedAt ? null : offer;
+}

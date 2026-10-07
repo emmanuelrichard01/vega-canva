@@ -6,7 +6,8 @@ import { engineEvents } from '../../engine/EventBus';
 import { consumePendingCaret } from '../../engine/interaction/pendingEdit';
 import { textEditing } from '../../engine/interaction/textEditing';
 import { DEFAULT_TYPOGRAPHY, type TextBearingNode } from '../../engine/model/schema';
-import { STICKY_PADDING, THEMES } from '../../engine/model/stickyThemes';
+import { paperOf, STICKY_PADDING } from '../../engine/model/stickyThemes';
+import { useChromeDark } from '../../engine/interaction/chromeHalo';
 import { textBox } from '../../engine/model/stickyFooter';
 import { measureStickyHeight, stickyFit, STICKY_FONT_FAMILY } from './renderers/stickyFit';
 import { STICKY_LINE_HEIGHT } from '../../engine/model/stickyText';
@@ -51,6 +52,7 @@ const FOCUS_GRACE_MS = 600;
 const MAX_FOCUS_RECOVERIES = 2;
 
 export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
+  const dark = useChromeDark();
   const [value, setValue] = useState(node.text ?? '');
   const [, forceReposition] = useState(0);
   const cancelledRef = React.useRef(false);
@@ -225,8 +227,11 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
     isSticky && node.type === 'sticky'
       ? textBox(node.width, node.height, STICKY_PADDING, node.tags.length > 0)
       : null;
+  // A note set to a fixed size writes at that size; otherwise the largest that fits.
   const stickySize = stickyBox
-    ? stickyFit(value, stickyBox.width, stickyBox.height).fontSize
+    ? node.type === 'sticky' && node.textSizing === 'fixed'
+      ? node.fontSize
+      : stickyFit(value, stickyBox.width, stickyBox.height).fontSize
     : 0;
 
   /**
@@ -264,7 +269,7 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
           // for bold gets a synthesised one that does not match the canvas.
           fontWeight: 600,
           fontSize: stickySize,
-          color: THEMES[node.theme]?.text ?? DEFAULT_TYPOGRAPHY.color,
+          color: paperOf(node.theme, dark).ink,
           lineHeight: STICKY_LINE_HEIGHT,
           align: 'center' as const,
         }

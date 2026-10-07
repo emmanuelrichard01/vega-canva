@@ -18,6 +18,7 @@
  */
 
 import type { ViewportState } from './PresenceTypes';
+import { readPing, type PingState } from './ping';
 
 export interface Point {
   x: number;
@@ -154,6 +155,8 @@ export interface Collaborator {
    * their pointer. Awareness only, never the document.
    */
   chat: CursorChat | null;
+  /** "Look here": a point on the board they just pinged. See `ping.ts`. */
+  ping?: PingState | null;
 }
 
 /** A cursor chat line. `open` is true while they are still typing it. */
@@ -295,6 +298,7 @@ export function readCollaborators(
       spotlightAt: Number.isFinite(state.spotlight?.at) ? (state.spotlight.at as number) : null,
       listening: readListening(state.listening),
       chat: readChat(state.chat),
+      ping: readPing(state.ping),
     });
   });
 
@@ -335,7 +339,7 @@ export function rosterSignature(list: Collaborator[]): string {
           c.spotlightAt ?? ''
         }:${c.selection.join(',')}:${c.listening ?? ''}:${
           c.chat ? `${c.chat.open ? 1 : 0}${c.chat.text}` : ''
-        }`
+        }:${c.ping?.at ?? ''}`
     )
     .join('|');
 }

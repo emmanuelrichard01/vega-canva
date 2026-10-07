@@ -102,6 +102,8 @@ export function buildShortcutGroups(): ShortcutGroup[] {
           what: TOOL_NAMES[id] ?? id,
           short: toolShort(id),
         })),
+        { keys: 'Shift + P', what: 'Physics, with the last force you used (editors)', short: 'Physics' },
+        { keys: 'Shift + S', what: 'Draw the whole board by hand, or back to clean lines (editors)', short: 'Sketch board' },
         { keys: 'Q', what: 'Keep the armed tool after it places something (or double-click its seat)', short: 'Keep tool' },
         { keys: 'Hold a tool key', what: 'Use that tool, then let go to go back to the last one' },
       ],
@@ -294,6 +296,7 @@ export function buildShortcutGroups(): ShortcutGroup[] {
       global: true,
       rows: [
         { keys: '/', what: 'Cursor chat: type a line beside your pointer', short: 'Chat' },
+        { keys: 'Shift + Alt + click', what: 'Ping: draw everyone’s eye to that spot', short: 'Ping' },
         { keys: 'C', what: 'Comment tool: pin a thread to anything', short: 'Comment' },
         { keys: 'Click a face', what: 'Follow that person’s view. Click again, or move, to stop' },
         { keys: 'Mod + Shift + E', what: 'Export the selection, or the board', short: 'Export' },

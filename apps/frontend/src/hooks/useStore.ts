@@ -318,9 +318,12 @@ interface StoreState {
   /** The link whose embed is live. One at a time: an iframe is a whole page. */
   embedActiveNodeId: string | null;
   setEmbedActiveNodeId: (id: string | null) => void;
-  /** Where the Link tool was clicked, waiting for a URL. Screen and world points. */
-  linkComposer: { clientX: number; clientY: number; x: number; y: number; replaceId?: string } | null;
-  setLinkComposer: (at: { clientX: number; clientY: number; x: number; y: number; replaceId?: string } | null) => void;
+  /**
+   * Where the Link tool was clicked, waiting for a URL. Screen and world points.
+   * `as: 'image'` asks for the address of a picture instead of a page.
+   */
+  linkComposer: { clientX: number; clientY: number; x: number; y: number; replaceId?: string; as?: 'image' } | null;
+  setLinkComposer: (at: { clientX: number; clientY: number; x: number; y: number; replaceId?: string; as?: 'image' } | null) => void;
   /** Currently entered / isolated group ID for nested group editing. */
   enteredGroupId: string | null;
   setEnteredGroupId: (id: string | null) => void;

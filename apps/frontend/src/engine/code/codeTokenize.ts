@@ -588,16 +588,26 @@ function lexMarkdown(line: string, state: State, out: Token[]): State {
 
 // ------------------------------------------------------------------- entry
 
-const lineCache = new Map<string, Token[][]>();
+/** Per language, then per source: no key is ever built by concatenating a large source. */
+const lineCache = new Map<string, Map<string, Token[][]>>();
+let cachedEntries = 0;
+
+/**
+ * Lines past this many are drawn as plain text, as is any single line longer
+ * than `MAX_LEXED_LINE`. A pasted log or a minified bundle is still shown in
+ * full; it simply is not coloured, which nobody reading it would miss, and one
+ * block cannot cost the board its frame rate.
+ */
+export const HIGHLIGHT_LINE_CAP = 3000;
+export const MAX_LEXED_LINE = 2000;
 
 /**
  * Every line of `source` as runs. Memoised on the pair, because the renderer
  * asks for the same answer on every frame a block is on screen.
  */
 export function tokenize(source: string, languageId: string): Token[][] {
-  // A separator no language id can contain, so `ts` + `x…` never collides with `tsx` + `…`.
-  const cacheKey = `${languageId}${String.fromCharCode(0)}${source}`;
-  const hit = lineCache.get(cacheKey);
+  let byLanguage = lineCache.get(languageId);
+  const hit = byLanguage?.get(source);
   if (hit) return hit;
 
   const lang = languageById(languageId);
@@ -611,6 +621,11 @@ export function tokenize(source: string, languageId: string): Token[][] {
     // expanded here once rather than measured three different ways.
     const line = raw.replace(/\t/g, '  ');
     const out: Token[] = [];
+    if (result.length >= HIGHLIGHT_LINE_CAP || line.length > MAX_LEXED_LINE) {
+      if (line) push(out, line, 'plain');
+      result.push(out);
+      continue;
+    }
     switch (lang.mode) {
       case 'code':
         state = lexCode(line, state, ctx, out, true);
@@ -636,8 +651,17 @@ export function tokenize(source: string, languageId: string): Token[][] {
     result.push(out);
   }
 
-  if (lineCache.size > 400) lineCache.clear();
-  lineCache.set(cacheKey, result);
+  if (cachedEntries > 400) {
+    lineCache.clear();
+    cachedEntries = 0;
+    byLanguage = undefined;
+  }
+  if (!byLanguage) {
+    byLanguage = new Map();
+    lineCache.set(languageId, byLanguage);
+  }
+  byLanguage.set(source, result);
+  cachedEntries += 1;
   return result;
 }
 

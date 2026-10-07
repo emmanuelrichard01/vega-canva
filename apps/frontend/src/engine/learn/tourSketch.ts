@@ -1,46 +1,16 @@
-import { roughEllipse, roughLoop, roughPolyline, seedFrom } from '../model/rough';
-import type { Box, TourSide } from './tour';
+import { roughEllipse, roughLoop, seedFrom } from '../model/rough';
+import type { Box } from './tour';
 
 /**
- * The tour, drawn by hand.
+ * The pen ring the tour and the walkthrough draw round what they point at.
  *
- * ## Why hand-drawn, and why it is not a costume
+ * Annotation rather than interface: everything on this screen is a rectangle
+ * with a shadow, and a pen mark cannot be mistaken for another control. It is
+ * made by `rough.ts`, the generator the canvas draws hand-drawn shapes with, so
+ * the two hands cannot drift apart.
  *
- * A tour is **annotation**, not interface. It is somebody leaning over and
- * drawing on your screen, and the register should say so. A crisp popover with
- * a system-styled beak competes with the real controls it is pointing at:
- * everything on this screen is a rectangle with a shadow, and the thing that
- * says "look here" is another rectangle with a shadow. A pen mark cannot be
- * mistaken for a control, which is the whole job.
- *
- * The reason this is *ours* rather than a style borrowed from somewhere is that
- * the product already draws this way. `rough.ts` is a first-class feature of the
- * canvas: any shape, frame or connector can be rendered hand-drawn at three
- * roughnesses. So the marks here are made by **the same generator the board
- * uses**, with the same profiles and the same seeded wobble, rather than by a
- * second imitation of a pen that would drift from the first the moment either
- * was tuned.
- *
- * ## Where the hand stops
- *
- * At the pointing. The ring, the pointer and its head are drawn; the title
- * takes the handwritten face because it is short, large, and it is the voice;
- * the body stays in the interface's own type.
- *
- * That line is not taste. The sketch is the *gesture* and the body is the
- * *information*, and handwriting at fourteen pixels is worse to read in every
- * language, worse with a fallback font, and worse for anybody who finds it hard
- * to begin with. A tour whose instructions are hard to read has spent its one
- * advantage on the wrong half.
- *
- * ## Why the seed comes from the step
- *
- * The marks are redrawn whenever the board pans, the window resizes or a panel
- * opens, which is many times a second while somebody scrolls. Seeded from the
- * step's id, every one of those redraws produces the *same* wobble, so the ring
- * sits still. Seeded from anything that moves, it would shimmer, and a drawing
- * that boils is the single fastest way to make a hand-drawn interface look
- * cheap rather than made.
+ * Seeded from the step's id, so every redraw while the screen moves produces
+ * the same wobble and the ring sits still instead of shimmering.
  */
 
 export interface Point {
@@ -71,203 +41,49 @@ export function ringPath(box: Box, stepId: string): string {
   });
 }
 
-/** How far clear of the card the stroke begins. */
-const LIFT_OFF = 7;
-/** How far short of the ring the head stops. */
-const STAND_OFF = 9;
-
 /**
- * Where the pointer leaves the card, and where it stops short of the ring.
+ * The rounded outline of a box, as points: `radius` at each corner, sampled
+ * finely enough on the arcs that the sketcher sees a curve.
  *
- * ## Why the end is computed rather than written per side
- *
- * The first version hardcoded a landing point for each of the four sides --
- * "the top of the ring, a bit to the right" and so on -- which is four
- * approximations of one fact and looked it. The ring is an ellipse, so its
- * boundary in any direction is a specific point, and against a wide flat target
- * like the dock those hand-written points were tens of pixels off the actual
- * curve: the head landed on the line, or inside it, or hanging in the gap.
- *
- * So the end is solved. Walk out from the ring's centre towards the start until
- * the ellipse equation is satisfied, then a little further. One expression for
- * every side, exact against any shape of target, and the head always stops just
- * outside the mark and points at it.
- *
- * ## Why the start is off the card and off centre
- *
- * Off the *card* by a few pixels because a stroke touching the edge reads as
- * leaking out from under it rather than as a separate mark. Off *centre* along
- * that edge because a line from the middle of one box to the middle of another
- * is a leader line in a diagram, and this is meant to be a hand.
+ * Pure and exported for the test that holds the outline outside the box.
  */
-function ends(card: Box, ring: Box, side: TourSide): { from: Point; to: Point; bow: number } {
-  const c = { x: ring.x + ring.width / 2, y: ring.y + ring.height / 2 };
-  const rx = Math.max(1, ring.width / 2);
-  const ry = Math.max(1, ring.height / 2);
-
-  // A quarter along the edge, on the side the eye leaves the card from.
-  const off = 0.25;
-  const from: Point =
-    side === 'top'
-      ? { x: card.x + card.width * (0.5 + off), y: card.y + card.height + LIFT_OFF }
-      : side === 'bottom'
-        ? { x: card.x + card.width * (0.5 - off), y: card.y - LIFT_OFF }
-        : side === 'left'
-          ? { x: card.x + card.width + LIFT_OFF, y: card.y + card.height * (0.5 - off) }
-          : { x: card.x - LIFT_OFF, y: card.y + card.height * (0.5 + off) };
-
-  /**
-   * The point on the ellipse in the direction of the start, plus a stand-off.
-   *
-   * `s` is how far along that direction the boundary sits: substituting
-   * `(s*dx, s*dy)` into `(x/rx)^2 + (y/ry)^2 = 1` and solving gives exactly
-   * this. Guarded against a start at the centre, which cannot happen with the
-   * gap the placement keeps but would divide by zero if it did.
-   */
-  const dx = from.x - c.x;
-  const dy = from.y - c.y;
-  const len = Math.hypot(dx, dy) || 1;
-  const ux = dx / len;
-  const uy = dy / len;
-  const s = 1 / Math.hypot(ux / rx, uy / ry);
-  const to: Point = { x: c.x + ux * (s + STAND_OFF), y: c.y + uy * (s + STAND_OFF) };
-
-  /**
-   * Which way the stroke bows.
-   *
-   * Away from the card's centre, so the curve arcs *outward* round the gap
-   * rather than cutting back across the card it just left. The sign falls out
-   * of which side the start sits on relative to the run, which is the same
-   * thing said in arithmetic.
-   */
-  const bow = side === 'top' || side === 'right' ? 1 : -1;
-
-  return { from, to, bow };
-}
-
-/**
- * Sample a quadratic curve, which is what the pen is then run along.
- *
- * Densely, because the stroke is drawn by `roughLoop` rather than by
- * `roughPolyline`. The polyline sketcher bristles *every segment*, so eight
- * samples gave seven separate strokes with a visible break at each join: rough,
- * but broken rough, which is not how a hand draws a curve. `roughLoop`'s drift
- * sampler walks one continuous stroke along the arc length and wanders as it
- * goes, so more samples make the *curve* smoother without making the *line*
- * neater. That is the sloppy-but-continuous quality the board's own sketched
- * shapes have, and it is why the ring already looked right while the shaft did
- * not: `roughEllipse` was going through the loop sampler all along.
- */
-function arc(from: Point, to: Point, bow: number, steps = 22): Point[] {
-  const mx = (from.x + to.x) / 2;
-  const my = (from.y + to.y) / 2;
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const len = Math.hypot(dx, dy) || 1;
-  // Perpendicular to the run, so the curve bends across it rather than along.
-  // A quarter of the distance is the point at which it reads as a deliberate
-  // sweep; much more and it loops back on itself and stops pointing.
-  // A third of the run, capped. A quarter was too timid over the short hops
-  // the placement usually produces -- the stroke read as a slightly bent line
-  // rather than as a swept one -- and past a third it starts curling back on
-  // itself and stops pointing.
-  const lift = Math.min(len * 0.34, 74) * bow;
-  const cx = mx + (-dy / len) * lift;
-  const cy = my + (dx / len) * lift;
-
+export function roundedOutline(box: Box, radius: number, pad: number): Point[] {
+  const x0 = box.x - pad;
+  const y0 = box.y - pad;
+  const x1 = box.x + box.width + pad;
+  const y1 = box.y + box.height + pad;
+  const r = Math.max(0, Math.min(radius + pad, (x1 - x0) / 2, (y1 - y0) / 2));
+  const corners: Array<[number, number, number]> = [
+    [x1 - r, y0 + r, -Math.PI / 2],
+    [x1 - r, y1 - r, 0],
+    [x0 + r, y1 - r, Math.PI / 2],
+    [x0 + r, y0 + r, Math.PI],
+  ];
+  const STEPS = 6;
   const out: Point[] = [];
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const u = 1 - t;
-    out.push({
-      x: u * u * from.x + 2 * u * t * cx + t * t * to.x,
-      y: u * u * from.y + 2 * u * t * cy + t * t * to.y,
-    });
+  for (const [cx, cy, from] of corners) {
+    for (let i = 0; i <= STEPS; i++) {
+      const a = from + (i / STEPS) * (Math.PI / 2);
+      out.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+    }
   }
   return out;
 }
 
-/** The head, as two strokes off the last direction of travel. */
-function head(points: readonly Point[], stepId: string): string {
-  const tip = points[points.length - 1];
-  const before = points[points.length - 3] ?? points[0];
-  const angle = Math.atan2(tip.y - before.y, tip.x - before.x);
-  const size = 13;
-  const spread = 0.42;
+/** How far outside the spotlight's edge the tour's pen outline runs. */
+export const OUTLINE_PAD = 9;
 
-  const wing = (turn: number): Point => ({
-    x: tip.x - size * Math.cos(angle + turn),
-    y: tip.y - size * Math.sin(angle + turn),
+/**
+ * The tour's mark: a pen line round the spotlight's own shape.
+ *
+ * An ellipse fits a button and fails a toolbar: round the dock, an ellipse that
+ * clears the middle cuts across both ends. Following the cut-out keeps the
+ * mark outside the element on every shape, a pill or an 800px dock alike.
+ */
+export function outlinePath(box: Box, radius: number, stepId: string): string {
+  return roughLoop(roundedOutline(box, radius, OUTLINE_PAD), {
+    seed: seedFrom(`outline:${stepId}`),
+    level: 'medium',
+    width: 2,
   });
-
-  // Two open strokes rather than a filled triangle: a filled head is a vector
-  // arrowhead and reads as a diagram, where two crossing pen strokes read as
-  // the same hand that drew the shaft.
-  // Two short strokes, and `roughPolyline` is right for these: they are two
-  // straight flicks rather than a curve, and the loop sampler's continuity has
-  // nothing to be continuous *through* over eleven units.
-  return [
-    roughPolyline([wing(spread), tip], { seed: seedFrom(`hl:${stepId}`), closed: false, level: 'medium', width: 2 }),
-    roughPolyline([wing(-spread), tip], { seed: seedFrom(`hr:${stepId}`), closed: false, level: 'medium', width: 2 }),
-  ].join(' ');
-}
-
-export interface Pointer {
-  /** The curving shaft. */
-  shaft: string;
-  /** The two strokes of the head. */
-  head: string;
-}
-
-/**
- * Below this the card is against the ring and the arrow is noise.
- *
- * `TOUR_GAP` keeps them well apart in the ordinary case, so this only fires
- * where the placement had to clamp -- a window smaller than the card, or a
- * target in a corner. There the ring is already touching the card and drawing a
- * stroke between them would be pointing at something the reader is looking
- * straight at.
- */
-const MIN_RUN = 34;
-
-/**
- * A curving pen stroke from the card to the ring, with an arrowhead.
- *
- * Returned as two paths rather than one so the shaft can draw itself on and the
- * head can arrive after it, which is the order a hand does it in.
- */
-export function pointerPath(card: Box, ring: Box, side: TourSide, stepId: string): Pointer | null {
-  const { from, to, bow } = ends(card, ring, side);
-  if (Math.hypot(to.x - from.x, to.y - from.y) < MIN_RUN) return null;
-  const points = arc(from, to, bow);
-  return {
-    /**
-     * `medium`, which is two passes.
-     *
-     * It was `light`, and `light` is one pass: `rough.ts` describes that as
-     * "a neat hand with a straight edge... drawn without reading as informal",
-     * which is the wrong register for an annotation somebody has scrawled on
-     * your screen. The same file calls the doubling "the single most
-     * recognisable thing about a hand-drawn shape", and a single-pass stroke
-     * simply does not have it -- which is why the arrow read as a curve rather
-     * than as a pen mark.
-     */
-    shaft: roughLoop(points, {
-      seed: seedFrom(`arrow:${stepId}`),
-      closed: false,
-      level: 'medium',
-      width: 2,
-    }),
-    head: head(points, stepId),
-  };
-}
-
-/** The ring's own box, which the pointer aims at rather than at the target. */
-export function ringBox(box: Box): Box {
-  return {
-    x: box.x - RING_PAD,
-    y: box.y - RING_PAD,
-    width: box.width + RING_PAD * 2,
-    height: box.height + RING_PAD * 2,
-  };
 }

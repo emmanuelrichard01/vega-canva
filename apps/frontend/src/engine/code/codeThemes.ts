@@ -105,6 +105,32 @@ export const CODE_THEMES: Record<CodeThemeId, CodeTheme> = {
   },
 };
 
+/** Each theme's partner of the other brightness. */
+export const CODE_THEME_PAIR: Record<CodeThemeId, CodeThemeId> = {
+  midnight: 'daylight',
+  daylight: 'midnight',
+  dusk: 'paper',
+  paper: 'dusk',
+};
+
+/**
+ * The theme a block is drawn in for this viewer: its own, or — when it follows
+ * the board — whichever of its pair matches the board's brightness.
+ */
+export function resolveCodeTheme(spec: { theme: CodeThemeId; followBoard?: boolean }, boardDark: boolean): CodeTheme {
+  const own = CODE_THEMES[spec.theme] ?? CODE_THEMES.midnight;
+  if (!spec.followBoard || own.dark === boardDark) return own;
+  return CODE_THEMES[CODE_THEME_PAIR[own.id]];
+}
+
+const DIFF_DARK = { addRow: 'rgba(63, 185, 80, 0.16)', addInk: '#7EE787', delRow: 'rgba(248, 81, 73, 0.16)', delInk: '#FFA198', hunkRow: 'rgba(130, 170, 255, 0.10)' } as const;
+const DIFF_LIGHT = { addRow: 'rgba(26, 127, 55, 0.10)', addInk: '#1A7F37', delRow: 'rgba(207, 34, 46, 0.09)', delInk: '#B42318', hunkRow: 'rgba(9, 105, 218, 0.07)' } as const;
+
+/** Row tint and marker ink for diff mode, per brightness. Each ink holds AA on its own tinted row. */
+export function diffColours(dark: boolean) {
+  return dark ? DIFF_DARK : DIFF_LIGHT;
+}
+
 /** The monospace stack every surface draws code in, so their widths agree. */
 export const CODE_FONT = `'JetBrains Mono', 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace`;
 export const CODE_UI_FONT = `Inter, system-ui, -apple-system, sans-serif`;

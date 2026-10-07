@@ -3,6 +3,9 @@ import { labelPlated, shapeLabelBox } from '../model/shapes/labelBox';
 import { solidFillOf } from '../model/labelInk';
 import { useStore } from '../../hooks/useStore';
 import { THEMES } from '../model/stickyThemes';
+import { isEmojiLike } from '../emoji/emojiText';
+import { emojiSvgElement, prefetchEmojiSvg } from '../emoji/emojiSvg';
+import { STAMP_PLUS_ONE } from '../model/stickyStamps';
 import type { AnyNode, ConnectorNode, ImageNode, PathNode, ShapeNode, TextNode, Typography } from '../model/schema';
 import { connectorPoints, ELBOW_RADIUS } from '../model/connector';
 import { routeBoard, type BoardRoute } from '../model/connectorRouter/routeBoard';
@@ -21,7 +24,7 @@ import {
 } from '../model/connectorLabelLayout';
 import type { Placed } from '../model/connectorLabels';
 import { readableOnSurface } from '../model/color';
-import { DEFAULT_CONNECTOR_INK } from '../model/schema';
+import { DEFAULT_CONNECTOR_INK, isOpenShape } from '../model/schema';
 import { gridCellsOf } from '../grid/gridNode';
 import { roundPolygon } from '../grid/gridLayout';
 import { cellGeometry } from '../grid/gridBuild';
@@ -32,7 +35,10 @@ import {
   LABEL_INSET,
   LABEL_SIZE,
 } from '../grid/gridStyle';
-import { fillsInterior } from '../model/rough';
+import { featureStrokeWidth, fillsInterior, shadingStrokeWidth, sketchNib, type SketchLevel } from '../model/rough';
+import { boardSketchFor, resolveSketch, type SketchChoice } from '../model/roughMode';
+import { readBoardSketch } from '../model/roughBoard';
+import { roughPencil, roughStickyPaper } from '../model/roughNodes';
 import { SvgPaintDefs } from './svgPaint';
 import { assembleSvg } from './svgDocument';
 import { fetchBlob, inlineImageSources } from './inlineImages';
@@ -47,7 +53,7 @@ import { contrastInk } from '../model/color';
 import { layoutText } from '../text/layout';
 import { measurerFor } from '../text/measure';
 import { highlightPath } from '../text/highlight';
-import { roughShape } from '../model/roughShape';
+import { roughLineCaps, roughShape } from '../model/roughShape';
 import { loopPath } from '../model/freehandLoop';
 import { canvasFontFamily } from '../../components/canvas/renderers/shared';
 import { DEFAULT_INK } from '../model/schema';
@@ -71,6 +77,15 @@ import { familiesInNodes, fontFaceCss } from '../text/fontEmbed';
  * many, and the first sign of a disagreement would be an exported star with a
  * different number of points from the one on screen.
  */
+
+/**
+ * The level an object is drawn at, resolved exactly as the canvas resolves it:
+ * its own pinned level or Clean, else the board's sketch mode where that
+ * reaches the object's type. Undefined is crisp.
+ */
+function sketchLevelOf(node: AnyNode): SketchLevel | undefined {
+  return resolveSketch((node as { appearance?: SketchChoice }).appearance, boardSketchFor(node.type, readBoardSketch()));
+}
 
 function bezierPathData(node: PathNode, offsetX: number, offsetY: number): string {
   if (node.geometry.kind === 'freehand') return '';
@@ -263,7 +278,7 @@ function labelSlotsFor(objects: Record<string, AnyNode>): Map<string, Placed> {
 const EXPORT_HOP_RADIUS = 6;
 const EXPORT_HOP_CLEARANCE = 8;
 
-function connectorMarkup(node: ConnectorNode, objects: Record<string, AnyNode>): string {
+function connectorMarkup(node: ConnectorNode, objects: Record<string, AnyNode>, level: SketchLevel | undefined): string {
   const route = routesFor(objects).get(node.id);
   const world = route
     ? route.points.flatMap((p) => [p.x, p.y])
@@ -288,8 +303,8 @@ function connectorMarkup(node: ConnectorNode, objects: Record<string, AnyNode>):
   const run: { x: number; y: number }[] = [];
   for (let i = 0; i + 1 < trimmed.flat.length; i += 2) run.push({ x: trimmed.flat[i], y: trimmed.flat[i + 1] });
 
-  const sketch = node.appearance?.sketch
-    ? { id: node.id, sketchSeed: node.appearance.sketchSeed, level: node.appearance.sketch, width, curved, dashed }
+  const sketch = level
+    ? { id: node.id, sketchSeed: node.appearance?.sketchSeed, level, width, curved, dashed }
     : null;
   const d = sketch
     ? sketchedRun(run, sketch)
@@ -535,7 +550,7 @@ function openShapeMarkup(node: ShapeNode): string {
   return rot ? `<g${rot}>${parts.join('')}</g>` : parts.join('');
 }
 
-function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
+function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs, level: SketchLevel | undefined): string {
   const { x, y, width: w, height: h } = node;
   const cx = x + w / 2;
   const cy = y + h / 2;
@@ -557,14 +572,16 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
    * distribution. That is the entire reason `roughShape` is shared between
    * this and the renderer rather than each having its own.
    */
-  if (node.appearance.sketch) {
+  if (level) {
     const fillPaint = node.appearance.fill?.[0];
     const solidFill = fillPaint && fillPaint.type === 'solid' ? fillPaint.color : undefined;
-    const sketch = roughShape(node, Boolean(solidFill));
-    const nib = Math.max(1.2, sw || 2);
+    const open = isOpenShape(node.geometry.kind);
+    const sketch = roughShape(node, Boolean(fillPaint) && !open, level);
+    const nib = sketchNib(sw);
     // Generated in node-local coordinates, so it is placed by a translate
     // rather than by regenerating every number in world space.
     const place = ` transform="translate(${x} ${y})"`;
+    const fillOpacity = fillPaint?.opacity !== undefined && fillPaint.opacity < 1 ? ` fill-opacity="${num(fillPaint.opacity)}"` : '';
     const parts = [`<g${rot}>`];
     /**
      * Only a style that fills its interior paints the silhouette.
@@ -576,15 +593,17 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
      * is the one thing sharing `roughShape` between the two exists to prevent.
      */
     if (sketch.silhouette && solidFill && fillsInterior(node.appearance.fillStyle)) {
-      parts.push(`<path d="${sketch.silhouette}" fill="${attr(solidFill)}"${place} />`);
+      parts.push(`<path d="${sketch.silhouette}" fill="${attr(solidFill)}"${fillOpacity}${place} />`);
+    }
+    // A gradient or pattern has no single colour to shade with, so it fills the
+    // drawn silhouette whatever the style and only the outline is sketched.
+    if (sketch.silhouette && fillPaint && !solidFill) {
+      parts.push(`<path d="${sketch.silhouette}" fill="${attr(fill)}"${place} />`);
     }
     if (sketch.fill && solidFill) {
-      const fillSw =
-        node.appearance.fillStyle === 'dots'
-          ? node.appearance.sketch === 'heavy' ? 3.6 : node.appearance.sketch === 'light' ? 2.2 : 2.8
-          : Math.max(0.8, nib * 0.7);
+      const fillSw = shadingStrokeWidth(node.appearance.fillStyle, level, nib);
       parts.push(
-        `<path d="${sketch.fill}" fill="none" stroke="${attr(solidFill)}" stroke-width="${fillSw}" stroke-linecap="round"${place} />`
+        `<path d="${sketch.fill}" fill="none" stroke="${attr(solidFill)}" stroke-width="${fillSw}" stroke-linecap="round" stroke-linejoin="round"${fillOpacity}${place} />`
       );
     }
     const sketchInk = stroke === 'none' ? DEFAULT_INK : stroke;
@@ -598,11 +617,21 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
      */
     if (sketch.features) {
       parts.push(
-        `<path d="${sketch.features}" fill="none" stroke="${attr(sketchInk)}" stroke-width="${Math.max(0.75, nib * 0.78)}" stroke-linecap="round" stroke-linejoin="round"${place} />`
+        `<path d="${sketch.features}" fill="none" stroke="${attr(sketchInk)}" stroke-width="${featureStrokeWidth(nib)}" stroke-linecap="round" stroke-linejoin="round"${place} />`
       );
     }
+    // The sketched end markers of a line or arrow, drawn by the canvas's own hand.
+    for (const cap of roughLineCaps(node, level)) {
+      parts.push(
+        `<path d="${cap}" fill="none" stroke="${attr(sketchInk)}" stroke-width="${nib}" stroke-linecap="round" stroke-linejoin="round"${place} />`
+      );
+    }
+    // The dash survives being sketched: sketch is how the marks are made, dash
+    // is whether the line is broken.
+    const dash = dashAttrs(node.appearance.stroke);
+    const lineCap = node.appearance.stroke?.cap ? '' : ' stroke-linecap="round"';
     parts.push(
-      `<path d="${sketch.outline}" fill="none" stroke="${attr(sketchInk)}" stroke-width="${nib}" stroke-linecap="round" stroke-linejoin="round"${place} />`
+      `<path d="${sketch.outline}" fill="none" stroke="${attr(sketchInk)}" stroke-width="${nib}"${dash}${lineCap} stroke-linejoin="round"${place} />`
     );
     parts.push('</g>');
     return parts.join('');
@@ -660,6 +689,18 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
   }
 }
 
+/** Every emoji stamped on a sticky among these nodes, for one artwork prefetch. */
+function stickyStampsOf(nodes: AnyNode[]): string[] {
+  const out = new Set<string>();
+  for (const n of nodes) {
+    if (n.type !== 'sticky') continue;
+    for (const [key, ids] of Object.entries(n.reactions ?? {})) {
+      if (ids.length > 0 && key !== STAMP_PLUS_ONE && isEmojiLike(key)) out.add(key);
+    }
+  }
+  return [...out];
+}
+
 export class SVGExporter implements Exporter {
   type: ExportFormat = 'svg';
 
@@ -676,6 +717,10 @@ export class SVGExporter implements Exporter {
     const parts: string[] = [];
     const defs = new SvgPaintDefs();
     await preloadIcons(nodes);
+
+    // Stamps are drawn as the same emoji art the board shows; the artwork is
+    // read once up front so the walk below stays synchronous.
+    await prefetchEmojiSvg(stickyStampsOf(nodes));
 
     /**
      * Image bytes are pulled into the file before the walk begins.
@@ -716,7 +761,7 @@ export class SVGExporter implements Exporter {
 
       switch (node.type) {
         case 'shape': {
-          parts.push(shapeMarkup(node, defs));
+          parts.push(shapeMarkup(node, defs, sketchLevelOf(node)));
           if (node.text && node.typography) {
             const t = node.typography;
             // Centred in the label box the canvas lays the text out in.
@@ -789,10 +834,23 @@ export class SVGExporter implements Exporter {
                 `<path d="${loop}" fill="${attr(fill)}" transform="translate(${node.x}, ${node.y})" />`
               );
             }
-            // Freehand strokes store their outline relative to the node origin.
-            parts.push(
-              `<path d="${attr(node.geometry.svgPath)}" fill="${attr(ink)}" transform="translate(${node.x}, ${node.y})" />`
-            );
+            // A sketched pencil stroke is gone over by hand from its centreline.
+            // Only a level the stroke itself pins reaches it: the board's mode
+            // leaves a pencil stroke, and its pressure taper, alone.
+            const pencil =
+              node.appearance.sketch && node.geometry.points.length > 1
+                ? roughPencil({ id: node.id, appearance: node.appearance, geometry: node.geometry }, node.appearance.sketch)
+                : null;
+            if (pencil) {
+              parts.push(
+                `<path d="${pencil.d}" fill="none" stroke="${attr(ink)}" stroke-width="${pencil.nib}" stroke-linecap="round" stroke-linejoin="round" transform="translate(${node.x}, ${node.y})" />`
+              );
+            } else {
+              // Freehand strokes store their outline relative to the node origin.
+              parts.push(
+                `<path d="${attr(node.geometry.svgPath)}" fill="${attr(ink)}" transform="translate(${node.x}, ${node.y})" />`
+              );
+            }
           }
           break;
         }
@@ -811,13 +869,43 @@ export class SVGExporter implements Exporter {
 
         case 'sticky': {
           const theme = THEMES[node.theme] ?? THEMES.yellow;
-          parts.push(
-            `<rect x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="12" fill="${attr(theme.bg)}"${rotationTransform(node)} />`
-          );
+          const paperLevel = sketchLevelOf(node);
+          if (paperLevel) {
+            // The paper cut by hand, from the builder the canvas draws through.
+            const paper = roughStickyPaper(node, paperLevel);
+            const place = ` transform="translate(${node.x} ${node.y})"`;
+            parts.push(
+              `<g${rotationTransform(node)}><path d="${paper.silhouette}" fill="${attr(theme.bg)}"${place} /><path d="${paper.outline}" fill="none" stroke="${attr(theme.edge)}" stroke-width="${paper.edgeWidth}" stroke-linecap="round" stroke-linejoin="round"${place} /></g>`
+            );
+          } else {
+            parts.push(
+              `<rect x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="12" fill="${attr(theme.bg)}"${rotationTransform(node)} />`
+            );
+          }
           if (node.text) {
             parts.push(
               `<text y="${node.y + 16}" font-family="Caveat, cursive" font-size="${num(node.fontSize)}" font-weight="bold" fill="${attr(theme.text)}">${multilineTspans(node.text, node.x + 16, node.fontSize, 1.4)}</text>`
             );
+          }
+          if (node.showStamps !== false) {
+            let sx = node.x + 16;
+            const sy = node.y + node.height - 26;
+            for (const [key, ids] of Object.entries(node.reactions ?? {})) {
+              if (ids.length === 0 || (key !== STAMP_PLUS_ONE && !isEmojiLike(key))) continue;
+              const art = key === STAMP_PLUS_ONE ? null : emojiSvgElement(key, sx, sy, 14);
+              if (key === STAMP_PLUS_ONE) {
+                parts.push(`<text x="${sx}" y="${sy + 11}" font-family="Inter" font-size="11" font-weight="bold" fill="${attr(theme.text)}">+1</text>`);
+              } else if (art) {
+                parts.push(art);
+              } else {
+                parts.push(`<text x="${sx}" y="${sy + 12}" font-size="12">${escapeXml(key)}</text>`);
+              }
+              sx += 20;
+              if (ids.length > 1) {
+                parts.push(`<text x="${sx - 4}" y="${sy + 11}" font-family="Inter" font-size="10" fill="${attr(theme.text)}">${ids.length}</text>`);
+                sx += 12;
+              }
+            }
           }
           break;
         }
@@ -845,7 +933,7 @@ export class SVGExporter implements Exporter {
         // deliberately excluded, matching how Figma and Illustrator exclude
         // comment pins from exports.
         case 'connector': {
-          parts.push(connectorMarkup(node, state.objects));
+          parts.push(connectorMarkup(node, state.objects, sketchLevelOf(node)));
           break;
         }
 
@@ -943,7 +1031,7 @@ export class SVGExporter implements Exporter {
           parts.push(
             `<g transform="translate(${node.x} ${node.y})">${chartToSvg(node.chart, node.width, node.height, {
               id: node.id,
-              sketch: node.appearance?.sketch,
+              sketch: sketchLevelOf(node),
               sketchSeed: node.appearance?.sketchSeed,
             })}</g>`
           );
@@ -955,7 +1043,7 @@ export class SVGExporter implements Exporter {
           parts.push(
             `<g transform="translate(${node.x} ${node.y})">${tableToSvg(node.table, node.width, node.height, {
               id: node.id,
-              sketch: node.appearance?.sketch,
+              sketch: sketchLevelOf(node),
               sketchSeed: node.appearance?.sketchSeed,
             })}</g>`
           );

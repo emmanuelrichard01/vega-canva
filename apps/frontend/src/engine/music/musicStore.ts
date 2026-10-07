@@ -129,6 +129,17 @@ export function setMusicVolume(v: number): void {
   set({ volume });
 }
 
+let volumeBeforeMute = 0.6;
+
+/** Mutes, or brings the volume back to where it was before. */
+export function toggleMute(): void {
+  if (state.volume === 0) setMusicVolume(volumeBeforeMute || 0.6);
+  else {
+    volumeBeforeMute = state.volume;
+    setMusicVolume(0);
+  }
+}
+
 export function setShareListening(on: boolean): void {
   set({ shareListening: on });
 }

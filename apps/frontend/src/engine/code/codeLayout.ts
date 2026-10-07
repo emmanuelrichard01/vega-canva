@@ -35,6 +35,40 @@ export interface VisualLine {
   tokens: Token[];
   y: number;
   highlighted: boolean;
+  /** In diff mode: what this logical line is. Absent for context lines and outside diff mode. */
+  diff?: DiffMark;
+}
+
+export type DiffMark = 'add' | 'del' | 'hunk';
+
+/**
+ * What each line of a unified diff is, and the source with its markers
+ * blanked so the code after them is highlighted as code.
+ *
+ * The marker becomes a space rather than being removed, so every column —
+ * the canvas, the editor's textarea and the export — stays where it was.
+ * `+++` and `---` are file headers, not changes.
+ */
+export function diffLines(source: string): { marks: (DiffMark | undefined)[]; masked: string } {
+  const lines = source.split('\n');
+  const marks: (DiffMark | undefined)[] = [];
+  const masked = lines.map((line) => {
+    if (line.startsWith('@@')) {
+      marks.push('hunk');
+      return line;
+    }
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      marks.push('add');
+      return ` ${line.slice(1)}`;
+    }
+    if (line.startsWith('-') && !line.startsWith('---')) {
+      marks.push('del');
+      return ` ${line.slice(1)}`;
+    }
+    marks.push(undefined);
+    return line;
+  });
+  return { marks, masked: masked.join('\n') };
 }
 
 export interface CodeLayout {
@@ -149,7 +183,8 @@ export function wrapTokens(tokens: Token[], columns: number): Token[][] {
 }
 
 export function layoutCode(spec: CodeSpec, width: number, charWidth?: number): CodeLayout {
-  const lines = tokenize(spec.source, languageById(spec.language).id);
+  const diff = spec.diff ? diffLines(spec.source) : null;
+  const lines = tokenize(diff ? diff.masked : spec.source, languageById(spec.language).id);
   const metrics = codeMetrics(spec, lines.length, charWidth);
   const codeLeft = metrics.padX + metrics.gutterWidth;
   const room = Math.max(metrics.charWidth * 8, width - codeLeft - metrics.padX);
@@ -172,6 +207,7 @@ export function layoutCode(spec: CodeSpec, width: number, charWidth?: number): C
         tokens: visualChunks[c],
         y,
         highlighted: highlighted.has(i + 1),
+        ...(diff?.marks[i] ? { diff: diff.marks[i] } : {}),
       });
       y += metrics.lineHeight;
     }

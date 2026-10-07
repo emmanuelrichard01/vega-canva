@@ -7,6 +7,14 @@ import { calculateOptimalAudioWidth, resampleWaveform } from '../model/audioPlay
 import { mediaUploadUrl, roomRequestHeaders } from '../../utils/endpoints';
 import { queueOfflineMedia } from '../../utils/offlineMediaQueue';
 import { localSrcFor, registerLocalMedia, releaseLocalMedia } from '../../utils/pendingMedia';
+import {
+  createTranscriber,
+  setTranscriptionWanted,
+  transcriptionSupported,
+  transcriptionWanted,
+  type Transcriber,
+  type TranscriberError,
+} from '../media/transcribe';
 
 /**
  * Hard stop for a single take.
@@ -15,7 +23,7 @@ import { localSrcFor, registerLocalMedia, releaseLocalMedia } from '../../utils/
  * the microphone open and accumulates peaks until the tab closes. Reaching the
  * cap *keeps* the take rather than discarding it — the words were still said.
  */
-const MAX_RECORDING_MS = 5 * 60 * 1000;
+export const MAX_RECORDING_MS = 5 * 60 * 1000;
 
 /**
  * Peaks kept for the stored waveform.
@@ -112,6 +120,11 @@ export class AudioTool implements Tool {
   /** Long tail of levels, only for deciding whether anything is being heard. */
   private silenceWindow: number[] = [];
 
+  /** The browser's speech recognition for this take, when the person turned it on. */
+  private transcriber: Transcriber | null = null;
+  private transcript = '';
+  private transcriptError: TranscriberError | null = null;
+
   private elapsedMs(): number {
     return this.elapsedBeforePause + (this.isPaused ? 0 : Date.now() - this.runStartedAt);
   }
@@ -190,6 +203,9 @@ export class AudioTool implements Tool {
       this.isPaused = false;
       presenceManager.updateActivity('recording');
       this.attachKeys(ctx);
+      this.transcript = '';
+      this.transcriptError = null;
+      if (transcriptionWanted()) this.startTranscription();
       // Lets Room.tsx's "click anywhere to record" hint get out of the way
       // once recording actually starts, instead of sitting there stale.
       window.dispatchEvent(new CustomEvent('audio-recording-start'));
@@ -252,11 +268,60 @@ export class AudioTool implements Tool {
     }
   }
 
+  /**
+   * Begin hearing words, from this moment in the take.
+   *
+   * Turned on mid-take it transcribes from then on; what was said before is
+   * not recoverable, and the caption makes that visible by starting empty.
+   */
+  private startTranscription() {
+    this.transcriber?.cancel();
+    this.transcriptError = null;
+    this.transcriber = createTranscriber((text, error) => {
+      this.transcript = text;
+      if (error) {
+        this.transcriptError = error;
+        this.transcriber = null;
+        // A browser that refused once refuses every time; the next take does
+        // not open by asking again and failing again.
+        if (error === 'blocked') setTranscriptionWanted(false);
+      }
+    });
+    if (!this.transcriber) {
+      this.transcriptError = 'unavailable';
+      return;
+    }
+    if (!this.isPaused) this.transcriber.start();
+  }
+
+  private toggleTranscription(ctx: ToolContext) {
+    if (!this.isRecording || !transcriptionSupported()) return;
+    if (this.transcriber) {
+      // Off means off: what it heard so far is dropped, not kept quietly.
+      this.transcriber.cancel();
+      this.transcriber = null;
+      this.transcript = '';
+      setTranscriptionWanted(false);
+    } else {
+      setTranscriptionWanted(true);
+      this.startTranscription();
+    }
+    this.pushHud(ctx, this.elapsedMs());
+  }
+
   private pushHud(ctx: ToolContext, elapsed: number) {
     ctx.setOverlayState?.({
       type: 'audio-recording',
       elapsedMs: elapsed,
+      maxMs: MAX_RECORDING_MS,
       remainingMs: MAX_RECORDING_MS - elapsed,
+      transcription: {
+        supported: transcriptionSupported(),
+        on: this.transcriber !== null,
+        text: this.transcript,
+        error: this.transcriptError,
+      },
+      onToggleTranscription: () => this.toggleTranscription(ctx),
       levels: [...this.recentLevels],
       paused: this.isPaused,
       // Only claimed once there is a full window to judge, so a take does not
@@ -287,6 +352,7 @@ export class AudioTool implements Tool {
       this.mediaRecorder.resume();
       this.runStartedAt = Date.now();
       this.isPaused = false;
+      this.transcriber?.start();
       presenceManager.updateActivity('recording');
       // Cleared so a pause is not immediately followed by a silence warning
       // built out of samples from before it.
@@ -295,6 +361,7 @@ export class AudioTool implements Tool {
       this.mediaRecorder.pause();
       this.elapsedBeforePause += Date.now() - this.runStartedAt;
       this.isPaused = true;
+      this.transcriber?.pause();
       presenceManager.updateActivity(null);
     }
     this.pushHud(ctx, this.elapsedMs());
@@ -310,6 +377,9 @@ export class AudioTool implements Tool {
   private cancelRecording(ctx: ToolContext) {
     if (!this.mediaRecorder || !this.isRecording) return;
     this.teardown(ctx);
+    this.transcriber?.cancel();
+    this.transcriber = null;
+    this.transcript = '';
 
     // Drop the chunks before stopping, so `onstop` has nothing to build from.
     this.audioChunks = [];
@@ -377,6 +447,9 @@ export class AudioTool implements Tool {
     if (!this.mediaRecorder || !this.isRecording) return;
     const durationMs = this.elapsedMs();
     const peaks = this.waveformData;
+    const transcript = this.transcriber ? this.transcriber.finish() : this.transcript;
+    this.transcriber = null;
+    this.transcript = '';
     this.teardown(ctx);
 
     this.mediaRecorder.onstop = async () => {
@@ -436,6 +509,7 @@ export class AudioTool implements Tool {
         durationMs,
         waveform: resampleWaveform(peaks, STORED_PEAKS),
         author,
+        ...(transcript ? { transcript } : {}),
       });
 
       if (uploadSucceeded) {

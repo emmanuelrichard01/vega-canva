@@ -6,36 +6,25 @@ import { unionBounds, type FitBounds } from '../cameraFit';
 /**
  * Turns the server's raw CRDT update log into a human session timeline.
  *
- * ## Why this exists
+ * A row in `room_updates` is one Yjs transaction: the unit storage uses, not a
+ * unit anyone authored. Dragging a sticky emits dozens; renaming it emits one.
+ * The builder applies the rows into a scratch document, watches what each one
+ * did, and folds runs of related transactions into described moments ("Ada
+ * moved Idea Card"), each attributed to the person who made it.
  *
- * Time Travel used to scrub the raw log directly and label the playhead
- * "Change 5 of 8". A row in `room_updates` is one Yjs transaction — the unit
- * the *storage layer* happens to use, not a unit anyone authored. Dragging one
- * sticky across the canvas emits dozens of them; renaming it emits one. So the
- * scrubber's steps were wildly uneven, nothing said who did anything, and
- * there was no way to seek to a moment you actually remembered.
+ * Replaying the update stream stays the substrate because it captures every
+ * change regardless of origin, including drags and physics settles that never
+ * pass through the editor's command layer.
  *
- * Replaying the update stream is still the right substrate, and deliberately
- * so: it captures *every* change regardless of origin, including drag moves
- * and physics settles that never pass through the editor command layer. The
- * fix is not to replace the substrate but to read meaning out of it. We apply
- * the updates once into a scratch document, watch what each one actually did,
- * and fold runs of related transactions into single described moments.
- *
- * The result is that the playhead moves through "Ada moved Idea Card" rather
- * than "Change 5 of 8", while replay fidelity is unchanged.
- *
- * ## Seeking
- *
- * Yjs updates cannot be un-applied, so rewinding means rebuilding. Rebuilding
- * from index 0 on every backwards scrub is O(n) per frame, which made scrubbing
- * a long session progressively slower the further in you were. We therefore
- * also capture periodic keyframes — encoded document states — so a seek only
- * has to replay from the nearest keyframe at or before the target.
+ * Yjs updates cannot be un-applied, so the builder also records periodic
+ * keyframes (encoded document states); `ReplayEngine` (frames.ts) seeks from
+ * the nearest one rather than from the first row.
  */
 
 /** One row of the server's `room_updates` log, as returned by `/rooms/:id/history`. */
 export interface RawUpdate {
+  /** Server row id; present on logs from the paged endpoint. */
+  id?: number;
   createdAt: string;
   /** Base64-encoded Yjs update. */
   update: string;
@@ -62,6 +51,8 @@ export interface Moment {
   firstIndex: number;
   /** Epoch ms of the moment's last update. */
   at: number;
+  /** Epoch ms of the moment's first update. */
+  firstAt: number;
   kind: MomentKind;
   /** Nodes this moment touched. */
   ids: string[];
@@ -72,6 +63,8 @@ export interface Moment {
   label: string;
   /** How many raw transactions were folded in — the "weight" of the moment. */
   updateCount: number;
+  /** Server row id of the moment's last update, when the log carried ids. */
+  rowId?: number;
 }
 
 export interface Keyframe {
@@ -137,24 +130,10 @@ export interface BuildOptions {
    */
   baseline?: Uint8Array | null;
   /**
-   * How long this may spend before it gives up and returns what it has.
-   *
-   * Building a timeline is synchronous, so without a ceiling a pathological log
-   * freezes the tab outright — which is what Time Travel was reported for.
-   *
-   * "Pathological" is specific and measurable. A **healthy** four hundred
-   * updates build in 186ms. The same four hundred rows from a log whose base
-   * had been trimmed away took **28,332ms**: Yjs parks updates whose
-   * dependencies are missing in a pending store, that store grows with every
-   * orphaned row, and each keyframe's `encodeStateAsUpdate` then walks all of
-   * it. A hundred and fifty times slower, for the same number of rows.
-   *
-   * `replay_base` stops logs being orphaned in the first place, so this should
-   * never fire on data written by the current server. It exists for the rooms
-   * already damaged by the version that trimmed without keeping a baseline, and
-   * for whatever the next unanticipated shape turns out to be: a replay that
-   * covers less of the session is a bad outcome, and a tab that stops
-   * responding is not an outcome at all.
+   * How long a synchronous build may spend before returning what it has,
+   * marked `truncated`. A log whose base is missing makes Yjs park every row in
+   * its pending store, which slows each later apply; the budget keeps that a
+   * pause rather than a frozen tab.
    */
   budgetMs?: number;
 }
@@ -213,19 +192,10 @@ const STYLE_FIELDS = new Set([
 /**
  * Bookkeeping stamped by the write path rather than chosen by a person.
  *
- * `mutations.updateNode` sets these on *every* write, so without this every
- * edit arrived carrying an unclassifiable field and collapsed to "mixed" — the
- * timeline said "Dave changed Ship the beta" where it should have said "moved"
- * or "edited". These are invisible to classification, and a transaction
- * touching nothing else is not an authored moment at all.
- *
- * **This list has to move whenever the write path learns to stamp something
- * new.** It is a second record of what `updateNode` writes, with no compiler
- * holding the two together — invariant 7 in its purest form. `updatedBy` and
- * `updatedByName` were added to the write path and missed here, and the tests
- * did not notice because their fixtures build updates by hand rather than going
- * through `updateNode`, so nothing in them ever carried the new fields. The
- * test below now asserts the set against the real stamping instead.
+ * `mutations.updateNode` sets these on every write, so they are invisible to
+ * classification, and a transaction touching nothing else is not an authored
+ * moment. This list must follow the write path; a test holds it against what
+ * `updateNode` actually stamps.
  */
 const BOOKKEEPING_FIELDS = new Set([
   'updatedAt',
@@ -340,192 +310,232 @@ function summarise(kind: MomentKind, names: string[]): string {
   return `${verb} ${names.length} objects`;
 }
 
-export function buildTimeline(updates: RawUpdate[], options: BuildOptions = {}): SessionTimeline {
-  const startedAt = now();
-  const coalesceWindow = options.coalesceWindowMs ?? DEFAULT_COALESCE_MS;
-  const maxKeyframes = Math.max(1, options.maxKeyframes ?? DEFAULT_MAX_KEYFRAMES);
-
-  const doc = new Y.Doc();
+/** Options for the incremental builder. */
+export interface TimelineBuilderOptions {
+  coalesceWindowMs?: number;
+  baseline?: Uint8Array | null;
+  /** Rows between keyframes before any thinning. */
+  keyframeEvery?: number;
   /**
-   * Seeded before anything is observed, so the baseline is the starting
-   * *state* rather than an authored moment.
-   *
-   * Applying it after the observer is attached would emit a create for every
-   * object the room already had, and the timeline would open with one enormous
-   * fabricated moment reading "someone added 400 objects" at the timestamp of
-   * the first retained edit.
+   * Keyframes kept. Past this the builder drops every other one and doubles
+   * the interval, so memory stays bounded however long the log grows while
+   * seeks stay O(interval).
    */
-  if (options.baseline) {
-    try {
-      Y.applyUpdate(doc, options.baseline);
-    } catch {
-      // An unreadable baseline degrades to the old behaviour — a replay that
-      // starts from nothing — rather than taking the whole timeline down.
+  maxKeyframes?: number;
+}
+
+/**
+ * Builds a timeline from a log that arrives in pages and is processed in
+ * slices.
+ *
+ * Applying an update is synchronous, and a long log applied in one pass blocks
+ * the tab for as long as it takes. The builder instead does as much as a
+ * caller's budget allows per `step`, so the caller can yield between slices
+ * (see `buildTimelineSliced`) and every frame stays inside its budget however
+ * many rows there are. Rows can be appended while it works, which is what lets
+ * the timeline grow while later pages are still downloading.
+ */
+export class TimelineBuilder {
+  private readonly rows: RawUpdate[] = [];
+  private cursor = 0;
+  private readonly doc = new Y.Doc();
+  private readonly objects: Y.Map<Y.Map<unknown>>;
+  private readonly identities: Y.Map<{ name?: string; color?: string }>;
+  private pending = emptyPending();
+  private readonly names = new Map<string, string>();
+  private readonly authors = new Map<string, { id: string; name: string; color: string }>();
+  private keyframes: Keyframe[] = [];
+  private readonly moments: Moment[] = [];
+  private sessionBounds: FitBounds | null = null;
+  private open: OpenMoment | null = null;
+  private keyframeEvery: number;
+  private readonly maxKeyframes: number;
+  private readonly coalesceWindow: number;
+  private destroyed = false;
+  private readonly listener: (events: Y.YEvent<any>[]) => void;
+
+  constructor(options: TimelineBuilderOptions = {}) {
+    this.coalesceWindow = options.coalesceWindowMs ?? DEFAULT_COALESCE_MS;
+    this.keyframeEvery = Math.max(1, options.keyframeEvery ?? 64);
+    this.maxKeyframes = Math.max(2, options.maxKeyframes ?? 64);
+    /**
+     * Seeded before anything is observed, so the baseline is the starting
+     * *state* rather than an authored moment. Applied after the observer, the
+     * timeline would open with one fabricated "someone added 400 objects".
+     */
+    if (options.baseline) {
+      try {
+        Y.applyUpdate(this.doc, options.baseline);
+      } catch {
+        // An unreadable baseline degrades to a replay that starts from nothing.
+      }
+    }
+    this.objects = this.doc.getMap<Y.Map<unknown>>('objects');
+    // Identities recorded by `publishLocalIdentity`: unlike `createdByName`,
+    // which only names a node's creator, this covers anyone who was present.
+    this.identities = this.doc.getMap<{ name?: string; color?: string }>('identities');
+
+    // `event.path` runs from the observed root, so path[0] is the node id and
+    // path[1] (when present) the field whose interior changed.
+    this.listener = (events) => {
+      const pending = this.pending;
+      events.forEach((event) => {
+        const path = event.path as (string | number)[];
+        if (path.length === 0) {
+          event.keys.forEach((change, id) => {
+            if (change.action === 'add') pending.createdIds.add(id);
+            else if (change.action === 'delete') pending.deletedIds.add(id);
+            else {
+              const fields = pending.fieldsById.get(id) ?? new Set<string>();
+              fields.add('mixed');
+              pending.fieldsById.set(id, fields);
+            }
+          });
+          return;
+        }
+        const id = String(path[0]);
+        const fields = pending.fieldsById.get(id) ?? new Set<string>();
+        if (path.length > 1) {
+          fields.add(String(path[1]));
+        } else {
+          event.keys.forEach((_change, field) => {
+            const name = String(field);
+            if (!BOOKKEEPING_FIELDS.has(name)) fields.add(name);
+          });
+        }
+        if (fields.size > 0) pending.fieldsById.set(id, fields);
+      });
+    };
+    this.objects.observeDeep(this.listener);
+  }
+
+  /** Append rows to the end of the log. */
+  push(rows: readonly RawUpdate[]): void {
+    for (const row of rows) this.rows.push(row);
+  }
+
+  /** Every row pushed so far, in order. Seeks index into this. */
+  get log(): RawUpdate[] {
+    return this.rows;
+  }
+
+  /** Rows processed so far. */
+  get processed(): number {
+    return this.cursor;
+  }
+
+  get done(): boolean {
+    return this.cursor >= this.rows.length;
+  }
+
+  /**
+   * Process rows until `budgetMs` has elapsed or the log is exhausted.
+   * Returns true when every pushed row has been processed.
+   */
+  step(budgetMs: number): boolean {
+    if (this.destroyed) return true;
+    const deadline = now() + budgetMs;
+    while (this.cursor < this.rows.length) {
+      this.applyRow(this.cursor);
+      this.cursor++;
+      // Checked every fourth row: cheap, and bounds the overshoot to a few rows.
+      if (this.cursor % 4 === 0 && now() > deadline) break;
+    }
+    return this.done;
+  }
+
+  /**
+   * The timeline as it stands. The moment still being folded is included, so
+   * a partial build is already navigable.
+   */
+  snapshot(): SessionTimeline {
+    const moments = this.open ? [...this.moments, stripOpen(this.open)] : [...this.moments];
+    return {
+      moments,
+      keyframes: [...this.keyframes],
+      totalUpdates: this.rows.length,
+      authors: [...this.authors.values()],
+      bounds: this.sessionBounds,
+    };
+  }
+
+  destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.objects.unobserveDeep(this.listener);
+    this.doc.destroy();
+  }
+
+  private addKeyframe(index: number) {
+    this.keyframes.push({ index, state: Y.encodeStateAsUpdate(this.doc) });
+    if (this.keyframes.length > this.maxKeyframes) {
+      this.keyframes = this.keyframes.filter((_k, i) => i % 2 === 1);
+      this.keyframeEvery *= 2;
     }
   }
-  const objects = doc.getMap<Y.Map<unknown>>('objects');
-  // Identities recorded in the document by `publishLocalIdentity`. Unlike
-  // `createdByName` — which only ever names a node's *creator* — this covers
-  // anyone who was present, so an edit by someone who never created anything
-  // still gets attributed.
-  const identities = doc.getMap<{ name?: string; color?: string }>('identities');
 
-  let pending = emptyPending();
-
-  // `event.path` is the key path from the observed root down to the target, so
-  // path[0] is always the node id and path[1] (when present) the field whose
-  // interior changed. Using it avoids the parent-walk-and-scan that resolving
-  // a nested target would otherwise need.
-  const listener = (events: Y.YEvent<any>[]) => {
-    events.forEach((event) => {
-      const path = event.path as (string | number)[];
-      if (path.length === 0) {
-        event.keys.forEach((change, id) => {
-          if (change.action === 'add') pending.createdIds.add(id);
-          else if (change.action === 'delete') pending.deletedIds.add(id);
-          else {
-            // The node's whole entry was replaced rather than mutated in place.
-            const fields = pending.fieldsById.get(id) ?? new Set<string>();
-            fields.add('mixed');
-            pending.fieldsById.set(id, fields);
-          }
-        });
-        return;
-      }
-
-      const id = String(path[0]);
-      const fields = pending.fieldsById.get(id) ?? new Set<string>();
-      if (path.length > 1) {
-        fields.add(String(path[1]));
-      } else {
-        event.keys.forEach((_change, field) => {
-          const name = String(field);
-          if (!BOOKKEEPING_FIELDS.has(name)) fields.add(name);
-        });
-      }
-      // A transaction that only bumped `updatedAt` describes no authored change.
-      if (fields.size > 0) pending.fieldsById.set(id, fields);
-    });
-  };
-
-  objects.observeDeep(listener);
-
-  /** Last known display name per node, so a delete can still name its target. */
-  const names = new Map<string, string>();
-  const authors = new Map<string, { id: string; name: string; color: string }>();
-  const keyframes: Keyframe[] = [];
-  const moments: Moment[] = [];
-  /** The ground the session ever covered; see `SessionTimeline.bounds`. */
-  let sessionBounds: FitBounds | null = null;
-  let open: OpenMoment | null = null;
-
-  const keyframeEvery = Math.max(1, Math.ceil(updates.length / maxKeyframes));
-
-  const refreshName = (id: string) => {
-    const ymap = objects.get(id);
+  private refreshName(id: string) {
+    const ymap = this.objects.get(id);
     if (!ymap) return;
     try {
       const node = normalizeNode(ymap.toJSON(), id);
-      if (node) names.set(id, nodeLabel(node));
+      if (node) this.names.set(id, nodeLabel(node));
     } catch {
       // A partially-applied node mid-stream is expected; keep the old name.
     }
-  };
+  }
 
-  const registerAuthor = (id: string) => {
-    const ymap = objects.get(id);
+  private registerAuthor(id: string) {
+    const ymap = this.objects.get(id);
     if (!ymap) return;
     const clientId = ymap.get('createdBy');
-    if (typeof clientId !== 'string' || authors.has(clientId)) return;
+    if (typeof clientId !== 'string' || this.authors.has(clientId)) return;
     const name = ymap.get('createdByName');
     const color = ymap.get('createdByColor');
-    authors.set(clientId, {
+    this.authors.set(clientId, {
       id: clientId,
       name: typeof name === 'string' && name ? name : 'A collaborator',
       color: typeof color === 'string' && color ? color : 'var(--text-tertiary)',
     });
-  };
+  }
 
-  const closeMoment = () => {
-    if (!open) return;
-    const { idKey: _idKey, ...moment } = open;
-    moments.push(moment);
-    open = null;
-  };
+  private applyRow(index: number) {
+    const raw = this.rows[index];
+    this.pending = emptyPending();
+    const pending = this.pending;
+    const keyframeDue = (index + 1) % this.keyframeEvery === 0;
 
-  const deadline = startedAt + (options.budgetMs ?? DEFAULT_BUDGET_MS);
-  let truncated = false;
-
-  updates.forEach((raw, index) => {
-    /**
-     * Checked every sixteen rows rather than every row.
-     *
-     * `performance.now()` is cheap but not free, and the loop it guards is
-     * already the hot one. Sixteen bounds the overshoot to a fraction of the
-     * budget on any log where a single row is not itself the problem.
-     */
-    if (truncated || (index % 4 === 0 && index > 0 && now() > deadline)) {
-      truncated = true;
-      return;
-    }
-    pending = emptyPending();
-
-    /**
-     * Decoded **once**.
-     *
-     * This used to call `decodeBase64Update(raw.update)` twice — once to apply
-     * and once again, immediately, to hand to `dominantClient` — so every
-     * transaction in the log paid for two base64 walks and two `Uint8Array`
-     * allocations. On a two-thousand-row session that is two thousand copies
-     * thrown away for nothing.
-     */
+    // Decoded once, and handed to both the apply and the attribution.
     let bytes: Uint8Array;
     try {
       bytes = decodeBase64Update(raw.update);
-      Y.applyUpdate(doc, bytes);
+      Y.applyUpdate(this.doc, bytes);
     } catch {
-      // A corrupt row must not abort the whole session; skip it and continue.
+      // A corrupt row must not abort the whole session.
+      if (keyframeDue) this.addKeyframe(index);
       return;
     }
 
     const at = new Date(raw.createdAt).getTime();
-
-    // Decide this transaction's single dominant kind and target set.
     const touched = new Set<string>([
       ...pending.createdIds,
       ...pending.deletedIds,
       ...pending.fieldsById.keys(),
     ]);
     if (touched.size === 0) {
-      // Metadata-only or awareness-adjacent transaction — nothing authored.
-      if ((index + 1) % keyframeEvery === 0) {
-        keyframes.push({ index, state: Y.encodeStateAsUpdate(doc) });
-      }
+      // Metadata-only or bookkeeping-only: nothing authored.
+      if (keyframeDue) this.addKeyframe(index);
       return;
     }
 
-    /**
-     * Attribution is resolved *after* the no-op check, not before.
-     *
-     * `dominantClient` runs a full `Y.decodeUpdate` — it walks every struct in
-     * the transaction — and it was being run on every row including the many
-     * that turn out to describe no authored change at all. Those now cost
-     * nothing beyond the apply.
-     */
+    // Resolved after the no-op check: `dominantClient` decodes every struct.
     const authorId = dominantClient(bytes);
+    pending.createdIds.forEach((id) => this.registerAuthor(id));
 
-    pending.createdIds.forEach(registerAuthor);
-
-    /**
-     * Grow the session's extent by wherever the touched nodes now are.
-     *
-     * Only the touched ones, because a node can only move through an update
-     * that touches it — so the union over every touched node at every step is
-     * exactly the ground the session ever covered, at O(touched) rather than
-     * O(document) per update.
-     */
+    // The union over every touched node at every step is exactly the ground
+    // the session ever covered, at O(touched) per update.
     for (const id of touched) {
-      const ymap = objects.get(id);
+      const ymap = this.objects.get(id);
       if (!ymap) continue;
       const x = ymap.get('x');
       const y = ymap.get('y');
@@ -533,7 +543,7 @@ export function buildTimeline(updates: RawUpdate[], options: BuildOptions = {}):
       const h = ymap.get('height');
       if (typeof x !== 'number' || typeof y !== 'number') continue;
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-      sessionBounds = unionBounds(sessionBounds, {
+      this.sessionBounds = unionBounds(this.sessionBounds, {
         x,
         y,
         width: typeof w === 'number' && Number.isFinite(w) ? w : 0,
@@ -541,20 +551,11 @@ export function buildTimeline(updates: RawUpdate[], options: BuildOptions = {}):
       });
     }
 
-    /**
-     * Names are refreshed only when something that *is* a name changed.
-     *
-     * `refreshName` runs the node through `normalizeNode` — the full read
-     * boundary — and it was called for every touched node on every update. A
-     * drag emits a transaction every few frames and changes nothing but
-     * coordinates, so the same sticky was fully re-normalized dozens of times
-     * to re-derive a label that could not have moved. Creation and deletion
-     * still refresh, because those are the cases where the label is new or
-     * about to become unreachable.
-     */
-    pending.createdIds.forEach(refreshName);
+    // Names are refreshed only when something that is a name changed; a drag
+    // changes coordinates and cannot move a label.
+    pending.createdIds.forEach((id) => this.refreshName(id));
     pending.fieldsById.forEach((fields, id) => {
-      if (fields.has('text') || fields.has('title') || fields.has('mixed')) refreshName(id);
+      if (fields.has('text') || fields.has('title') || fields.has('mixed')) this.refreshName(id);
     });
 
     let kind: MomentKind;
@@ -569,45 +570,43 @@ export function buildTimeline(updates: RawUpdate[], options: BuildOptions = {}):
     const ids = [...touched];
     const idKey = [...ids].sort().join(',');
 
-    // Prefer an identity the document itself recorded; fall back to the
-    // creator stamp learned from nodes this client made.
-    if (authorId && !authors.has(authorId)) {
-      const declared = identities.get(authorId);
+    if (authorId && !this.authors.has(authorId)) {
+      const declared = this.identities.get(authorId);
       if (declared && typeof declared.name === 'string' && declared.name) {
-        authors.set(authorId, {
+        this.authors.set(authorId, {
           id: authorId,
           name: declared.name,
           color:
-            typeof declared.color === 'string' && declared.color
-              ? declared.color
-              : 'var(--text-tertiary)',
+            typeof declared.color === 'string' && declared.color ? declared.color : 'var(--text-tertiary)',
         });
       }
     }
 
-    const resolvedAuthor = (authorId && authors.get(authorId)) || null;
+    const resolvedAuthor = (authorId && this.authors.get(authorId)) || null;
     const authorName = resolvedAuthor?.name ?? 'A collaborator';
     const authorColor = resolvedAuthor?.color ?? 'var(--text-tertiary)';
-    const labelNames = ids.map((id) => names.get(id) ?? 'an object');
+    const labelNames = ids.map((id) => this.names.get(id) ?? 'an object');
 
-    // Fold into the open moment when it is the same person continuing the same
-    // action on the same things — the drag case — otherwise start a new one.
+    // Same person, same action, same targets, close together: one moment.
+    const open = this.open;
     if (
       open &&
       open.kind === kind &&
       open.authorId === authorId &&
       open.idKey === idKey &&
-      at - open.at <= coalesceWindow
+      at - open.at <= this.coalesceWindow
     ) {
       open.index = index;
       open.at = at;
       open.updateCount += 1;
+      if (typeof raw.id === 'number') open.rowId = raw.id;
     } else {
-      closeMoment();
-      open = {
+      if (open) this.moments.push(stripOpen(open));
+      this.open = {
         index,
         firstIndex: index,
         at,
+        firstAt: at,
         kind,
         ids,
         authorId,
@@ -615,174 +614,58 @@ export function buildTimeline(updates: RawUpdate[], options: BuildOptions = {}):
         authorColor,
         label: `${authorName} ${summarise(kind, labelNames)}`,
         updateCount: 1,
+        rowId: typeof raw.id === 'number' ? raw.id : undefined,
         idKey,
       };
     }
 
-    pending.deletedIds.forEach((id) => names.delete(id));
+    pending.deletedIds.forEach((id) => this.names.delete(id));
+    if (keyframeDue) this.addKeyframe(index);
+  }
+}
 
-    if ((index + 1) % keyframeEvery === 0) {
-      keyframes.push({ index, state: Y.encodeStateAsUpdate(doc) });
-    }
-  });
-
-  closeMoment();
-  objects.unobserveDeep(listener);
-  doc.destroy();
-
-  return {
-    moments,
-    keyframes,
-    totalUpdates: updates.length,
-    authors: [...authors.values()],
-    bounds: sessionBounds,
-    truncated: truncated || undefined,
-  };
+function stripOpen(open: OpenMoment): Moment {
+  const { idKey: _idKey, ...moment } = open;
+  return moment;
 }
 
 /**
- * Materialise the document as of `targetIndex`, reusing `existing` when it is
- * already at or before the target so forward scrubbing stays incremental.
+ * Build a timeline in one synchronous pass, bounded by `budgetMs`.
  *
- * Returns the doc plus the index it now reflects. Callers own destroying it.
+ * For tests and small logs. The replay UI uses `buildTimelineSliced`, which
+ * yields between slices instead of stopping at the budget.
  */
-export function materialiseAt(
-  updates: RawUpdate[],
-  targetIndex: number,
-  keyframes: Keyframe[],
-  existing?: { doc: Y.Doc; appliedThrough: number } | null,
-  /**
-   * The state the retained log builds on, for a rewind that lands before the
-   * first keyframe.
-   *
-   * Keyframes are encoded *after* `buildTimeline` seeds its scratch document,
-   * so they already contain the baseline — but seeking to the very start of the
-   * session uses no keyframe at all, and without this that one position would
-   * show an empty board while every other position showed a full one.
-   */
-  baseline?: Uint8Array | null
-): { doc: Y.Doc; appliedThrough: number } {
-  const target = Math.min(targetIndex, updates.length - 1);
-
-  // Forward from where we already are: the cheap, common case while playing.
-  if (existing && existing.appliedThrough <= target) {
-    for (let i = existing.appliedThrough + 1; i <= target; i++) {
-      try {
-        Y.applyUpdate(existing.doc, decodeBase64Update(updates[i].update));
-      } catch {
-        /* skip corrupt row */
-      }
-    }
-    return { doc: existing.doc, appliedThrough: target };
-  }
-
-  // Rewinding: start from the nearest keyframe at or before the target rather
-  // than from index 0.
-  let start = -1;
-  let seed: Uint8Array | null = null;
-  for (const frame of keyframes) {
-    if (frame.index <= target && frame.index > start) {
-      start = frame.index;
-      seed = frame.state;
-    }
-  }
-
-  const doc = new Y.Doc();
-  // No keyframe to start from means starting at the beginning of the retained
-  // window, which is exactly where the baseline belongs.
-  if (!seed && baseline) {
-    try {
-      Y.applyUpdate(doc, baseline);
-    } catch {
-      /* an unreadable baseline degrades to an empty start */
-    }
-  }
-  if (seed) {
-    try {
-      Y.applyUpdate(doc, seed);
-    } catch {
-      start = -1;
-    }
-  }
-  for (let i = start + 1; i <= target; i++) {
-    try {
-      Y.applyUpdate(doc, decodeBase64Update(updates[i].update));
-    } catch {
-      /* skip corrupt row */
-    }
-  }
-  return { doc, appliedThrough: target };
+export function buildTimeline(updates: RawUpdate[], options: BuildOptions = {}): SessionTimeline {
+  const maxKeyframes = Math.max(1, options.maxKeyframes ?? DEFAULT_MAX_KEYFRAMES);
+  const builder = new TimelineBuilder({
+    coalesceWindowMs: options.coalesceWindowMs,
+    baseline: options.baseline,
+    keyframeEvery: Math.max(1, Math.ceil(updates.length / maxKeyframes)),
+    maxKeyframes: maxKeyframes * 2,
+  });
+  builder.push(updates);
+  const finished = builder.step(options.budgetMs ?? DEFAULT_BUDGET_MS);
+  const timeline = builder.snapshot();
+  builder.destroy();
+  return finished ? timeline : { ...timeline, truncated: true };
 }
 
-/**
- * One column of the replay bar's activity strip.
- *
- * `weight` is 0..1 against the busiest column, so the strip can be drawn
- * without the caller knowing anything about the rest of the session.
- */
-export interface ActivityBucket {
-  /** Moments that fell in this slice of wall-clock time. */
-  count: number;
-  /** Height to draw, relative to the busiest bucket. */
-  weight: number;
-  /** Colour of whoever authored most of it, or null for an empty slice. */
-  color: string | null;
-}
+/** Resolve on the next macrotask, so input and paint can run between slices. */
+const yieldToBrowser = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 /**
- * Divide the session into equal slices of **wall-clock time** and count the
- * moments in each.
- *
- * ## Why this exists
- *
- * The replay bar drew one dot per moment, positioned at `i / (count - 1)` —
- * evenly spaced *by index*. Its own comment claimed the ticks showed "where the
- * session was busy instead of spacing steps evenly", which is exactly what
- * index spacing cannot show: fifty edits in one frantic minute and fifty spread
- * over an afternoon produce an identical row of evenly spaced dots.
- *
- * Time is the axis that answers the question, so the strip uses time and the
- * scrub track keeps index spacing — which is the right axis for *navigating*,
- * since it makes every moment equally reachable no matter when it happened.
- * Two axes, each doing the thing it is good at, rather than one doing neither.
- *
- * A session with no elapsed time — everything in the same millisecond, or a
- * single moment — spreads evenly rather than piling into bucket zero, because
- * a strip with one full bar at the far left reads as a rendering fault.
+ * Drive a builder to completion in slices of `sliceMs`, yielding between
+ * them. `onProgress` sees the row count after each slice.
  */
-export function activityBuckets(moments: Moment[], count: number): ActivityBucket[] {
-  const empty = (): ActivityBucket[] =>
-    new Array(Math.max(0, count)).fill(null).map(() => ({ count: 0, weight: 0, color: null }));
-
-  if (count <= 0 || moments.length === 0) return empty();
-
-  const first = moments[0].at;
-  const last = moments[moments.length - 1].at;
-  const span = last - first;
-
-  const buckets = empty();
-  /** Author tallies per bucket, so each column can name its majority. */
-  const tallies: Array<Map<string, number>> = buckets.map(() => new Map());
-
-  moments.forEach((moment, i) => {
-    const fraction = span > 0 ? (moment.at - first) / span : i / Math.max(1, moments.length - 1);
-    // The final moment lands exactly on 1 and would index one past the end.
-    const slot = Math.min(count - 1, Math.max(0, Math.floor(fraction * count)));
-    buckets[slot].count += 1;
-    const tally = tallies[slot];
-    tally.set(moment.authorColor, (tally.get(moment.authorColor) ?? 0) + 1);
-  });
-
-  const busiest = Math.max(...buckets.map((b) => b.count));
-  buckets.forEach((bucket, i) => {
-    bucket.weight = busiest > 0 ? bucket.count / busiest : 0;
-    let best: string | null = null;
-    let bestN = 0;
-    tallies[i].forEach((n, color) => {
-      if (n > bestN) { bestN = n; best = color; }
-    });
-    bucket.color = best;
-  });
-
-  return buckets;
+export async function buildTimelineSliced(
+  builder: TimelineBuilder,
+  options: { sliceMs?: number; signal?: AbortSignal; onProgress?: (processed: number) => void } = {}
+): Promise<void> {
+  const slice = options.sliceMs ?? 8;
+  while (!builder.done) {
+    if (options.signal?.aborted) return;
+    builder.step(slice);
+    options.onProgress?.(builder.processed);
+    await yieldToBrowser();
+  }
 }

@@ -9,101 +9,14 @@
 
 .music__source .seg { width: 100%; }
 
-/* ------------------------------------------------------------ now playing */
+/* ------------------------------------------------------------ now playing: see nowplaying.css */
 
-.music-hero {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  grid-template-areas:
-    'deck body'
-    'progress progress';
-  align-items: center;
-  column-gap: var(--space-4);
-  row-gap: var(--space-3);
-}
-.music-hero > .tt { grid-area: deck; }
-.music-hero__body {
-  grid-area: body;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  min-width: 0;
-}
 .music-prompt {
   margin: 0;
   font-size: var(--text-base);
   line-height: 1.4;
   color: var(--text-secondary);
 }
-.music-hero__text { min-width: 0; }
-
-.music-hero__title {
-  font-size: var(--text-lg);
-  font-weight: 600;
-  line-height: 1.25;
-  letter-spacing: -0.01em;
-  text-wrap: balance;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-.music-hero__subtitle {
-  margin-top: 3px;
-  font-size: var(--text-sm);
-  line-height: 1.4;
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.music-hero__status {
-  margin-top: 3px;
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
-}
-
-.music-transport {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-/* The one primary control: an ink disc, not the accent. */
-.music-play {
-  display: inline-grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: var(--text-primary);
-  color: var(--surface-elevated);
-  cursor: pointer;
-  transition: transform var(--motion-hover), opacity var(--motion-hover);
-}
-.music-play:hover { opacity: 0.88; }
-.music-play:active { transform: scale(0.95); }
-.music-play:focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: 2px;
-}
-
-.music-progress {
-  grid-area: progress;
-  display: grid;
-  grid-template-columns: 4.5ch minmax(0, 1fr) 5ch;
-  align-items: center;
-  gap: var(--space-2);
-}
-.music-progress__time {
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-.music-progress__time:last-child { text-align: right; }
 
 /* The credit some licences require wherever a track plays: present, never loud. */
 .music-credit {
@@ -732,18 +645,6 @@ a.music-connect {
   color: var(--text-secondary);
 }
 
-.music-volume {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 3ch;
-  align-items: center;
-  gap: var(--space-2);
-}
-.music-volume__value {
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
 
 /* One range style for volume and position. */
 .music-range {
@@ -876,8 +777,7 @@ a.music-connect {
 .music-menu__item:hover { background: var(--surface-hover); }
 .music-menu__item:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: -2px; }
 
-.music-search__input,
-.music-select {
+.music-search__input {
   box-sizing: border-box;
   width: 100%;
   height: var(--control-h-md);
@@ -890,16 +790,6 @@ a.music-connect {
   font-size: var(--text-base);
 }
 .music-search__input::placeholder { color: var(--text-tertiary); }
-.music-search__input:focus-visible,
-.music-select:focus-visible { outline: 2px solid var(--focus-field-color, var(--focus-ring-color)); outline-offset: 0; }
-
-.music-device {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-}
+.music-search__input:focus-visible { outline: 2px solid var(--focus-field-color, var(--focus-ring-color)); outline-offset: 0; }
 
 .music-error__tools { display: inline-flex; align-items: center; gap: var(--space-2); flex: none; }

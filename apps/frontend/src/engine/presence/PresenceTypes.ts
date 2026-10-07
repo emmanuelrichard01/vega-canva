@@ -77,4 +77,6 @@ export interface PresenceState {
   spotlight?: { at: number } | null;
   /** Cursor chat: a short line shown beside the pointer. Never persisted. */
   chat?: { text: string; open: boolean; at: number } | null;
+  /** "Look here": a world point, shown to everyone for a moment. Never persisted. */
+  ping?: { x: number; y: number; at: number } | null;
 }

@@ -3,7 +3,9 @@ import Konva from 'konva';
 import { Group, Image as KonvaImage, Rect, Text } from 'react-konva';
 import useImage from 'use-image';
 import type { ImageNode } from '../../../engine/model/schema';
-import { updateNode } from '../../../engine/document';
+import { applyNodePatches, DERIVED_ORIGIN } from '../../../engine/document';
+import { isElectedWriter } from '../../../engine/document/election';
+import { cornerRadiiOf } from '../../../engine/model/cornerRadii';
 import { isCropped, readCrop } from '../../../engine/model/imageCrop';
 import {
   activeFilterIds,
@@ -12,7 +14,8 @@ import {
   toKonvaValues,
   type AdjustmentId,
 } from '../../../engine/model/imageAdjustments';
-import { shadowProps } from './shared';
+import { shadowProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
+import { useDarkTheme } from './useDarkTheme';
 import { uploadIdFromSrc, useResolvedSrc } from '../../../utils/pendingMedia';
 import { retryUpload, uploadFraction, useUploadState } from '../../../engine/media/upload';
 import { canEditObjects } from '../../../engine/model/permissions';
@@ -30,47 +33,50 @@ const KONVA_FILTER: Record<AdjustmentId, typeof Konva.Filters.Blur> = {
   blur: Konva.Filters.Blur,
 };
 
+/** Blur radius of the upload veil, in Konva's units. Enough to read as "not yet", not as damage. */
+const VEIL_BLUR = 18;
+
+/** Fixed colours: Konva paints to a canvas and never resolves CSS custom properties. */
+const PLACEHOLDER = {
+  light: {
+    loadFill: 'rgba(148, 163, 184, 0.16)',
+    waitFill: 'rgba(243, 160, 36, 0.10)',
+    waitStroke: '#D98A12',
+    waitText: '#8A5A06',
+    failFill: 'rgba(239, 68, 68, 0.06)',
+    failStroke: '#DC2626',
+    failText: '#B42318',
+  },
+  dark: {
+    loadFill: 'rgba(148, 163, 184, 0.14)',
+    waitFill: 'rgba(243, 160, 36, 0.12)',
+    waitStroke: '#F3A024',
+    waitText: '#F7C46C',
+    failFill: 'rgba(248, 113, 113, 0.08)',
+    failStroke: '#F87171',
+    failText: '#FCA5A5',
+  },
+} as const;
+
 export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
   /**
    * Load with CORS, and fall back to loading without it.
    *
-   * ## Why `anonymous` is asked for first
-   *
    * Reading pixels back off a canvas that has drawn a cross-origin image
-   * throws — the canvas is "tainted". This renderer does exactly that, twice:
-   * the adjustment filters need `getImageData`, and every raster export calls
+   * throws — the canvas is "tainted". This renderer does exactly that: the
+   * adjustment filters need `getImageData`, and every raster export calls
    * `toCanvas`. Requesting the image anonymously, with the server's consent,
-   * is what keeps both working.
+   * keeps both working. Uploads are served through the API's media route,
+   * which sends the header, so the first attempt succeeds for them.
    *
-   * ## Why it cannot be the only attempt
+   * `crossOrigin = 'anonymous'` is not a hint, though: without the header the
+   * load fails outright. Older boards whose `src` points straight at the
+   * object store still need the plain load, so a failed anonymous attempt is
+   * retried plainly. A picture that displays but cannot be exported is a far
+   * better outcome than a grey box.
    *
-   * `crossOrigin = 'anonymous'` is not a hint. If the response carries no
-   * `Access-Control-Allow-Origin` header the load **fails outright** — no
-   * image, just the grey placeholder.
-   *
-   * That used to be the normal case, not the edge one: uploads were served
-   * directly by the object store on its own port, where the `cors()`
-   * middleware — which covers the Express app on a different port — never
-   * ran. Nothing in the project made the bucket send that header, so the
-   * anonymous attempt failed for every uploaded image and every board fell
-   * through to the plain load, which taints the canvas and silently breaks
-   * PNG export.
-   *
-   * New uploads are served through the API's own media route now, so they
-   * carry the header and the first attempt succeeds. The fallback stays for
-   * the two cases that remain: images pasted in from elsewhere on the web,
-   * and boards written before the change whose `src` still points straight at
-   * the object store.
-   *
-   * So: try anonymously, and if that fails try again plainly. A picture that
-   * displays but cannot be exported is a far better outcome than a grey box,
-   * and it is recoverable — the export path can say so, where a missing image
-   * says nothing at all.
-   */
-  /**
    * A `local:<id>` src becomes an object URL here, or an empty string on a
-   * device that does not hold the bytes. Ordinary URLs pass through untouched.
-   * See `pendingMedia.ts`.
+   * device that does not hold the bytes. See `pendingMedia.ts`.
    */
   const { src: resolvedSrc, pendingUpload } = useResolvedSrc(node.src);
   const upload = useUploadState(node.src);
@@ -81,29 +87,50 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
   // unconditionally would fetch every image twice.
   const [plainImage, plainStatus] = useImage(needsPlainRetry ? resolvedSrc : '', undefined);
 
-  const image = corsStatus === 'loaded' ? corsImage : plainImage;
-  const status = corsStatus === 'loaded' ? corsStatus : needsPlainRetry ? plainStatus : corsStatus;
-  const shapeRef = useRef<Konva.Image>(null);
+  const freshImage = corsStatus === 'loaded' ? corsImage : plainImage;
+  const freshStatus = corsStatus === 'loaded' ? corsStatus : needsPlainRetry ? plainStatus : corsStatus;
 
   /**
-   * Record the bitmap's own size, once, from the first client to load it.
+   * Keep drawing the picture already on screen while its address changes.
    *
-   * `naturalWidth`/`naturalHeight` were declared on the schema, read by the
-   * normalizer, and written by **nothing** — so they were always undefined.
-   * Cropping needs them: a crop is stored in natural pixels and has to be
-   * clamped against the bitmap's real bounds, and there is nothing to clamp
-   * against without this. Same fix as the voice note that showed `0:00 / 0:00`
-   * while audibly playing, and the same rule: the document should learn a fact
-   * about its own asset the first time anyone is in a position to know it.
+   * An upload finishing swaps the local copy for the stored one: the same
+   * pixels at a new address. Without this the new address starts loading from
+   * nothing and the picture blinks out to a placeholder at the very moment the
+   * upload succeeds. Only the same bitmap is carried over — a replacement of
+   * different dimensions waits for its own pixels rather than drawing the old
+   * picture through the new crop.
+   */
+  const lastLoaded = useRef<HTMLImageElement | null>(null);
+  if (freshStatus === 'loaded' && freshImage) lastLoaded.current = freshImage;
+  const carried =
+    freshStatus === 'loading' &&
+    lastLoaded.current &&
+    lastLoaded.current.naturalWidth === node.naturalWidth &&
+    lastLoaded.current.naturalHeight === node.naturalHeight
+      ? lastLoaded.current
+      : null;
+  const image = carried ?? freshImage;
+  const status = carried ? 'loaded' : freshStatus;
+  const shapeRef = useRef<Konva.Image>(null);
+  const dark = useDarkTheme();
+
+  /**
+   * Record the bitmap's own size, once, from one editor's tab.
+   *
+   * Cropping, fit and fill all need it: a crop is stored in natural pixels and
+   * is clamped against the bitmap's real bounds. It is a fact about the asset
+   * rather than an edit, so it is written outside undo, by the elected writer
+   * only, and never by a viewer.
    */
   useEffect(() => {
     if (status !== 'loaded' || !image) return;
     if (!image.naturalWidth || !image.naturalHeight) return;
     if (node.naturalWidth === image.naturalWidth && node.naturalHeight === image.naturalHeight) return;
-    updateNode(node.id, {
-      naturalWidth: image.naturalWidth,
-      naturalHeight: image.naturalHeight,
-    });
+    if (!isElectedWriter()) return;
+    applyNodePatches(
+      [{ id: node.id, changes: { naturalWidth: image.naturalWidth, naturalHeight: image.naturalHeight } }],
+      { origin: DERIVED_ORIGIN }
+    );
   }, [image, status, node.id, node.naturalWidth, node.naturalHeight]);
 
   const natural = {
@@ -119,42 +146,45 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
   const adjusted = hasAdjustments(adjustments);
   const konva = toKonvaValues(adjustments);
 
-  // Rebuilt only when the *set* of active adjustments changes, not on every
+  /**
+   * While the bytes are on their way up, the picture is drawn softened and
+   * sharpens the moment the server has it: "this is yours, it is not saved
+   * yet", without a spinner over a photograph.
+   */
+  const veiled = upload?.phase === 'uploading';
+
+  // Rebuilt only when the *set* of active filters changes, not on every
   // slider tick — reassigning the array makes Konva re-evaluate its filter
   // pipeline, and dragging a slider would rebuild it sixty times a second.
   const activeIds = activeFilterIds(adjustments);
+  if (veiled && !activeIds.includes('blur')) activeIds.push('blur');
   const filterKey = activeIds.join(',');
   const filters = useMemo(
     () => (filterKey ? filterKey.split(',').map((id) => KONVA_FILTER[id as AdjustmentId]) : undefined),
     [filterKey]
   );
+  const blurRadius = veiled ? Math.max(konva.blurRadius, VEIL_BLUR) : konva.blurRadius;
+  const filtered = adjusted || veiled;
 
   /**
    * Konva filters only run on a **cached** node, and the cache is a raster
-   * snapshot — so it has to be rebuilt whenever anything that feeds it
-   * changes, and torn down the moment it is not needed.
+   * snapshot — so it is rebuilt whenever anything that feeds it changes, and
+   * torn down the moment it is not needed.
    *
-   * Three things this has to get right:
-   *
-   * - **An untouched image is never cached.** Caching rasterizes at the node's
-   *   current size, which costs memory for every image on the board and goes
-   *   visibly soft once the canvas is zoomed past that resolution. Paying that
-   *   for an image nobody has adjusted would be a tax on the common case.
-   * - **`pixelRatio` follows the device**, or a filtered image is noticeably
-   *   softer than an unfiltered one on any HiDPI screen — the difference shows
-   *   up as "applying a filter blurs my image slightly", which reads as a bug
-   *   in the filter rather than in the cache.
-   * - **The dependency list includes the node's size.** A cache taken at one
-   *   size and drawn at another is stretched, so resizing an adjusted image
-   *   would smear it until something else happened to invalidate the cache.
+   * - An untouched image is never cached: caching costs memory and goes soft
+   *   once the canvas is zoomed past the cached resolution.
+   * - `pixelRatio` follows the device for adjustments, or a filtered image is
+   *   softer than an unfiltered one on HiDPI screens. A veil is blurred anyway,
+   *   so it is cached at a fraction of that: an upload in flight costs a
+   *   small bitmap, not a full one.
+   * - The node's size and crop are dependencies, or a resized image would be
+   *   drawn from a stretched snapshot.
    */
   useEffect(() => {
     const shape = shapeRef.current;
     if (!shape) return;
 
-    if (!image || status !== 'loaded' || !adjusted) {
-      // `isCached()` guards a Konva call that is not free, and this effect runs
-      // on every adjustment change for every image on the board.
+    if (!image || status !== 'loaded' || !filtered) {
       if (shape.isCached()) {
         shape.clearCache();
         shape.getLayer()?.batchDraw();
@@ -162,18 +192,17 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
       return;
     }
 
-    shape.cache({ pixelRatio: window.devicePixelRatio || 1 });
+    shape.cache({ pixelRatio: veiled && !adjusted ? 0.35 : window.devicePixelRatio || 1 });
     shape.getLayer()?.batchDraw();
   }, [
     image,
     status,
     adjusted,
+    veiled,
+    filtered,
     filterKey,
     node.width,
     node.height,
-    // A cache taken before the crop moved is a snapshot of the old window, so
-    // an adjusted image would keep showing the previous framing until
-    // something else happened to invalidate it.
     crop.x,
     crop.y,
     crop.width,
@@ -181,66 +210,51 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
     konva.brightness,
     konva.contrast,
     konva.saturation,
-    konva.blurRadius,
+    blurRadius,
   ]);
 
+  const radius = node.appearance?.cornerRadius ?? 0;
+
   /**
-   * Three situations, not two.
+   * Three situations, drawn differently on purpose:
    *
-   * A broken or still-loading asset previously rendered nothing at all, which
-   * is indistinguishable from the object having been deleted. A placeholder
-   * fixed that, and then said the same thing about two states that could not
-   * be more different:
-   *
-   * - **failed** -- this picture is not coming back.
-   * - **waiting to upload** -- the bytes exist, on somebody's device, and the
-   *   only thing missing is a network. Nothing is lost.
-   *
-   * Drawn identically, the second reads as the first, and the person's
-   * reasonable conclusion is that their work was thrown away. It is the same
-   * class of mistake as a silent upload failure, running the other way: a
-   * success that looks like a loss. So a pending upload gets the accent
-   * colour, a calmer dash and a word, rather than the grey-and-dashed shape
-   * this application uses everywhere else to mean "empty".
+   * - **loading** — a quiet filled slot with no outline: a picture on its way.
+   * - **waiting to upload** — the bytes exist on somebody's device and only a
+   *   network is missing. Amber, an open dash and a word, so it never reads as
+   *   lost work.
+   * - **failed** — this picture is not coming back. A red dash and a word.
    */
   if (status !== 'loaded' || !image) {
     const waiting = pendingUpload;
-    const radius = node.appearance?.cornerRadius ?? 0;
+    const failed = !waiting && status === 'failed';
+    const ink = dark ? PLACEHOLDER.dark : PLACEHOLDER.light;
+    const label = waiting ? 'Waiting to upload' : failed ? 'Picture unavailable' : '';
 
     return (
       <Group>
         <Rect
           width={node.width}
           height={node.height}
-          // A fixed colour, not `var(--surface-secondary)`: Konva paints to a
-          // canvas and never resolves CSS custom properties, so that was an
-          // invalid colour and the placeholder came out unfilled. Translucent
-          // grey reads as an empty slot against both the light and dark board.
-          fill={waiting ? 'rgba(243, 160, 36, 0.10)' : 'rgba(148, 163, 184, 0.18)'}
-          stroke={waiting ? '#F3A024' : status === 'failed' ? '#EF4444' : '#D1D5DB'}
-          strokeWidth={1}
-          // A longer, more open dash than the "empty slot" pattern, so the two
-          // are told apart at a glance and without reading the label.
-          dash={waiting ? [10, 6] : [6, 4]}
+          fill={waiting ? ink.waitFill : failed ? ink.failFill : ink.loadFill}
+          stroke={waiting ? ink.waitStroke : failed ? ink.failStroke : undefined}
+          strokeWidth={waiting || failed ? 1 : 0}
+          dash={waiting ? [10, 6] : failed ? [6, 4] : undefined}
           cornerRadius={radius}
         />
-        {waiting && (
+        {label && (
           <Text
             width={node.width}
             height={node.height}
-            // Centred in the box rather than positioned, so it stays centred
-            // through every resize without a second calculation to keep in
-            // step with the rect above it.
             align="center"
             verticalAlign="middle"
             padding={8}
-            text="Waiting to upload"
+            text={label}
             fontSize={13}
             fontFamily="Inter, system-ui, sans-serif"
-            fill="#B4770F"
+            fill={waiting ? ink.waitText : ink.failText}
             listening={false}
-            // Below roughly two lines of type the words are noise rather than
-            // information, and the amber outline already carries the meaning.
+            // Below roughly two lines of type the words are noise, and the
+            // outline already carries the meaning.
             visible={node.height >= 56 && node.width >= 120}
           />
         )}
@@ -255,34 +269,66 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
       {...shadowProps(node.appearance)}
       width={node.width}
       height={node.height}
-      // Konva clips natively to the corner radius; nothing read this before,
-      // so rounding an image's corners had no visible effect.
-      cornerRadius={node.appearance?.cornerRadius ?? 0}
+      cornerRadius={radius}
       crop={cropProp}
       filters={filters}
       brightness={konva.brightness}
       contrast={konva.contrast}
       saturation={konva.saturation}
-      blurRadius={konva.blurRadius}
+      blurRadius={blurRadius}
     />
   );
 
-  if (!upload) return picture;
+  const border = imageBorder(node);
+  if (!upload && !border) return picture;
 
   const uploadId = uploadIdFromSrc(node.src);
   return (
     <Group>
       {picture}
-      <UploadOverlay
-        width={node.width}
-        height={node.height}
-        fraction={uploadFraction(upload)}
-        failedReason={upload.phase === 'failed' ? upload.reason : null}
-        queued={upload.phase === 'queued'}
-        onRetry={uploadId && canEditObjects() ? () => void retryUpload(uploadId) : undefined}
-      />
+      {border}
+      {upload && (
+        <UploadOverlay
+          width={node.width}
+          height={node.height}
+          fraction={uploadFraction(upload)}
+          failedReason={upload.phase === 'failed' ? upload.reason : null}
+          queued={upload.phase === 'queued'}
+          onRetry={uploadId && canEditObjects() ? () => void retryUpload(uploadId) : undefined}
+        />
+      )}
     </Group>
   );
 });
 
 ImageRenderer.displayName = 'ImageRenderer';
+
+/**
+ * The picture's border, drawn over its edge with the same corners.
+ *
+ * Images offer Stroke in the panel like every paintable object; this is what
+ * makes it show. Inside by default, as a picture frame is: the border eats into
+ * the picture rather than growing the object past the box it reports.
+ */
+function imageBorder(node: ImageNode): React.ReactElement | null {
+  const color = strokeColor(node.appearance);
+  const width = strokeWidth(node.appearance);
+  if (!color || !(width > 0)) return null;
+  const align = node.appearance?.stroke?.align ?? 'inside';
+  const shift = align === 'inside' ? width / 2 : align === 'outside' ? -width / 2 : 0;
+  const radii = cornerRadiiOf(node.appearance?.cornerRadius).map((r) => Math.max(0, r - shift));
+  return (
+    <Rect
+      x={shift}
+      y={shift}
+      width={Math.max(0, node.width - shift * 2)}
+      height={Math.max(0, node.height - shift * 2)}
+      cornerRadius={radii}
+      stroke={color}
+      strokeWidth={width}
+      {...strokeDashProps(node.appearance)}
+      listening={false}
+      perfectDrawEnabled={false}
+    />
+  );
+}

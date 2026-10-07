@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactDOM from 'react-dom';
-import { ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, GalleryHorizontalEnd, X } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import { cameraSystem } from '../../engine/CameraSystem';
 import { engineEvents } from '../../engine/EventBus';
@@ -9,6 +9,10 @@ import { nodeBounds } from '../../engine/model/selection';
 import { keyBelongsToFocus } from '../../engine/interaction/keyTarget';
 import { isPresenting, presenterKeyAction, setPresenterKeys, setPresenting } from '../../engine/tools/presenting';
 import type { AnyNode, FrameNode } from '../../engine/model/schema';
+import { WorkspaceCover } from '../WorkspaceCover';
+import { Emoji } from '../emoji/Emoji';
+import { useRoomPermissions } from '../../hooks/useRoomPermissions';
+import { framePreview, reorderSlides } from './FramePresenterThumbs';
 import './framePresenter.css';
 
 /**
@@ -76,6 +80,7 @@ export const FramePresenter: React.FC = () => {
   const [index, setIndex] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [, setTick] = useState(0);
+  const [stripOpen, setStripOpen] = useState(false);
   const savedPose = useRef<{ x: number; y: number; zoom: number } | null>(null);
   const enteredFullscreen = useRef(false);
 
@@ -220,6 +225,22 @@ export const FramePresenter: React.FC = () => {
   useEffect(() => {
     if (!active) return;
     const onKey = (e: KeyboardEvent) => {
+      // Alt+Left/Right on a focused slide thumbnail moves that slide. Keys
+      // never reach the strip itself: the presenting gate claims them all.
+      const thumb = (document.activeElement as HTMLElement | null)?.closest?.<HTMLElement>('.fp-strip__thumb');
+      if (thumb && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault();
+        const from = Number(thumb.dataset.index);
+        const to = from + (e.key === 'ArrowLeft' ? -1 : 1);
+        const currentId = frameIds?.[index];
+        if (to >= 0 && frameIds && to < frameIds.length && reorderSlides(boardNodes(), from, to)) {
+          const list = boardFrames();
+          setFrameIds(list.map((f) => f.id));
+          setIndex(Math.max(0, list.findIndex((f) => f.id === currentId)));
+          requestAnimationFrame(() => document.querySelectorAll<HTMLElement>('.fp-strip__thumb')[to]?.focus());
+        }
+        return;
+      }
       const onControl = !!document.activeElement?.closest?.('.fp-root');
       const action = presenterKeyAction(e.key, {
         focusOwnsKey: !onControl && keyBelongsToFocus(e.key),
@@ -235,7 +256,7 @@ export const FramePresenter: React.FC = () => {
     };
     setPresenterKeys(onKey);
     return () => setPresenterKeys(null);
-  }, [active, index, go, stop]);
+  }, [active, index, go, stop, frameIds]);
 
   if (!active) {
     return notice
@@ -261,6 +282,7 @@ export const FramePresenter: React.FC = () => {
     height: box.height * cameraSystem.zoom,
   };
   const right = slide.left + slide.width;
+  const icon = (slideFrame as FrameNode).icon;
   const bottom = slide.top + slide.height;
 
   return ReactDOM.createPortal(
@@ -287,7 +309,10 @@ export const FramePresenter: React.FC = () => {
         </button>
         <span className="fp-count" aria-live="polite">
           <strong>{index + 1}</strong> / {count}
-          <span className="fp-title">{title}</span>
+          <span className="fp-title">
+            {icon && <Emoji native={icon} size={14} />}
+            {title}
+          </span>
         </span>
         <button
           type="button"
@@ -299,11 +324,115 @@ export const FramePresenter: React.FC = () => {
           <ChevronRight size={18} />
         </button>
         <span className="fp-sep" aria-hidden="true" />
+        <button
+          type="button"
+          className="fp-btn"
+          onClick={() => setStripOpen((o) => !o)}
+          aria-label="Slides"
+          aria-expanded={stripOpen}
+          aria-pressed={stripOpen}
+        >
+          <GalleryHorizontalEnd size={16} />
+        </button>
         <button type="button" className="fp-btn" onClick={stop} aria-label="Stop presenting">
           <X size={16} />
         </button>
       </div>
+
+      {stripOpen && (
+        <SlideStrip
+          ids={frameIds}
+          index={index}
+          onGo={(i) => go(i)}
+          onMoved={(currentId) => {
+            const list = boardFrames();
+            setFrameIds(list.map((f) => f.id));
+            setIndex(Math.max(0, list.findIndex((f) => f.id === currentId)));
+          }}
+        />
+      )}
     </div>,
     document.body
+  );
+};
+
+/**
+ * The deck, as a strip of thumbnails above the controls.
+ *
+ * Click a slide to go to it. Editors can drag one to a new place, or move the
+ * focused one with Alt+Left and Alt+Right; the new order is written to the
+ * board as one undoable edit and every presenter follows it. Thumbnails are
+ * drawn from the document, so a slide nobody has scrolled to still has one.
+ */
+const SlideStrip: React.FC<{
+  ids: string[];
+  index: number;
+  onGo: (i: number) => void;
+  onMoved: (currentId: string) => void;
+}> = ({ ids, index, onGo, onMoved }) => {
+  const objects = useStore((s) => s.objects) as Record<string, AnyNode>;
+  const { canEdit } = useRoomPermissions();
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dropAt, setDropAt] = useState<number | null>(null);
+  const currentId = ids[index];
+
+  const move = (from: number, to: number) => {
+    if (reorderSlides(objects, from, to)) onMoved(currentId);
+  };
+  const previews = useMemo(() => new Map(ids.map((id) => [id, framePreview(id, objects)])), [ids, objects]);
+
+  return (
+    <ol className="fp-strip" aria-label="Slides">
+      {ids.map((id, i) => {
+        const frame = objects[id];
+        if (!frame || frame.type !== 'frame') return null;
+        const label = frame.title || 'Untitled frame';
+        return (
+          <li
+            key={id}
+            className="fp-strip__item"
+            data-current={i === index || undefined}
+            data-drop={dropAt === i && dragFrom !== null && dragFrom !== i ? (dragFrom < i ? 'after' : 'before') : undefined}
+            draggable={canEdit}
+            onDragStart={(e) => {
+              setDragFrom(i);
+              e.dataTransfer.effectAllowed = 'move';
+              e.dataTransfer.setData('text/plain', String(i));
+            }}
+            onDragOver={(e) => {
+              if (dragFrom === null) return;
+              e.preventDefault();
+              setDropAt(i);
+            }}
+            onDragEnd={() => {
+              setDragFrom(null);
+              setDropAt(null);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (dragFrom !== null) move(dragFrom, i);
+              setDragFrom(null);
+              setDropAt(null);
+            }}
+          >
+            <button
+              type="button"
+              className="fp-strip__thumb"
+              data-index={i}
+              aria-current={i === index ? 'true' : undefined}
+              aria-label={`Slide ${i + 1}: ${label}${canEdit ? '. Alt+Left or Alt+Right to move it.' : ''}`}
+              onClick={() => onGo(i)}
+            >
+              <WorkspaceCover workspaceId={`slide:${id}`} name={label} preview={previews.get(id) ?? null} />
+            </button>
+            <span className="fp-strip__label">
+              <span className="fp-strip__num">{i + 1}</span>
+              {frame.icon && <Emoji native={frame.icon} size={12} />}
+              <span className="fp-strip__name">{label}</span>
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 };

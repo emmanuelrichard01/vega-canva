@@ -4,6 +4,14 @@ import { mintShareToken, MAX_TTL_SECONDS, type ShareRole } from '../shareToken';
 import { ROLE_RANK, resolveRoomAccess, requireRole, type AccessPolicy } from '../access';
 import { MAX_UPDATES_PER_ROOM } from '../retention';
 import { captureError, logger } from '../observability';
+import {
+  MAX_HISTORY_PAGE,
+  SESSION_GAP_MS,
+  readPositiveInt,
+  toSessionSummary,
+  type SessionRow,
+} from '../historyVersions';
+import { registerVersionRoutes } from './versions';
 
 export interface RoomRouteDeps {
   pool: Pick<Pool, 'query'>;
@@ -86,30 +94,63 @@ export function registerRoomRoutes(app: Express, deps: RoomRouteDeps): void {
   });
 
   /**
-   * Time Travel history, bounded by the query: the newest
-   * `MAX_UPDATES_PER_ROOM` rows, re-sorted ascending, plus the replay
-   * baseline that stands in for everything retention has folded away.
+   * Time Travel's update log, oldest first, one page at a time.
+   *
+   * `after` is the last row id the client already holds; without it the page
+   * starts at the oldest retained row and also carries what only the first
+   * page needs: the replay baseline that stands in for everything retention
+   * folded away, and a summary of the working sessions in the whole log, so
+   * the timeline can be laid out before the remaining pages arrive.
+   *
+   * Starting from the oldest *present* row rather than the newest window is
+   * what keeps the baseline and the rows contiguous: rows the sweep has not
+   * reached yet are still deltas on top of the baseline, and skipping them
+   * would orphan everything after.
    */
   app.get('/rooms/:roomId/history', deps.requireRoom, requireRole(deps.access, 'viewer'), deps.limiter, async (req: any, res: any) => {
     const roomId = req.params.roomId;
+    const after = readPositiveInt(req.query?.after);
+    const askedLimit = readPositiveInt(req.query?.limit);
+    if ((req.query?.after !== undefined && after === null) || (req.query?.limit !== undefined && !askedLimit)) {
+      return res.status(400).json({ error: 'after and limit must be positive whole numbers.' });
+    }
+    const limit = askedLimit ? Math.min(askedLimit, MAX_HISTORY_PAGE) : MAX_UPDATES_PER_ROOM;
+    const firstPage = after === null;
+
     try {
-      const result = await pool.query(
-        `SELECT update_data, created_at FROM (
-           SELECT id, update_data, created_at
-             FROM room_updates
-            WHERE room_id = $1
-            ORDER BY id DESC
-            LIMIT $2
-         ) AS recent
-         ORDER BY id ASC`,
-        [roomId, MAX_UPDATES_PER_ROOM]
+      const result = await pool.query<{ id: string; update_data: Buffer; created_at: Date | string }>(
+        `SELECT id, update_data, created_at
+           FROM room_updates
+          WHERE room_id = $1 AND id > $2
+          ORDER BY id ASC
+          LIMIT $3`,
+        [roomId, after ?? 0, limit + 1]
       );
-      const updates = result.rows.map((row: any) => ({
+      const more = result.rows.length > limit;
+      const rows = more ? result.rows.slice(0, limit) : result.rows;
+      const updates = rows.map((row) => ({
+        id: Number(row.id),
         createdAt: row.created_at,
         update: row.update_data.toString('base64'),
       }));
+      const nextAfter = more && updates.length > 0 ? updates[updates.length - 1].id : null;
 
-      const trimmedResult = await pool.query<{
+      if (!firstPage) {
+        // The trim counter rides on every page: if retention folded rows away
+        // between two pages, the client's log has a gap and must start over.
+        const trim = await pool.query<{ updates_trimmed: string }>(
+          `SELECT COALESCE(updates_trimmed, 0) AS updates_trimmed FROM rooms WHERE id = $1`,
+          [roomId]
+        );
+        return res.json({
+          roomId,
+          updates,
+          nextAfter,
+          trimmedCount: Number(trim.rows[0]?.updates_trimmed ?? 0),
+        });
+      }
+
+      const meta = await pool.query<{
         updates_trimmed: string;
         total: string;
         replay_base: Buffer | null;
@@ -120,24 +161,51 @@ export function registerRoomRoutes(app: Express, deps: RoomRouteDeps): void {
            FROM rooms r WHERE r.id = $1`,
         [roomId]
       );
-      const trimmedCount = Number(trimmedResult.rows[0]?.updates_trimmed ?? 0);
-      const total = Number(trimmedResult.rows[0]?.total ?? updates.length);
-      const replayBase = trimmedResult.rows[0]?.replay_base ?? null;
-      // Rows the sweep has not reached are as absent from this response as
-      // rows it deleted, so both count toward "this does not reach the start".
-      const withheld = Math.max(0, total - updates.length);
+      const trimmedCount = Number(meta.rows[0]?.updates_trimmed ?? 0);
+      const total = Number(meta.rows[0]?.total ?? updates.length);
+      const replayBase = meta.rows[0]?.replay_base ?? null;
+
+      // Sessions over the whole retained log: a new one starts wherever two
+      // consecutive rows are further apart than the session gap. Index-scoped
+      // to this room and bounded by retention, so it never scans the table.
+      const sessions = await pool.query<SessionRow>(
+        `SELECT MIN(id) AS start_id, MAX(id) AS end_id,
+                MIN(created_at) AS started_at, MAX(created_at) AS ended_at,
+                COUNT(*) AS count
+           FROM (
+             SELECT id, created_at,
+                    SUM(brk) OVER (ORDER BY id) AS session
+               FROM (
+                 SELECT id, created_at,
+                        CASE WHEN created_at - LAG(created_at) OVER (ORDER BY id)
+                                  > make_interval(secs => $2::double precision)
+                             THEN 1 ELSE 0 END AS brk
+                   FROM room_updates
+                  WHERE room_id = $1
+               ) marked
+           ) grouped
+          GROUP BY session
+          ORDER BY MIN(id) ASC`,
+        [roomId, SESSION_GAP_MS / 1000]
+      );
 
       res.json({
         roomId,
         updates,
+        nextAfter,
+        total,
         baseline: replayBase ? replayBase.toString('base64') : null,
-        trimmed: trimmedCount > 0 || withheld > 0,
-        trimmedCount: trimmedCount + withheld,
+        trimmed: trimmedCount > 0,
+        trimmedCount,
         retentionLimit: MAX_UPDATES_PER_ROOM,
+        sessionGapMs: SESSION_GAP_MS,
+        sessions: sessions.rows.map(toSessionSummary),
       });
     } catch (err) {
       captureError('Error fetching room history', err, { roomId });
       res.status(500).json({ error: 'Failed to fetch room history' });
     }
   });
+
+  registerVersionRoutes(app, deps);
 }

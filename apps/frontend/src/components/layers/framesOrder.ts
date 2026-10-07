@@ -1,25 +1,17 @@
-import type { AnyNode } from '../../engine/model/schema';
+import { presentableFrames, presentationOrder } from '../../engine/model/frames';
+import type { AnyNode, FrameNode } from '../../engine/model/schema';
 
 /**
- * The board's frames in reading order: top to bottom, and left to right
- * within a row. Two frames are in the same row when their vertical extents
- * overlap by at least half the shorter one, so a slightly offset row of
- * slides still reads left to right.
+ * The board's frames in the order the presenter plays them: the slides
+ * (top-level frames) by `slideOrder` where it is set and reading order where
+ * not, then frames nested inside another frame in reading order. Layers, the
+ * Alt+arrow stepping and the presenter strip all agree on it.
  */
 export function framesInReadingOrder(nodes: readonly AnyNode[]): AnyNode[] {
   const frames = nodes.filter((n) => n.type === 'frame' && !n.hidden);
-  const byTop = [...frames].sort((a, b) => a.y - b.y || a.x - b.x || (a.id < b.id ? -1 : 1));
-  const rows: AnyNode[][] = [];
-  for (const frame of byTop) {
-    const row = rows.find((r) => {
-      const ref = r[0];
-      const overlap = Math.min(ref.y + ref.height, frame.y + frame.height) - Math.max(ref.y, frame.y);
-      return overlap >= Math.min(ref.height, frame.height) / 2;
-    });
-    if (row) row.push(frame);
-    else rows.push([frame]);
-  }
-  return rows.flatMap((r) => r.sort((a, b) => a.x - b.x || (a.id < b.id ? -1 : 1)));
+  const slides = presentationOrder(presentableFrames(frames) as FrameNode[]);
+  const nested = presentationOrder(frames.filter((f) => f.frameId) as FrameNode[]);
+  return [...slides, ...nested];
 }
 
 /** The next frame from `currentId` in reading order, wrapping at both ends. */

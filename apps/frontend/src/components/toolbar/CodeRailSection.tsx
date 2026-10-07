@@ -8,6 +8,7 @@ import {
   ListOrdered,
   SlidersHorizontal,
   Sparkles,
+  SunMoon,
   UnfoldVertical,
   WrapText,
 } from 'lucide-react';
@@ -73,9 +74,10 @@ export const CodeThemeControl: React.FC<{ node: CodeNode }> = ({ node }) => {
                   key={id}
                   type="button"
                   className="ctx-code-theme"
-                  aria-pressed={code.theme === id}
+                  aria-pressed={code.theme === id && !code.followBoard}
                   onClick={() => {
-                    updateCode(node, { theme: id });
+                    // An explicit pick is the theme as chosen, so it stops matching the board.
+                    updateCode(node, { theme: id, followBoard: undefined });
                     close();
                   }}
                 >
@@ -88,12 +90,22 @@ export const CodeThemeControl: React.FC<{ node: CodeNode }> = ({ node }) => {
                   </span>
                   <span className="ctx-code-theme__name">
                     {theme.label}
-                    {code.theme === id && <Check size={12} aria-hidden />}
+                    {code.theme === id && !code.followBoard && <Check size={12} aria-hidden />}
                   </span>
                 </button>
               );
             })}
           </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={Boolean(code.followBoard)}
+            className="ctx-popover__action"
+            onClick={() => updateCode(node, { followBoard: code.followBoard ? undefined : true })}
+          >
+            <SunMoon size={14} />
+            Match board
+          </button>
         </>
       )}
     </RailPopover>

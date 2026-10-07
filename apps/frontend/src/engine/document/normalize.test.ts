@@ -677,3 +677,37 @@ describe('normalizing advanced shape geometries', () => {
   });
 });
 
+
+describe('sketch appearance normalization', () => {
+  const appearanceOf = (appearance: Record<string, unknown>) =>
+    (normalizeNode({ id: 'k1', type: 'shape', width: 10, height: 10, geometry: { kind: 'rect' }, appearance }) as ShapeNode)
+      .appearance;
+
+  it('keeps sketchClean only while no level is pinned', () => {
+    expect(appearanceOf({ sketchClean: true }).sketchClean).toBe(true);
+    const pinned = appearanceOf({ sketch: 'heavy', sketchClean: true });
+    expect(pinned.sketch).toBe('heavy');
+    expect(pinned.sketchClean).toBeUndefined();
+  });
+
+  it('keeps shading and the seed on an object that follows the board', () => {
+    const a = appearanceOf({ fillStyle: 'hachure', shadingDensity: 'dense', shadingAngle: 30, sketchSeed: 3 });
+    expect(a.fillStyle).toBe('hachure');
+    expect(a.shadingDensity).toBe('dense');
+    expect(a.shadingAngle).toBe(30);
+    expect(a.sketchSeed).toBe(3);
+  });
+
+  it('drops shading and the seed from an object pinned clean', () => {
+    const a = appearanceOf({ sketchClean: true, fillStyle: 'hachure', sketchSeed: 3 });
+    expect(a.fillStyle).toBeUndefined();
+    expect(a.sketchSeed).toBeUndefined();
+  });
+});
+
+describe('audio transcript', () => {
+  it('is capped at 6000 characters', () => {
+    const n = normalizeNode({ id: 'au1', type: 'audio', src: 'x', transcript: 'a'.repeat(7000) }) as AudioNode;
+    expect(n.transcript).toHaveLength(6000);
+  });
+});

@@ -516,9 +516,13 @@ describe('PhysicsSimulation - stepping and settling', () => {
     const t = moving.find(m => m.id === 'a')!;
     const body = sim.getBody('a')!;
 
-    // Konva groups are positioned by their centre, which is the body position.
-    expect(t.centerX).toBeCloseTo(body.position.x, 5);
-    expect(t.centerY).toBeCloseTo(body.position.y, 5);
+    // Konva groups are positioned by their centre. The drawn pose is
+    // interpolated, so it lies between where the step began (the box centre,
+    // 260) and where the body now is.
+    expect(t.centerX).toBeGreaterThanOrEqual(260);
+    expect(t.centerX).toBeLessThanOrEqual(body.position.x);
+    expect(t.centerY).toBeGreaterThanOrEqual(60);
+    expect(t.centerY).toBeLessThanOrEqual(body.position.y);
     // Nodes store their top-left corner, half the size back from the centre.
     expect(t.x).toBeCloseTo(t.centerX - 60, 5);
     expect(t.y).toBeCloseTo(t.centerY - 60, 5);

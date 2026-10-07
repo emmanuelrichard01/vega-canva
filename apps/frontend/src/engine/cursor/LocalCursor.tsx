@@ -1,10 +1,14 @@
 import React, { useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
+import './cursor.css';
 import { cursorOverride } from './cursorOverride';
+import { cursorHint } from './cursorHint';
+import { watchPresentingCursor } from './presentingCursor';
 import {
   chromeVisual,
   cursorVisual,
   precisionVisual,
   setCursorTheme,
+  stateVisual,
   INK,
   PAPER,
   type CursorOptions,
@@ -137,6 +141,7 @@ export const LocalCursor: React.FC<Props> = ({ mode, containerRef, activeTool })
   const weight = canvasChromeContrast(enhanced).strokeScale;
   const draw = useSyncExternalStore(drawSettings.subscribe, drawSettings.get, drawSettings.get);
   const eraserSize = useStore((s) => s.eraserSize);
+  const hint = useSyncExternalStore(cursorHint.subscribe, cursorHint.get, cursorHint.get);
 
   // The pen's ink is only read for the pen, so a colour change does not
   // redraw the select arrow.
@@ -180,10 +185,13 @@ export const LocalCursor: React.FC<Props> = ({ mode, containerRef, activeTool })
     }
 
     const fallback = FALLBACK[mode] ?? 'default';
-    const options: CursorOptions = { brush, ink, eraserSize };
+    const options: CursorOptions = { brush, ink, eraserSize, eraserMode: draw.eraser };
+    // An application state (recording, busy) outranks the armed tool's art.
     container.style.setProperty(
       '--cursor-tool',
-      cursorCss(cursorVisual(mode, activeTool, accent, dark, options), fallback)
+      hint === 'idle'
+        ? cursorCss(cursorVisual(mode, activeTool, accent, dark, options), fallback)
+        : cursorCss(stateVisual(hint, dark), hint === 'busy' ? 'progress' : fallback)
     );
     // The closed hand, for `:active` while panning. A swap, not an animation —
     // which is why the one press response worth having survives the move to
@@ -204,6 +212,14 @@ export const LocalCursor: React.FC<Props> = ({ mode, containerRef, activeTool })
       container.style.setProperty(
         '--cursor-alt',
         cursorCss(cursorVisual('pointer', 'alt-duplicate', accent, dark), 'copy')
+      );
+    } else if (mode === 'erase') {
+      // Alt at the press swaps the eraser's mode, so the pointer shows the
+      // other one while it is held.
+      const other = draw.eraser === 'lasso' ? 'brush' : 'lasso';
+      container.style.setProperty(
+        '--cursor-alt',
+        cursorCss(cursorVisual(mode, activeTool, accent, dark, { ...options, eraserMode: other }), fallback)
       );
     } else {
       container.style.removeProperty('--cursor-alt');
@@ -232,7 +248,7 @@ export const LocalCursor: React.FC<Props> = ({ mode, containerRef, activeTool })
     root.style.setProperty('--cursor-text', cursorCss(chromeVisual('text', dark), 'text'));
 
     return clear;
-  }, [containerRef, mode, activeTool, accent, dark, native, weight, brush, ink, eraserSize]);
+  }, [containerRef, mode, activeTool, accent, dark, native, weight, brush, ink, eraserSize, draw.eraser, hint]);
 
   /**
    * Alt held, as an attribute on the root.
@@ -321,23 +337,55 @@ export const LocalCursor: React.FC<Props> = ({ mode, containerRef, activeTool })
   }, [containerRef]);
 
   /**
-   * A press ending releases every claim.
+   * Every claim is released when the world says it cannot still hold.
    *
    * The falsifier from `cursorOverride`: Konva does not fire `mouseleave` for a
    * node destroyed under the pointer, and every handle that claims is
    * conditionally rendered, so a claim can outlive its owner. A handle still
    * under the pointer re-claims on the next move, so a wrongly-cleared claim
    * costs one frame and a stuck one costs a reload.
+   *
+   * The facts: a press ending or being cancelled (a touch interrupted, a drag
+   * taken over by the browser), the window losing focus or its tab hiding, the
+   * pointer leaving the document, a drag-and-drop finishing, and Escape. All
+   * are bound in the capture phase so a handler that stops propagation cannot
+   * hide them.
    */
   useEffect(() => {
-    const up = () => cursorOverride.releaseAll();
-    window.addEventListener('pointerup', up, { passive: true });
-    window.addEventListener('blur', up);
+    const release = () => cursorOverride.releaseAll();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') release();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') release();
+    };
+    const opts = { capture: true } as const;
+    window.addEventListener('pointerup', release, { capture: true, passive: true });
+    window.addEventListener('pointercancel', release, { capture: true, passive: true });
+    window.addEventListener('dragend', release, opts);
+    window.addEventListener('keydown', onKey, opts);
+    window.addEventListener('blur', release);
+    document.addEventListener('visibilitychange', onVisibility);
+    document.documentElement.addEventListener('mouseleave', release);
     return () => {
-      window.removeEventListener('pointerup', up);
-      window.removeEventListener('blur', up);
+      window.removeEventListener('pointerup', release, opts);
+      window.removeEventListener('pointercancel', release, opts);
+      window.removeEventListener('dragend', release, opts);
+      window.removeEventListener('keydown', onKey, opts);
+      window.removeEventListener('blur', release);
+      document.removeEventListener('visibilitychange', onVisibility);
+      document.documentElement.removeEventListener('mouseleave', release);
+      release();
     };
   }, []);
+
+  // A tool switch ends whatever the last tool's handles were holding.
+  useEffect(() => {
+    cursorOverride.releaseAll();
+  }, [activeTool]);
+
+  // Hidden while a presentation runs and the hand is still.
+  useEffect(() => watchPresentingCursor(), []);
 
   return null;
 };

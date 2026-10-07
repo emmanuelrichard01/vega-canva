@@ -356,6 +356,11 @@ export interface Appearance {
    */
   sketch?: SketchLevel;
   /**
+   * Drawn crisp even when the board is in sketch mode. Only meaningful
+   * while `sketch` is absent: a pinned level always wins.
+   */
+  sketchClean?: boolean;
+  /**
    * How a sketched shape's interior is shaded. Absent is `solid`.
    *
    * Only meaningful alongside `sketch`: hachure is pen shading, and shading a
@@ -1263,6 +1268,9 @@ export const STICKY_THEMES = [
   'peach',
   'white',
   'dark',
+  // Appended, not inserted: ⌥1–8 pick the first eight by position.
+  'lime',
+  'coral',
 ] as const;
 
 export type StickyTheme = (typeof STICKY_THEMES)[number];
@@ -1290,6 +1298,23 @@ export interface StickyNode extends BaseNode {
   tags: string[];
   pinned: boolean;
   appearance?: Appearance;
+  /**
+   * How the writing is sized. Absent is `'auto'`: the largest size that fits
+   * the paper (`stickyText.fitFontSize`). `'fixed'` draws at `fontSize`, so a
+   * wall of notes can share one size whatever each one says.
+   */
+  textSizing?: 'auto' | 'fixed';
+  /** Whether the author chip is drawn. Absent is shown. */
+  showAuthor?: boolean;
+  /** Whether the date the note was written is drawn beside the author. Absent is hidden. */
+  showDate?: boolean;
+  /** Whether stamps are drawn on the note. Absent is shown; they are kept either way. */
+  showStamps?: boolean;
+  /**
+   * Every line is a checklist item. A line beginning `[x] ` is done; the
+   * marker is plain text, so the editor, a copy and an older client all keep it.
+   */
+  checklist?: boolean;
 }
 
 /** The longest alt text an image keeps. */
@@ -1363,6 +1388,30 @@ export interface CommentNode extends BaseNode {
 export interface FrameNode extends BaseNode {
   type: 'frame';
   appearance: Appearance;
+  /**
+   * The emoji leading the frame's name, as Notion leads a page with one.
+   * Stored as the native glyph; the artwork is looked up from it when drawn.
+   */
+  icon?: string;
+  /** One line under the name, saying what the frame is for. Plain text. */
+  description?: string;
+  /**
+   * Whether the frame cuts off what it owns at its edge. Absent is on, which
+   * is what a frame has always done; off lets a caption or a callout hang
+   * over the edge while still moving with the frame.
+   */
+  clipContent?: boolean;
+  /**
+   * The frame's place in the presentation, when somebody has reordered the
+   * slides by hand. Absent frames follow reading order after the ordered ones.
+   */
+  slideOrder?: number;
+  /**
+   * The preset the frame was last sized from. Only a tiebreak: two presets
+   * can share a size, and this says which one the frame is. A frame resized
+   * away from it simply stops matching.
+   */
+  preset?: string;
   /**
    * Insets from the four edges marking where content is guaranteed to survive.
    *

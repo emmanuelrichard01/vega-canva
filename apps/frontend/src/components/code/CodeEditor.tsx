@@ -1,12 +1,12 @@
 import React from 'react';
-import { Check, ChevronDown, Copy, Keyboard, ListOrdered, Minus, Plus, Sparkles, WrapText } from 'lucide-react';
+import { Check, ChevronDown, Copy, Diff, Keyboard, ListOrdered, Minus, Plus, SunMoon, Sparkles, WrapText } from 'lucide-react';
 import type { CodeNode } from '../../engine/model/schema';
 import { useStore } from '../../hooks/useStore';
 import { cameraSystem } from '../../engine/CameraSystem';
 import { engineEvents } from '../../engine/EventBus';
 import { textEditing } from '../../engine/interaction/textEditing';
-import { layoutCode, measureCharWidth } from '../../engine/code/codeLayout';
-import { CODE_FONT, CODE_THEMES, CODE_UI_FONT } from '../../engine/code/codeThemes';
+import { diffLines, layoutCode, measureCharWidth } from '../../engine/code/codeLayout';
+import { CODE_FONT, CODE_THEMES, CODE_UI_FONT, diffColours, resolveCodeTheme } from '../../engine/code/codeThemes';
 import { CODE_THEME_IDS, type CodeSpec } from '../../engine/code/codeTypes';
 import { languageById } from '../../engine/code/codeLanguages';
 import { detectLanguage } from '../../engine/code/codeDetect';
@@ -19,6 +19,7 @@ import { CodeTool } from '../../engine/tools/CodeTool';
 import { PORTAL_SURFACE_ATTR, isInsidePortalSurface } from '../ui/portalSurface';
 import { Menu } from '../menu/Menu';
 import { languageMenuEntries } from './codeMenus';
+import { useDarkTheme } from '../canvas/renderers/useDarkTheme';
 import { IS_MAC, withShortcut } from '../menu/shortcuts';
 import './code.css';
 
@@ -92,12 +93,17 @@ const Editor: React.FC<{ node: CodeNode; onClose: () => void }> = ({ node, onClo
   const pendingSelection = React.useRef<{ start: number; end: number } | null>(null);
 
   const spec: CodeSpec = React.useMemo(() => ({ ...node.code, source: draft }), [node.code, draft]);
-  const theme = CODE_THEMES[spec.theme];
+  const boardDark = useDarkTheme();
+  const theme = resolveCodeTheme(spec, boardDark);
+  const diffInk = diffColours(theme.dark);
   const charWidth = measureCharWidth(spec.fontSize, CODE_FONT);
   // The whole file while editing: a fold is for reading, not for writing into.
   const layout = React.useMemo(() => layoutCode({ ...spec, maxLines: null }, node.width, charWidth), [spec, node.width, charWidth]);
   const m = layout.metrics;
-  const lines = React.useMemo(() => tokenize(draft, spec.language), [draft, spec.language]);
+  const diff = React.useMemo(() => (spec.diff ? diffLines(draft) : null), [spec.diff, draft]);
+  const lines = React.useMemo(() => tokenize(diff ? diff.masked : draft, spec.language), [diff, draft, spec.language]);
+  /** The line a plain click last marked, so Shift-click can mark the run up to here. */
+  const markAnchor = React.useRef<number | null>(null);
 
   // ---- writing to the document -----------------------------------------------
 
@@ -261,7 +267,19 @@ const Editor: React.FC<{ node: CodeNode; onClose: () => void }> = ({ node, onClo
     textareaRef.current?.focus({ preventScroll: true });
   };
 
-  const toggleLine = (line: number) => {
+  /**
+   * Click marks or unmarks one line; Shift-click marks every line from the
+   * last one clicked to this one, the way a range is chosen in any list.
+   */
+  const toggleLine = (line: number, extend: boolean) => {
+    const anchor = markAnchor.current;
+    if (extend && anchor !== null && anchor !== line) {
+      const [from, to] = anchor < line ? [anchor, line] : [line, anchor];
+      const run = Array.from({ length: to - from + 1 }, (_, i) => from + i);
+      patch({ highlights: [...new Set([...spec.highlights, ...run])].sort((a, b) => a - b) });
+      return;
+    }
+    markAnchor.current = line;
     const has = spec.highlights.includes(line);
     patch({ highlights: has ? spec.highlights.filter((n) => n !== line) : [...spec.highlights, line].sort((a, b) => a - b) });
   };
@@ -315,22 +333,44 @@ const Editor: React.FC<{ node: CodeNode; onClose: () => void }> = ({ node, onClo
               key={id}
               type="button"
               role="radio"
-              aria-checked={spec.theme === id}
+              aria-checked={spec.theme === id && !spec.followBoard}
               aria-label={CODE_THEMES[id].label}
               data-tooltip={CODE_THEMES[id].label}
               className="cded-bar__theme"
               style={{ background: `linear-gradient(135deg, ${CODE_THEMES[id].background} 50%, ${CODE_THEMES[id].tokens.keyword} 50%)` }}
               onPointerDown={(e) => e.preventDefault()}
-              onClick={() => patch({ theme: id })}
+              onClick={() => patch({ theme: id, followBoard: undefined })}
             />
           ))}
         </div>
+        <button
+          type="button"
+          className="cded-bar__btn"
+          aria-pressed={Boolean(spec.followBoard)}
+          aria-label="Match the board theme"
+          data-tooltip={spec.followBoard ? 'Matching the board: light on light, dark on dark' : 'Match the board’s light or dark theme'}
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => patch({ followBoard: spec.followBoard ? undefined : true })}
+        >
+          <SunMoon size={15} />
+        </button>
         <span className="cded-bar__sep" />
         <button type="button" className="cded-bar__btn" aria-pressed={spec.wrap} data-tooltip="Wrap long lines" onPointerDown={(e) => e.preventDefault()} onClick={() => patch({ wrap: !spec.wrap })}>
           <WrapText size={15} />
         </button>
         <button type="button" className="cded-bar__btn" aria-pressed={spec.lineNumbers} data-tooltip="Line numbers" onPointerDown={(e) => e.preventDefault()} onClick={() => patch({ lineNumbers: !spec.lineNumbers })}>
           <ListOrdered size={15} />
+        </button>
+        <button
+          type="button"
+          className="cded-bar__btn"
+          aria-pressed={Boolean(spec.diff)}
+          aria-label="Diff"
+          data-tooltip="Diff: lines starting + are added, - removed"
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => patch({ diff: spec.diff ? undefined : true })}
+        >
+          <Diff size={15} />
         </button>
         <span className="cded-bar__sep" />
         <button type="button" className="cded-bar__btn" aria-label="Smaller text" data-tooltip="Smaller" disabled={spec.fontSize <= 9} onPointerDown={(e) => e.preventDefault()} onClick={() => patch({ fontSize: Math.max(9, spec.fontSize - 1) })}>
@@ -359,7 +399,7 @@ const Editor: React.FC<{ node: CodeNode; onClose: () => void }> = ({ node, onClo
         <span
           className="cded-bar__btn cded-bar__keys"
           tabIndex={-1}
-          data-tooltip={`Tab indents · ${IS_MAC ? '⌘' : 'Ctrl'}/ comments · ${IS_MAC ? '⌥' : 'Alt'}↑↓ moves a line · click a number to mark it`}
+          data-tooltip={`Tab indents · ${IS_MAC ? '⌘' : 'Ctrl'}/ comments · ${IS_MAC ? '⌥' : 'Alt'}↑↓ moves a line · click a number to mark it, Shift-click to mark a run`}
         >
           <Keyboard size={15} />
         </span>
@@ -407,6 +447,9 @@ const Editor: React.FC<{ node: CodeNode; onClose: () => void }> = ({ node, onClo
             '--cded-gutter': theme.gutter,
             '--cded-hi': theme.highlight,
             '--cded-hi-bar': theme.highlightBar,
+            '--cded-add': diffInk.addRow,
+            '--cded-del': diffInk.delRow,
+            '--cded-hunk': diffInk.hunkRow,
             '--cded-caret-line': theme.dark ? 'rgba(255,255,255,0.035)' : 'rgba(15,23,42,0.035)',
             '--cded-selection': theme.dark ? 'rgba(130,170,255,0.28)' : 'rgba(9,105,218,0.18)',
             fontFamily: CODE_UI_FONT,
@@ -444,6 +487,15 @@ const Editor: React.FC<{ node: CodeNode; onClose: () => void }> = ({ node, onClo
 
         <div className="cded__body" style={{ top: layout.contentTop, height: bodyHeight }}>
           {layout.rows.map((row, i) =>
+            row.diff ? (
+              <div
+                key={`diff-${i}`}
+                className={`cded__band cded__band--${row.diff}`}
+                style={{ top: row.y - layout.contentTop, height: m.lineHeight }}
+              />
+            ) : null
+          )}
+          {layout.rows.map((row, i) =>
             row.highlighted || row.lineNumber === caretLine ? (
               <div
                 key={`band-${i}`}
@@ -467,7 +519,7 @@ const Editor: React.FC<{ node: CodeNode; onClose: () => void }> = ({ node, onClo
                     title={row.highlighted ? 'Unmark this line' : 'Mark this line for attention'}
                     style={{ top: row.y - layout.contentTop, height: m.lineHeight, lineHeight: `${m.lineHeight}px`, fontSize: m.fontSize, paddingRight: m.fontSize }}
                     onPointerDown={(e) => e.preventDefault()}
-                    onClick={() => toggleLine(row.lineNumber)}
+                    onClick={(e) => toggleLine(row.lineNumber, e.shiftKey)}
                   >
                     {row.lineNumber}
                   </button>
@@ -510,7 +562,8 @@ const Editor: React.FC<{ node: CodeNode; onClose: () => void }> = ({ node, onClo
               >
                 {lines.map((tokens, i) => (
                   <React.Fragment key={i}>
-                    {tokens.map((t, k) => (
+                    {diffMarker(diff?.marks[i], diffInk)}
+                    {(diff?.marks[i] === 'add' || diff?.marks[i] === 'del' ? dropFirstChar(tokens) : tokens).map((t, k) => (
                       <span key={k} style={{ color: theme.tokens[t.kind], fontStyle: t.kind === 'comment' ? 'italic' : undefined, fontWeight: t.kind === 'heading' || t.kind === 'emphasis' ? 600 : undefined }}>
                         {t.text}
                       </span>
@@ -556,6 +609,21 @@ const Editor: React.FC<{ node: CodeNode; onClose: () => void }> = ({ node, onClo
     </>
   );
 };
+
+/** The `+` or `-` that leads a changed line in diff mode, in the change's colour. */
+function diffMarker(mark: string | undefined, ink: { addInk: string; delInk: string }) {
+  if (mark !== 'add' && mark !== 'del') return null;
+  return <span style={{ color: mark === 'add' ? ink.addInk : ink.delInk, fontWeight: 600 }}>{mark === 'add' ? '+' : '-'}</span>;
+}
+
+/** Tokens without their first character: the blank that stands in for a diff marker. */
+function dropFirstChar<T extends { text: string }>(tokens: T[]): T[] {
+  const i = tokens.findIndex((t) => t.text.length > 0);
+  if (i < 0) return tokens;
+  const out = tokens.slice();
+  out[i] = { ...out[i], text: out[i].text.slice(1) };
+  return out;
+}
 
 // Font set on the monospace surfaces from one constant, so a change to the
 // stack cannot leave the editor measuring a different face from the canvas.

@@ -82,6 +82,12 @@
   box-shadow: inset 3px 0 0 var(--cded-hi-bar);
 }
 
+/* Diff rows, under the caret band and the marks: a change is the ground the
+   line sits on, and marking or reaching it still shows on top. */
+.cded__band--add { background: var(--cded-add); }
+.cded__band--del { background: var(--cded-del); }
+.cded__band--hunk { background: var(--cded-hunk); }
+
 .cded__gutter {
   position: absolute;
   top: 0;

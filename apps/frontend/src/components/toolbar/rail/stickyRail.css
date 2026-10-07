@@ -1,0 +1,128 @@
+/* The sticky rail: a quick colour row, a size picker and the stamp tray. */
+
+.sticky-rail-colours {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px;
+}
+
+.sticky-rail-colour {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: transform var(--motion-hover);
+}
+.sticky-rail-colour:hover {
+  transform: scale(1.12);
+}
+/* The current paper, ringed in ink: selection is ink, not accent. */
+.sticky-rail-colour[aria-checked='true'] {
+  box-shadow: 0 0 0 2px var(--surface-elevated), 0 0 0 3.5px var(--text-primary);
+}
+.sticky-rail-colour:focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color);
+  outline-offset: 3px;
+}
+
+.sticky-rail-size {
+  display: grid;
+  place-items: center;
+  min-width: 16px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.sticky-rail-sizes {
+  display: flex;
+  gap: 4px;
+}
+.sticky-rail-size-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 56px;
+  height: 64px;
+  padding: 8px 6px 6px;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.sticky-rail-size-option:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.sticky-rail-size-option[aria-pressed='true'] {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+.sticky-rail-size-glyph {
+  display: block;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+
+.sticky-rail-stamps {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.sticky-rail-stamps__sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 2px;
+  background: var(--border-divider);
+}
+.sticky-rail-stamp {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+.sticky-rail-stamp:hover {
+  background: var(--surface-hover);
+}
+.sticky-rail-stamp[aria-pressed='true'] {
+  background: var(--surface-active);
+}
+.sticky-rail-stamp .emoji {
+  transition: transform var(--motion-hover);
+}
+.sticky-rail-stamp:hover .emoji {
+  transform: scale(1.15);
+}
+.sticky-rail-stamp:focus-visible,
+.sticky-rail-size-option:focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color);
+  outline-offset: 0;
+}
+.sticky-rail-plus-one {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sticky-rail-colour,
+  .sticky-rail-stamp .emoji { transition: none; }
+  .sticky-rail-colour:hover,
+  .sticky-rail-stamp:hover .emoji { transform: none; }
+}

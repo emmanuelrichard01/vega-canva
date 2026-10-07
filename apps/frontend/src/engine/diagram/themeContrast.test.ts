@@ -89,7 +89,10 @@ describe('every theme declares an ink for the bare canvas', () => {
     expect(contrast(theme.canvasInk, DARK)).toBeGreaterThanOrEqual(3);
   });
 
-  it.each(named)('%s: it is not just the text colour again', (_name, theme) => {
+  // Only the palettes with pale boxes have a near-black label colour to
+  // mistake for canvas ink. The dark palette's labels are light by design.
+  const paleNamed = named.filter(([, theme]) => luminance(theme.primaryFill) > 0.5);
+  it.each(paleNamed)('%s: it is not just the text colour again', (_name, theme) => {
     /**
      * The bug this whole field exists for. `textColor` is a near-black chosen
      * against the pale node fills; using it on the canvas is what made block

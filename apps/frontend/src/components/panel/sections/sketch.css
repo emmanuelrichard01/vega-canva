@@ -1,0 +1,62 @@
+/* The sketch section's own pieces. The section itself is panel grammar. */
+
+.sketch-glyph {
+  display: block;
+  flex-shrink: 0;
+}
+
+/* The hatch-angle glyph turns to the value it labels. */
+.sketch-angle-glyph {
+  transform: rotate(var(--sketch-angle, 0deg));
+  transition: transform 120ms var(--ease-settle);
+}
+
+/* "Follow the board": an inline verb inside a note, so it reads as part of
+   the sentence that explains why it is offered. */
+.sketch-follow {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-weight: var(--weight-medium);
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color var(--motion-hover), text-decoration-color var(--motion-hover);
+}
+
+.sketch-follow:hover {
+  color: var(--text-primary);
+  text-decoration-color: currentColor;
+}
+
+.sketch-follow:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sketch-angle-glyph,
+  .sketch-follow {
+    transition: none;
+  }
+}
+
+/* The rail sketch popover: each row of tiles shares the width evenly. */
+.ctx-shape-grid.sketch-rail-grid--2 { grid-template-columns: repeat(2, 1fr); }
+.ctx-shape-grid.sketch-rail-grid--3 { grid-template-columns: repeat(3, 1fr); }
+.ctx-shape-grid.sketch-rail-grid--5 { grid-template-columns: repeat(5, 1fr); }
+
+/* Only a few tiles, so the grid never scrolls. Left to the general rule it
+   clips the first tile's focus ring at the scroller's edge; the popover's own
+   padding is the room the ring needs. */
+.ctx-shape-grid.sketch-rail-grid--2,
+.ctx-shape-grid.sketch-rail-grid--3,
+.ctx-shape-grid.sketch-rail-grid--5 {
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+}

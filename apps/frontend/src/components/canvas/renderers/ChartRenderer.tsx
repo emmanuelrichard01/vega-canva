@@ -23,17 +23,19 @@ import {
   defaultPlotDomain,
 } from '../../../engine/chart/chartTypes';
 import { hachure, SKETCH_FONT, SKETCH_FONT_SCALE } from '../../../engine/chart/chartSketch';
+import { useSketchLevel } from '../../../engine/model/roughBoard';
 import { updateChart } from '../../../engine/chart/chartApply';
+import { useCanEditData } from '../../data/dataActions';
+import { proposeWriteBack } from '../../data/writeBackRequest';
 import { useStore } from '../../../hooks/useStore';
 import { Html } from 'react-konva-utils';
 import './chartCanvas.css';
-import { resolveChartSpec } from '../../../engine/chart/chartFromTable';
+import { useLinkedChartSpec } from '../../data/useLinkedChartSpec';
 import { useChartSoleSelection } from '../../../engine/chart/chartFocus';
 import { draggedValue, nearestHandle, valueHandles, withValue, type ValueHandle } from '../../../engine/chart/chartHandles';
 import { easeOut, morphLayout, MORPH_MS } from '../../../engine/chart/chartMorph';
 import { useCameraZoom } from '../../../engine/useCameraZoom';
 import { claimCursor } from '../../../engine/cursor/cursorOverride';
-import type { TableSpec } from '../../../engine/table/tableTypes';
 import { canvasPlateFill } from '../../../engine/ThemeService';
 import {
   rectRing,
@@ -100,7 +102,7 @@ function labelInk(label: ChartLabel, ink: ChartInk): string {
 const PLANE_SETTLE_MS = 260;
 
 export const ChartRenderer: React.FC<Props> = ({ node }) => {
-  const sketch = node.appearance?.sketch;
+  const sketch = useSketchLevel(node.appearance);
 
   /**
    * Measured with the real font, so the axis gutter is the width the labels
@@ -133,13 +135,8 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
   const zoom = useCameraZoom();
 
   // A linked chart reads its table on every render, so a cell edit reaches it
-  // in the same tick on every client.
-  const linkedTable = useStore((s) => {
-    const id = node.chart.link?.tableId;
-    const t = id ? s.objects[id] : undefined;
-    return t && (t as { type?: string }).type === 'table' ? ((t as unknown as { table: TableSpec }).table) : null;
-  });
-  const dataSpec = React.useMemo(() => resolveChartSpec(node.chart, linkedTable), [node.chart, linkedTable]);
+  // in the same tick on every client, easing to the new values.
+  const dataSpec = useLinkedChartSpec(node.id, node.chart);
 
   /** A value being dragged, before it is written down. */
   const [draftValue, setDraftValue] = React.useState<{ si: number; ci: number; value: number } | null>(null);
@@ -186,9 +183,12 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
 
   const groupRef = React.useRef<any>(null);
   const [handle, setHandle] = React.useState<ValueHandle | null>(null);
+  // A linked chart's values are dragged only by someone who may write the
+  // table: the drop asks to write the cell instead of changing the chart.
+  const canWriteLinked = useCanEditData();
   const handles = React.useMemo(
-    () => (selected && !draftValue ? valueHandles(settled, dataSpec) : []),
-    [selected, draftValue, settled, dataSpec]
+    () => (selected && !draftValue ? valueHandles(settled, dataSpec, canWriteLinked) : []),
+    [selected, draftValue, settled, dataSpec, canWriteLinked]
   );
   const [editingLabel, setEditingLabel] = React.useState<LabelField | null>(null);
   React.useEffect(() => {
@@ -438,7 +438,9 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
       setDraftValue(null);
       claimCursor(`chart-${node.id}`, null);
       if (commit && last !== target.value) {
-        updateChart(node.id, withValue(node.chart, target.seriesIndex, target.categoryIndex, last));
+        // The value belongs to the table, so the drop is a question, not a write.
+        if (node.chart.link) proposeWriteBack(node.chart.link, target.seriesIndex, target.categoryIndex, last);
+        else updateChart(node.id, withValue(node.chart, target.seriesIndex, target.categoryIndex, last));
       }
     };
     const up = () => end(true);
@@ -721,7 +723,7 @@ const ValueHandleMark: React.FC<{
   const k = 1 / Math.max(zoom, 0.05);
   // While dragging, follow the drafted value's own handle in the new layout.
   const live = draft
-    ? valueHandles(layout, spec).find((h) => h.seriesIndex === draft.si && h.categoryIndex === draft.ci) ?? handle
+    ? valueHandles(layout, spec, true).find((h) => h.seriesIndex === draft.si && h.categoryIndex === draft.ci) ?? handle
     : handle;
   if (!live) return null;
   const size = 8 * k;

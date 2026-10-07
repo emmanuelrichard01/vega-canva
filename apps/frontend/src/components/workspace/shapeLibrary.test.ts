@@ -38,11 +38,10 @@ describe('layout', () => {
     }
   });
 
-  it('is eight 40px tiles across, inside the 320-360px the flyout allows', () => {
-    expect(LIBRARY_GRID).toBe(334);
+  it('is nine 40px tiles across, filling the md flyout exactly', () => {
+    expect(LIBRARY_GRID).toBe(376);
     const panel = LIBRARY_LAYOUT.width + 2 * LIBRARY_LAYOUT.panelPad;
-    expect(panel).toBeGreaterThanOrEqual(320);
-    expect(panel).toBeLessThanOrEqual(360);
+    expect(panel).toBe(408);
   });
 });
 

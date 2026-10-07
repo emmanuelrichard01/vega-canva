@@ -1,0 +1,11 @@
+/*
+ * The pointer rests out of the way while a presentation runs.
+ *
+ * `data-cursor-idle` is only ever set by `watchPresentingCursor`, and only
+ * while `data-presenting` is also set, so this cannot remove the pointer from
+ * the editing board. Any movement clears it.
+ */
+:root[data-presenting][data-cursor-idle] .fp-root,
+:root[data-presenting][data-cursor-idle] .fp-root * {
+  cursor: none;
+}

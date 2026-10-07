@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useRoomState } from '../../hooks/useSync';
 import { CollaborationLayer } from './CollaborationLayer';
 import {
@@ -46,6 +46,9 @@ import { musicSlot } from './musicSlot';
 import MusicHeaderSlot from './MusicHeaderSlot';
 import { contrastMenuItem } from '../ui/contrastMenu';
 import { useContrast } from '../../engine/ui/contrast';
+import { toggleBoardSketch, useBoardSketch } from '../../engine/model/roughBoard';
+import { canEditObjects } from '../../engine/model/permissions';
+import { SketchLookGlyph } from '../panel/sketchIcons';
 import './shell.css';
 
 /**
@@ -111,8 +114,10 @@ interface LeftProps {
   onOpenCommands?: () => void;
   /** Whether history replay is running, so its menu row can say so. */
   timelineOpen?: boolean;
-  /** Open the left panel from its pill. */
+  /** Open the left panel from its pill, when there is no `toggle`. */
   onExpand?: () => void;
+  /** The pill's way back into the panel, from `BoardColumn`: click to pin, rest on it to peek. */
+  toggle?: ColumnToggle;
 }
 
 type OpenMenu = { which: 'board' | 'view'; rect: DOMRect; keyboard: boolean } | null;
@@ -132,6 +137,7 @@ const BoardHeaderLeftInner: React.FC<LeftProps> = ({
   onOpenCommands,
   timelineOpen = false,
   onExpand,
+  toggle,
 }) => {
   const { status, synced } = useRoomState();
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -143,6 +149,7 @@ const BoardHeaderLeftInner: React.FC<LeftProps> = ({
   const setSnapToGrid = useStore((state) => state.setSnapToGrid);
   const showContextToolbar = useStore((state) => state.showContextToolbar);
   const setShowContextToolbar = useStore((state) => state.setShowContextToolbar);
+  const boardSketch = useBoardSketch();
   const showRulers = useStore((state) => state.showRulers);
   const setShowRulers = useStore((state) => state.setShowRulers);
   const showGrid = useStore((state) => state.showGrid);
@@ -178,7 +185,12 @@ const BoardHeaderLeftInner: React.FC<LeftProps> = ({
     const t = window.setTimeout(() => setJustSaved(false), 2600);
     return () => window.clearTimeout(t);
   }, [justSaved]);
-  const showLabel = syncStatus.tone !== 'idle' || justSaved;
+  /**
+   * In the panel the word comes and goes; in the pill only Offline keeps it,
+   * a state that must not be missed. Saving comes and goes too often to be
+   * worth the pill's width changing under the name.
+   */
+  const showLabel = variant === 'panel' ? syncStatus.tone !== 'idle' || justSaved : syncStatus.tone === 'offline';
 
   const startRename = () => {
     titleBeforeEditRef.current = localTitle;
@@ -243,12 +255,16 @@ const BoardHeaderLeftInner: React.FC<LeftProps> = ({
     tidy([
       { kind: 'heading', id: 'h-touch', label: 'When you touch it' },
       { kind: 'item', id: 'snap', label: 'Snap to grid', icon: <Magnet size={15} />, checked: snapToGrid, keepOpen: true, detail: 'Hold Ctrl while dragging to do the opposite', onSelect: () => setSnapToGrid(!snapToGrid) },
-      { kind: 'item', id: 'throw', label: 'Throw on flick', icon: <Wind size={15} />, checked: physicsEnabled, keepOpen: true, onSelect: () => setPhysicsEnabled(!physicsEnabled) },
+      // Whether a fast drag launches the object or drops it where it is let
+      // go. Physics itself is a mode (All tools, or Shift+P).
+      { kind: 'item', id: 'throw', label: 'Flick to throw', icon: <Wind size={15} />, checked: physicsEnabled, keepOpen: true, detail: 'A fast drag launches what you let go of', onSelect: () => setPhysicsEnabled(!physicsEnabled) },
       { kind: 'item', id: 'rail', label: 'Selection toolbar', icon: <MousePointerClick size={15} />, checked: showContextToolbar, keepOpen: true, onSelect: () => setShowContextToolbar(!showContextToolbar) },
       { kind: 'separator', id: 's1' },
       { kind: 'heading', id: 'h-drawn', label: 'What it is drawn on' },
       { kind: 'item', id: 'rulers', label: 'Rulers', icon: <Ruler size={15} />, checked: showRulers, keepOpen: true, onSelect: () => setShowRulers(!showRulers) },
       { kind: 'item', id: 'grid', label: 'Dot grid', icon: <Grid3x3 size={15} />, checked: showGrid, keepOpen: true, onSelect: () => setShowGrid(!showGrid) },
+      // A document write, so editors only.
+      canEditObjects() && { kind: 'item', id: 'sketch', label: 'Sketch', icon: <SketchLookGlyph size={15} />, shortcut: 'Shift+S', checked: boardSketch !== null, keepOpen: true, detail: 'Draw the whole board by hand', onSelect: toggleBoardSketch },
       { kind: 'separator', id: 's2' },
       { kind: 'heading', id: 'h-look', label: 'How you are looking at it' },
       { kind: 'item', id: 'dark', label: 'Dark theme', icon: <Moon size={15} />, checked: isDarkTheme, keepOpen: true, onSelect: () => setIsDarkTheme(!isDarkTheme) },
@@ -346,7 +362,7 @@ const BoardHeaderLeftInner: React.FC<LeftProps> = ({
 
       <span
         className={`sync-pip sync-pip--${syncStatus.tone}`}
-        data-said={(showLabel && variant === 'panel') || undefined}
+        data-said={showLabel || undefined}
         data-tooltip={syncStatus.text}
         data-tooltip-pos="bottom"
         role="status"
@@ -362,12 +378,12 @@ const BoardHeaderLeftInner: React.FC<LeftProps> = ({
             <span className="sync-pip__dot" />
           )}
         </span>
-        {showLabel && variant === 'panel' && <span className="sync-pip__label">{syncStatus.label}</span>}
+        {showLabel && <span className="sync-pip__label">{syncStatus.label}</span>}
       </span>
 
-      <span className="board-head__fill" />
+      {variant === 'panel' && <span className="board-head__fill" />}
 
-      {onOpenCommands && (
+      {variant === 'panel' && onOpenCommands && (
         <button
           type="button"
           className="btn-icon"
@@ -381,17 +397,11 @@ const BoardHeaderLeftInner: React.FC<LeftProps> = ({
         </button>
       )}
 
-      {variant === 'pill' && onExpand && (
-        <button
-          type="button"
-          className="btn-icon"
-          onClick={onExpand}
-          aria-label="Show layers"
-          data-tooltip={withShortcut('Show panels', 'Mod+\\')}
-          data-tooltip-pos="bottom"
-        >
-          <PanelLeft size={ICON} />
-        </button>
+      {variant === 'pill' && (toggle || onExpand) && (
+        <>
+          <span className="board-pill__rule" aria-hidden="true" />
+          <PillToggle label="Show the layers panel" toggle={toggle} onExpand={onExpand} icon={<PanelLeft size={ICON} />} />
+        </>
       )}
 
       {menu && (
@@ -428,8 +438,10 @@ interface RightProps {
   commentsOpen?: boolean;
   /** Whether history replay is running, so its button can say so. */
   timelineOpen?: boolean;
-  /** Open the right panel from its pill. Absent when there is no panel to open. */
+  /** Open the right panel from its pill, when there is no `toggle`. Absent when there is no panel to open. */
   onExpand?: () => void;
+  /** The pill's way back into the panel, from `BoardColumn`. */
+  toggle?: ColumnToggle;
 }
 
 const BoardHeaderRightInner: React.FC<RightProps> = ({
@@ -442,6 +454,7 @@ const BoardHeaderRightInner: React.FC<RightProps> = ({
   commentsOpen = false,
   timelineOpen = false,
   onExpand,
+  toggle,
 }) => {
   const { canUndo, canRedo } = useUndoAvailability();
   const receded = useReceded();
@@ -475,27 +488,30 @@ const BoardHeaderRightInner: React.FC<RightProps> = ({
   /** The record sits right beside your own face, in both header forms. The player itself loads on first open. */
   const music = <MusicHeaderSlot />;
 
+  /**
+   * The pill mirrors the left one: its way back into the panel faces the
+   * board, then the people (and your record), then zoom, and Share in the
+   * corner. Comments show only while there is something unread, or while
+   * the inbox is open so it can be closed from here; the panel's header keeps
+   * the way in otherwise. With no panel to open (a commenter or a viewer),
+   * the pill is the only way in, so they always show.
+   */
   if (variant === 'pill') {
     return (
       <div className="board-head board-head--right board-head--pill" data-receded={receded || undefined}>
+        {(toggle || onExpand) && (
+          <>
+            <PillToggle label="Show the properties panel" toggle={toggle} onExpand={onExpand} icon={<PanelRight size={ICON} />} />
+            <span className="board-pill__rule" aria-hidden="true" />
+          </>
+        )}
         <RoleBadge />
         <CollaborationLayer />
         {music}
-        {comments}
+        {(commentUnread > 0 || commentsOpen || !(toggle || onExpand)) && comments}
+        <span className="board-pill__rule" aria-hidden="true" />
         <ZoomControl compact />
         {share}
-        {onExpand && (
-          <button
-            type="button"
-            className="btn-icon"
-            onClick={onExpand}
-            aria-label="Show properties"
-            data-tooltip={withShortcut('Show panels', 'Mod+\\')}
-            data-tooltip-pos="bottom"
-          >
-            <PanelRight size={ICON} />
-          </button>
-        )}
       </div>
     );
   }
@@ -537,3 +553,332 @@ const BoardHeaderRightInner: React.FC<RightProps> = ({
 };
 
 export const BoardHeaderRight = React.memo(BoardHeaderRightInner);
+
+/* ================================================================== columns */
+
+/**
+ * A pill's way back into its panel, as `BoardColumn` hands it to the header:
+ * a click pins the panel open, and resting the pointer on it peeks.
+ */
+export interface ColumnToggle {
+  ref: React.RefObject<HTMLButtonElement | null>;
+  onClick: () => void;
+  onPointerEnter: (e: React.PointerEvent) => void;
+  onPointerLeave: () => void;
+}
+
+/**
+ * The panel glyph at a pill's inner end. With a `toggle` it carries no
+ * tooltip: resting on it peeks the panel, which says what it opens better
+ * than a label would, and a tip that painted just before the peek replaced it
+ * would only flash.
+ */
+const PillToggle: React.FC<{
+  label: string;
+  toggle?: ColumnToggle;
+  onExpand?: () => void;
+  icon: React.ReactNode;
+}> = ({ label, toggle, onExpand, icon }) => (
+  <button
+    ref={toggle?.ref}
+    type="button"
+    className="btn-icon board-pill__toggle"
+    aria-label={label}
+    aria-expanded={false}
+    aria-keyshortcuts="Control+\ Meta+\"
+    data-tooltip={toggle ? undefined : withShortcut(label, 'Mod+\\')}
+    data-tooltip-pos={toggle ? undefined : 'bottom'}
+    onClick={toggle?.onClick ?? onExpand}
+    onPointerEnter={toggle?.onPointerEnter}
+    onPointerLeave={toggle?.onPointerLeave}
+  >
+    {icon}
+  </button>
+);
+
+/** How long the pointer rests on a pill's toggle before the panel peeks. */
+export const PEEK_DELAY_MS = 600;
+/** How long a peek outlives the pointer leaving it. */
+export const PEEK_LINGER_MS = 280;
+/** The pill growing into its panel, and back. */
+const MORPH_MS = 160;
+const MORPH_EASE = 'cubic-bezier(0.16, 1, 0.3, 1)';
+const PILL_RADIUS = 10;
+
+const COLUMN_FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    : false;
+}
+
+export interface BoardColumnProps {
+  side: 'left' | 'right';
+  /** Pinned open. */
+  open: boolean;
+  /** Whether there is a panel to open at all. A viewer's right column is only ever its pill. */
+  canOpen?: boolean;
+  /** Pin the column open: the toggle's click, or any press inside a peek. */
+  onPin: () => void;
+  /** The landmark's name while it is the panel, and while it is the pill. */
+  panelLabel: string;
+  pillLabel: string;
+  /** Its stop in the F6 cycle (`data-region`) and its tour anchor. */
+  region: number;
+  tour?: string;
+  /** The panel's own classes: `hierarchy-panel panel-surface`, `context-inspector panel-surface`. */
+  panelClassName: string;
+  /** Extra `data-*` attributes for the panel. */
+  panelData?: Record<`data-${string}`, string | boolean | undefined>;
+  /** The pill's contents, given the toggle (absent when there is no panel). */
+  pill: (toggle: ColumnToggle | undefined) => React.ReactNode;
+  /** The panel's contents. */
+  children: React.ReactNode;
+}
+
+/**
+ * One side of the board's frame: an open panel, or its pill in that corner.
+ *
+ * - **Pin.** The pill's toggle (or Mod+\ in the room) opens the panel, which
+ *   grows out of the pill: revealed from the pill's own box to its full width
+ *   and height, its opacity coming up, over 160ms. Collapsing narrows the pill
+ *   in from the panel's width. Under reduced motion the two simply swap.
+ * - **Peek.** Resting the pointer on the toggle for 600ms shows the panel as
+ *   an overlay. It takes nothing from the board's insets, so nothing placed
+ *   against the frame moves, the dock least of all. It goes when the pointer
+ *   has been off it for 280ms, on Escape, or on a press elsewhere; a press
+ *   inside it pins it.
+ * - **Focus.** Collapsing while focus was in the panel hands focus to the
+ *   pill's toggle; pinning from the toggle hands it to the panel's first
+ *   control. Panel and pill are one landmark under two names.
+ *
+ * In `Room`:
+ *
+ *     <BoardColumn side="left" open={leftOpen} onPin={expandLeft}
+ *       panelLabel="Board and layers" pillLabel="Board" region={0} tour="layers"
+ *       panelClassName="hierarchy-panel panel-surface"
+ *       panelData={{ 'data-radar-collapsed': !radarOpen }}
+ *       pill={(toggle) => <BoardHeaderLeft variant="pill" toggle={toggle} … />}>
+ *       <BoardHeaderLeft variant="panel" … /> <LayersPanel … /> <PanelWidthHandle />
+ *     </BoardColumn>
+ */
+export const BoardColumn: React.FC<BoardColumnProps> = ({
+  side,
+  open,
+  canOpen = true,
+  onPin,
+  panelLabel,
+  pillLabel,
+  region,
+  tour,
+  panelClassName,
+  panelData,
+  pill,
+  children,
+}) => {
+  const [peek, setPeek] = useState(false);
+  const shown = open || (peek && canOpen);
+  const Tag = side === 'left' ? 'nav' : 'aside';
+
+  const panelRef = useRef<HTMLElement | null>(null);
+  const pillRef = useRef<HTMLElement | null>(null);
+  const toggleRef = useRef<HTMLButtonElement | null>(null);
+  const openTimer = useRef(0);
+  const closeTimer = useRef(0);
+  /** The last size of each form, for the other to grow from or narrow to. */
+  const pillRect = useRef<DOMRect | null>(null);
+  const panelRect = useRef<DOMRect | null>(null);
+  /** Whether focus was inside the panel, for handing it to the pill on collapse. */
+  const focusInside = useRef(false);
+  /** Whether the toggle had focus when it pinned the panel. */
+  const pinnedFromToggle = useRef(false);
+  /** The latest `onPin`, so the toggle can stay one object and the memoised headers stay put. */
+  const onPinRef = useRef(onPin);
+  useEffect(() => {
+    onPinRef.current = onPin;
+  }, [onPin]);
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(openTimer.current);
+      window.clearTimeout(closeTimer.current);
+    },
+    []
+  );
+
+  // A pinned column is not peeking, and neither is one that cannot open.
+  useEffect(() => {
+    if (!open && canOpen) return;
+    window.clearTimeout(openTimer.current);
+    setPeek(false);
+  }, [open, canOpen]);
+
+  const toggle = useMemo<ColumnToggle>(
+    () => ({
+      ref: toggleRef,
+      onClick: () => {
+        window.clearTimeout(openTimer.current);
+        pinnedFromToggle.current = document.activeElement === toggleRef.current;
+        setPeek(false);
+        onPinRef.current();
+      },
+      onPointerEnter: (e) => {
+        // A touch or a pen has no resting pointer to read as intent.
+        if (e.pointerType === 'touch' || e.pointerType === 'pen') return;
+        window.clearTimeout(openTimer.current);
+        openTimer.current = window.setTimeout(() => setPeek(true), PEEK_DELAY_MS);
+      },
+      onPointerLeave: () => window.clearTimeout(openTimer.current),
+    }),
+    []
+  );
+
+  // While peeking: a pointer away from it closes it after a beat, a press
+  // inside pins it, a press elsewhere or Escape closes it.
+  useEffect(() => {
+    if (!peek || open) return;
+    const inside = (target: EventTarget | null) =>
+      target instanceof Node && Boolean(panelRef.current?.contains(target) || toggleRef.current?.contains(target));
+    const cancelClose = () => {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = 0;
+    };
+    const onMove = (e: PointerEvent) => {
+      if (inside(e.target)) cancelClose();
+      else if (!closeTimer.current) {
+        closeTimer.current = window.setTimeout(() => {
+          closeTimer.current = 0;
+          setPeek(false);
+        }, PEEK_LINGER_MS);
+      }
+    };
+    const onDown = (e: PointerEvent) => {
+      cancelClose();
+      if (panelRef.current?.contains(e.target as Node)) onPinRef.current();
+      else setPeek(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPeek(false);
+    };
+    const onBlur = () => setPeek(false);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerdown', onDown, true);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      cancelClose();
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [peek, open]);
+
+  // Keep each form's last size, for the other to grow from or narrow to.
+  useLayoutEffect(() => {
+    const el = shown ? panelRef.current : pillRef.current;
+    if (!el) return;
+    const store = () => {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0) (shown ? panelRect : pillRect).current = r;
+    };
+    store();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(store);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [shown]);
+
+  // The morph, and where focus goes, when one form replaces the other.
+  const mounted = useRef(false);
+  useLayoutEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true;
+      return;
+    }
+    const reduced = prefersReducedMotion();
+    if (shown) {
+      const el = panelRef.current;
+      const from = pillRect.current;
+      if (el && from && !reduced && typeof el.animate === 'function') {
+        const to = el.getBoundingClientRect();
+        const top = Math.max(0, from.top - to.top);
+        const left = Math.max(0, from.left - to.left);
+        const right = Math.max(0, to.right - from.right);
+        const bottom = Math.max(0, to.bottom - from.bottom);
+        el.animate(
+          [
+            { clipPath: `inset(${top}px ${right}px ${bottom}px ${left}px round ${PILL_RADIUS}px)`, opacity: 0.6 },
+            { clipPath: 'inset(0px 0px 0px 0px round 0px)', opacity: 1 },
+          ],
+          { duration: MORPH_MS, easing: MORPH_EASE }
+        );
+      }
+      if (open && pinnedFromToggle.current) {
+        el?.querySelector<HTMLElement>(COLUMN_FOCUSABLE)?.focus({ preventScroll: true });
+      }
+      pinnedFromToggle.current = false;
+    } else {
+      const el = pillRef.current;
+      const from = panelRect.current;
+      if (el && from && !reduced && typeof el.animate === 'function') {
+        const natural = el.getBoundingClientRect().width;
+        el.dataset.morphing = '';
+        const anim = el.animate(
+          [
+            { width: `${Math.round(from.width)}px`, opacity: 0.6 },
+            { width: `${Math.round(natural)}px`, opacity: 1 },
+          ],
+          { duration: MORPH_MS, easing: MORPH_EASE }
+        );
+        const done = () => {
+          delete el.dataset.morphing;
+        };
+        anim.onfinish = done;
+        anim.oncancel = done;
+      }
+      const lost = !document.activeElement || document.activeElement === document.body;
+      if (focusInside.current && lost) {
+        (toggleRef.current ?? el?.querySelector<HTMLElement>(COLUMN_FOCUSABLE))?.focus({ preventScroll: true });
+      }
+      focusInside.current = false;
+    }
+  }, [shown, open]);
+
+  if (shown) {
+    return (
+      <Tag
+        ref={panelRef}
+        className={panelClassName}
+        aria-label={panelLabel}
+        data-region={region}
+        data-tour={tour}
+        data-peek={!open || undefined}
+        onFocus={() => {
+          focusInside.current = true;
+        }}
+        onBlur={(e: React.FocusEvent<HTMLElement>) => {
+          const next = e.relatedTarget as Node | null;
+          if (next && !e.currentTarget.contains(next)) focusInside.current = false;
+        }}
+        {...panelData}
+      >
+        {children}
+      </Tag>
+    );
+  }
+
+  return (
+    <Tag
+      ref={pillRef}
+      className={`board-pill board-pill--${side}`}
+      aria-label={pillLabel}
+      data-region={region}
+      data-tour={tour}
+    >
+      {pill(canOpen ? toggle : undefined)}
+    </Tag>
+  );
+};

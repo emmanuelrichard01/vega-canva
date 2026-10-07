@@ -1,0 +1,48 @@
+/* ---------------------------------------------------------------------------
+   VOICE NOTE TRANSCRIPT — components/canvas/renderers/AudioRenderer.tsx
+
+   The player card is `.vn` (index.css). The transcript opens beneath it, at
+   the card's width, as part of the same object: same surface, no second
+   elevation, and selectable text so a sentence can be copied out.
+   --------------------------------------------------------------------------- */
+
+.vn-transcript-toggle[aria-expanded='true'] {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.vn-transcript {
+  box-sizing: border-box;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius-xl, 12px);
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-divider);
+  pointer-events: auto;
+  user-select: text;
+  font-family: var(--font-sans);
+}
+
+.vn-transcript__text {
+  margin: 0;
+  max-height: 168px;
+  overflow-y: auto;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.vn-transcript__note {
+  display: block;
+  margin-top: 6px;
+  font-size: var(--text-2xs);
+  color: var(--text-tertiary);
+}
+
+@media (prefers-contrast: more) {
+  .vn-transcript {
+    border-color: var(--border-strong);
+  }
+}

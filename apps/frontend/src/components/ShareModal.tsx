@@ -16,12 +16,13 @@ import {
   MessageSquare,
   PenTool,
   QrCode,
+  Radio,
   RotateCw,
   Share2,
   ShieldCheck,
 } from 'lucide-react';
 import { formatRoomCode, roomCodeFor } from '../engine/room/roomCode';
-import { inviteMintUrl, roomRequestHeaders } from '../utils/endpoints';
+import { API_BASE, inviteMintUrl, roomRequestHeaders } from '../utils/endpoints';
 import { metadataMap, provider, roomId as currentRoomId } from '../engine/document/doc';
 import { useRoomState } from '../hooks/useSync';
 import { copyLink, shareLink, shareSheetWorthwhile } from '../engine/share/copyLink';
@@ -32,16 +33,23 @@ import { menuShortcut, SHORTCUTS } from './menu/shortcuts';
 import { Dialog, DialogBody, DialogHeader } from './ui/Dialog';
 import { AvatarStack } from './ui/Avatar';
 import { tooltipProps } from './ui/Tooltip';
+import { Switch } from './ui/Switch';
 import { LinkPreview } from './share/LinkPreview';
 import { ShareQr } from './share/ShareQr';
 import {
   ROLE_RANK,
   expiryDate,
+  linkNeedsToken,
   linkToShow,
   mintRecovery,
+  presentLink,
+  readEnforcement,
   readMintResponse,
   roleBlockedReason,
+  roleBlurb,
+  securityNote,
   wasShortened,
+  type Enforcement,
   type MintState,
 } from './share/shareModel';
 import './ui/shareDialog.css';
@@ -64,10 +72,10 @@ const EXPORTS: ReadonlyArray<{ format: ExportFormat; label: string; detail: stri
 ];
 
 /** The three answers to "what can someone with this link do", in plain words. */
-const ROLES: ReadonlyArray<{ id: RoomRole; label: string; Icon: typeof Edit3; blurb: string }> = [
-  { id: 'editor', label: 'Can edit', Icon: Edit3, blurb: 'Draw, move and delete anything, and share the board onward.' },
-  { id: 'commenter', label: 'Can comment', Icon: MessageSquare, blurb: 'Read the board and leave comments. The drawing tools are not offered.' },
-  { id: 'viewer', label: 'Can view', Icon: Eye, blurb: 'Look around and export. The server refuses edits, so this is a real limit.' },
+const ROLES: ReadonlyArray<{ id: RoomRole; label: string; Icon: typeof Edit3 }> = [
+  { id: 'editor', label: 'Can edit', Icon: Edit3 },
+  { id: 'commenter', label: 'Can comment', Icon: MessageSquare },
+  { id: 'viewer', label: 'Can view', Icon: Eye },
 ];
 
 /** How long a signed link lives. `0` means it does not expire. */
@@ -98,6 +106,8 @@ const ShareBody: React.FC<{ onExport?: (format: ExportFormat) => void }> = ({ on
   const [copied, setCopied] = useState<'link' | 'code' | null>(null);
   const [copyFailed, setCopyFailed] = useState(false);
   const [showQr, setShowQr] = useState(false);
+  const [present, setPresent] = useState(false);
+  const [enforcement, setEnforcement] = useState<Enforcement>('unknown');
   const rolesRef = useRef<HTMLDivElement>(null);
   const { awarenessUsers } = useRoomState();
 
@@ -115,8 +125,19 @@ const ShareBody: React.FC<{ onExport?: (format: ExportFormat) => void }> = ({ on
    * the board's own address already grants. The restricted roles are signed,
    * because a role only means something when somebody else decided it.
    */
-  const needsToken = role !== 'editor';
-  const link = linkToShow(role, fullAccessLink, mint);
+  const needsToken = linkNeedsToken(role, enforcement);
+  const myAuthorId = typeof me?.id === 'string' && me.id ? me.id : undefined;
+  const link = presentLink(linkToShow(role, fullAccessLink, mint, needsToken), myAuthorId, present);
+
+  // Whether the server only opens boards with a signed link decides what the
+  // dialog may promise, so ask it once. Until it answers, nothing is promised.
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(`${API_BASE}/api/rooms/status?ids=${encodeURIComponent(roomId)}`, { signal: controller.signal })
+      .then(async (res) => setEnforcement(readEnforcement(res.status, await res.json().catch(() => null))))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [roomId]);
 
   /** Which request is current, so a slow answer for an earlier choice is dropped. */
   const requestSeq = useRef(0);
@@ -288,7 +309,7 @@ const ShareBody: React.FC<{ onExport?: (format: ExportFormat) => void }> = ({ on
                 aria-describedby={ownRole !== 'editor' ? 'sh-role-limit' : undefined}
                 onKeyDown={onRoleKeys}
               >
-                {ROLES.map(({ id, label, Icon, blurb }) => {
+                {ROLES.map(({ id, label, Icon }) => {
                   const reason = roleBlockedReason(id, ownRole);
                   const checked = role === id;
                   return (
@@ -319,7 +340,7 @@ const ShareBody: React.FC<{ onExport?: (format: ExportFormat) => void }> = ({ on
                       <span className="sh-role__text">
                         <span className="sh-role__label">{label}</span>
                         <span id={`sh-role-${id}-why`} className="sh-role__blurb">
-                          {reason ?? blurb}
+                          {reason ?? roleBlurb(id, enforcement)}
                         </span>
                       </span>
                       <span className="sh-role__check" aria-hidden="true">
@@ -433,13 +454,25 @@ const ShareBody: React.FC<{ onExport?: (format: ExportFormat) => void }> = ({ on
               )}
 
               {/* Signed-link awareness: say what kind of link this is and what it cannot do. */}
-              <p className="sh-hint sh-hint--trust">
-                {mint.kind === 'unavailable'
-                  ? 'Comment and view links have to be signed by the server, and this one has no signing key. Only edit links can be shared until SHARE_SECRET is set.'
-                  : needsToken
-                    ? 'A signed link: the server seals the role into it, so nobody can edit it into an edit link. Anyone who already has the board’s own address still has full access.'
-                    : 'There are no accounts on this board, so the link is the key. Anyone who has it can edit, and a link that is out cannot be taken back.'}
-              </p>
+              <p className="sh-hint sh-hint--trust">{securityNote(role, enforcement, mint.kind !== 'unavailable')}</p>
+
+              {myAuthorId && (
+                <div className="sh-present">
+                  <Switch
+                    block
+                    checked={present}
+                    onChange={setPresent}
+                    label="Open in follow mode"
+                    tooltip="The link opens straight onto your screen"
+                  />
+                  <p className="sh-hint">
+                    <Radio size={12} aria-hidden="true" />{' '}
+                    {present
+                      ? 'People who open this follow your view while you are on the board. Moving the canvas takes it back.'
+                      : 'For presenting: the link opens already following you.'}
+                  </p>
+                </div>
+              )}
 
               {showQr && link && (
                 <div className="sh-qr">

@@ -1,0 +1,629 @@
+/* ===========================================================================
+   ONBOARDING: the tour, its offer, the getting-started checklist, and the
+   empty-board hints.
+
+   One authored motion moment: the tour's pen ring drawing itself on as the
+   card travels. Everything else is a quiet fade or a state change, and every
+   surface declares its elevation once (shadow, no border).
+   =========================================================================== */
+
+/* ------------------------------------------------------------------ tour -- */
+
+.tour {
+  --tour-scrim: color-mix(in srgb, #05070c 40%, transparent);
+  position: fixed;
+  inset: 0;
+  /* Over the application, under a dialog. */
+  z-index: var(--z-tour);
+  /* The board underneath stays live: only the card takes a pointer. */
+  pointer-events: none;
+}
+
+.dark-theme .tour { --tour-scrim: color-mix(in srgb, #000 58%, transparent); }
+
+/* The surround, as one shadow round a hole the shape of the element. */
+.tour__spot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-shadow: 0 0 0 9999px var(--tour-scrim);
+  transition:
+    transform var(--motion-settle),
+    width var(--motion-settle),
+    height var(--motion-settle),
+    border-radius var(--motion-settle);
+  pointer-events: none;
+}
+
+/* The pen ring, over the scrim so it reads as drawn on the glass. */
+.tour__ink {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tour__ring {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: tourInk 420ms var(--ease-settle) 120ms both;
+}
+
+@keyframes tourInk {
+  to { stroke-dashoffset: 0; }
+}
+
+.tour__card {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-lg);
+  pointer-events: auto;
+  transition: transform var(--motion-settle);
+  animation: tourFade 240ms var(--ease-settle) both;
+}
+
+.dark-theme .tour__card { box-shadow: var(--shadow-float); }
+
+@keyframes tourFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* The words cross-fade while the card travels; the movement is the continuity. */
+.tour__body { animation: tourWords 320ms var(--ease-settle) both; }
+
+@keyframes tourWords {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.tour__title {
+  margin: 0 0 var(--space-1);
+  padding-right: var(--space-6);
+  color: var(--text-primary);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.tour__text {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+.tour__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.tour__dots { display: flex; align-items: center; gap: 2px; }
+
+/* A 6px mark inside a 16px target: small to look at, easy to press. */
+.tour__dot {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+
+.tour__dot::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+  transition: background-color var(--motion-hover), width var(--motion-hover);
+}
+
+.tour__dot:hover::before { background: var(--text-tertiary); }
+
+/* The current step is a lozenge, in ink: a shape difference survives a glance. */
+.tour__dot[data-active]::before {
+  width: 14px;
+  background: var(--text-primary);
+}
+
+.tour__actions { display: flex; align-items: center; gap: var(--space-1); }
+
+.tour__back,
+.tour__close {
+  display: grid;
+  place-items: center;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.tour__back:hover,
+.tour__close:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.tour__close {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  color: var(--text-tertiary);
+}
+
+.tour__next {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--control-h-sm);
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--accent-on);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: background-color var(--motion-hover);
+}
+
+.tour__next:hover { background: var(--accent-hover); }
+
+.tour__card :focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------ the offer -- */
+
+/* Viewers and commenters only: editors get the offer inside the checklist. */
+.tour-offer {
+  position: fixed;
+  top: calc(var(--inset-top, 0px) + var(--space-3));
+  left: 50%;
+  translate: -50%;
+  z-index: var(--z-coach);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: min(440px, calc(100vw - 2 * var(--space-4)));
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-lg);
+  animation: onboardIn 360ms var(--ease-settle) both;
+}
+
+.dark-theme .tour-offer { box-shadow: var(--shadow-float); }
+
+.tour-offer__body { flex: 1; min-width: 0; }
+
+.tour-offer__title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  line-height: 1.4;
+}
+
+.tour-offer__text {
+  margin: 1px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.tour-offer__actions { display: flex; align-items: center; gap: var(--space-1); flex-shrink: 0; }
+
+.tour-offer__ghost,
+.tour-offer__primary {
+  height: var(--control-h-sm);
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.tour-offer__ghost { background: transparent; color: var(--text-secondary); }
+.tour-offer__ghost:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.tour-offer__primary {
+  background: var(--accent);
+  color: var(--accent-on);
+  font-weight: var(--weight-semibold);
+}
+
+.tour-offer__primary:hover { background: var(--accent-hover); }
+
+@keyframes onboardIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ------------------------------------------------- getting-started list -- */
+
+.gs {
+  position: fixed;
+  right: calc(var(--inset-right, 0px) + var(--gutter, 16px) + var(--space-3));
+  bottom: calc(var(--dock-h, 64px) + 32px);
+  z-index: var(--z-coach);
+  transition: opacity var(--motion-hover), visibility var(--motion-hover);
+}
+
+.gs[hidden] { display: none; }
+
+/* A tool's tip or a walkthrough is talking: the checklist goes quiet. */
+body:has(.coach, .walk) .gs {
+  visibility: hidden;
+  opacity: 0;
+}
+
+.gs__card {
+  width: 288px;
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-lg);
+  animation: onboardIn 360ms var(--ease-settle) both;
+}
+
+.dark-theme .gs__card { box-shadow: var(--shadow-float); }
+
+.gs__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-2) var(--space-2) var(--space-4);
+}
+
+.gs__title {
+  flex: 1;
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  line-height: 1.4;
+}
+
+.gs__count {
+  margin-right: var(--space-1);
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.gs__icon {
+  display: grid;
+  place-items: center;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.gs__icon:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.gs__bar {
+  height: 3px;
+  margin: 0 var(--space-4) var(--space-1);
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--surface-secondary);
+}
+
+.gs__bar > span {
+  display: block;
+  height: 100%;
+  background: var(--text-primary);
+  transform: scaleX(var(--gs-progress, 0));
+  transform-origin: left center;
+  transition: transform var(--motion-settle);
+}
+
+.gs__list {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  list-style: none;
+}
+
+.gs__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-base);
+  text-align: left;
+}
+
+button.gs__row {
+  cursor: pointer;
+  transition: background-color var(--motion-hover);
+}
+
+button.gs__row:hover { background: var(--surface-hover); }
+
+.gs__label { flex: 1; min-width: 0; }
+
+.gs__item[data-done] .gs__label { color: var(--text-tertiary); }
+
+.gs__key {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  line-height: 18px;
+  text-align: center;
+}
+
+.gs__go {
+  color: var(--text-tertiary);
+  transition: transform var(--motion-hover), color var(--motion-hover);
+}
+
+button.gs__row:hover .gs__go { color: var(--text-secondary); transform: translateX(2px); }
+
+/* The check: a hollow ring, then ink with the tick reversed out of it. */
+.gs-check {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  transition: background-color 200ms var(--ease-settle), border-color 200ms var(--ease-settle);
+}
+
+.gs-check svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--surface-elevated);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.gs-check__tick {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transition: stroke-dashoffset 320ms var(--ease-settle) 100ms;
+}
+
+.gs-check[data-done] {
+  border-color: var(--text-primary);
+  background: var(--text-primary);
+}
+
+.gs-check[data-done] .gs-check__tick { stroke-dashoffset: 0; }
+
+/* The micro-moment: the check lands with a small give, the row glows once. */
+.gs__item[data-fresh] .gs-check { animation: gsPop 460ms var(--ease-settle) both; }
+.gs__item[data-fresh] .gs-check__tick { animation: tourInk 320ms var(--ease-settle) 120ms both; }
+.gs__item[data-fresh] .gs__row { animation: gsGlow 1400ms var(--ease-settle) both; }
+
+@keyframes gsPop {
+  0% { transform: scale(0.6); }
+  55% { transform: scale(1.14); }
+  100% { transform: scale(1); }
+}
+
+@keyframes gsGlow {
+  from { background: var(--surface-active, var(--surface-hover)); }
+  to { background: transparent; }
+}
+
+.gs__done {
+  margin: 0;
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  line-height: 1.55;
+}
+
+.gs__done kbd,
+.ebh__key {
+  display: inline-block;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  line-height: 18px;
+  text-align: center;
+}
+
+.gs__foot {
+  padding: var(--space-1) var(--space-2) var(--space-2);
+  border-top: 1px solid var(--border-divider);
+}
+
+.gs__tour {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--control-h-md);
+  margin-top: var(--space-1);
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.gs__tour:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+/* Folded: a pill with the progress ring and the count. */
+.gs__pill {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 40px;
+  padding: 0 var(--space-3) 0 6px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  color: var(--text-primary);
+  font-family: inherit;
+  cursor: pointer;
+  animation: onboardIn 280ms var(--ease-settle) both;
+  transition: background-color var(--motion-hover);
+}
+
+.gs__pill:hover { background: var(--surface-hover); }
+
+.gs__pill-count {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.gs-ring { display: block; }
+.gs-ring__track { fill: none; stroke: var(--border-divider); }
+
+.gs-ring__value {
+  fill: none;
+  stroke: var(--text-primary);
+  stroke-linecap: round;
+  transition: stroke-dashoffset var(--motion-settle);
+}
+
+.gs :focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+@media (max-width: 640px) {
+  .gs { right: var(--space-4); }
+  .gs__card { width: calc(100vw - 2 * var(--space-4)); }
+}
+
+/* -------------------------------------------------------- empty board -- */
+
+.ebh {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-canvas-overlay);
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  pointer-events: none;
+  animation: ebhIn 520ms var(--ease-settle) 120ms both;
+  transition: opacity 320ms var(--ease-settle), transform 320ms var(--ease-settle);
+}
+
+.ebh[data-leaving] {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+@keyframes ebhIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.ebh__title {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+.ebh__hints {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2) var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ebh__hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--text-base);
+}
+
+.ebh__key { background: var(--surface-elevated); }
+
+@media (prefers-reduced-motion: reduce) {
+  /* The card still travels: a card that teleports between eight places is
+     harder to follow. What goes is the decoration around it. */
+  .tour__card,
+  .tour__body,
+  .tour-offer,
+  .gs__card,
+  .gs__pill,
+  .ebh { animation: none; }
+  .tour__spot { transition: none; }
+  /* Marks arrive whole: a stroke frozen half-drawn is a picture of a bug. */
+  .tour__ring,
+  .gs__item[data-fresh] .gs-check__tick { animation: none; stroke-dasharray: none; stroke-dashoffset: 0; }
+  .gs-check__tick { transition: none; }
+  .gs__item[data-fresh] .gs-check,
+  .gs__item[data-fresh] .gs__row { animation: none; }
+  .gs__bar > span,
+  .gs-ring__value,
+  .ebh { transition: opacity 120ms linear; }
+}

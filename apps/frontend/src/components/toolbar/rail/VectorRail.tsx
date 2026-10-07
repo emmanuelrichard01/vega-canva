@@ -231,7 +231,7 @@ export const FreehandRail: SingleRail<PathNode> = ({ node, conditional, tail, ta
       paint={<StrokeControl appearance={appearance} width={drawnStrokeWidth(node)} onChange={setAppearance} />}
       paintControls={1}
       verbs={[
-        { id: 'sketch', controls: 1, node: <SketchControl appearance={appearance} shades={false} onChange={setAppearance} /> },
+        { id: 'sketch', controls: 1, node: <SketchControl appearance={appearance} shades={false} followsBoard={false} onChange={setAppearance} /> },
       ]}
       conditional={conditional}
       tail={tail}

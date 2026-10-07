@@ -9,6 +9,7 @@ import { cameraSystem } from '../engine/CameraSystem';
 import { toggleIconBrowser } from '../engine/icons/iconStore';
 import { arrangeSelectionInGrid } from '../engine/grid/arrangeInGrid';
 import { canEditObjects } from '../engine/model/permissions';
+import { toggleBoardSketch } from '../engine/model/roughBoard';
 
 export interface RoomShortcutsOptions {
   selectTool: (toolId: string) => void;
@@ -294,6 +295,30 @@ export function useRoomShortcuts({
         if (e.repeat) return;
         e.preventDefault();
         if (canEditObjects()) toggleIconBrowser();
+        return;
+      }
+
+      /**
+       * Shift+P enters Physics with the force used last. `P` is the vector
+       * pen, so the capital is the neighbour, as Shift+I is to Image. Forces
+       * move objects, so it is an editor's key.
+       */
+      if (e.shiftKey && key === 'p') {
+        if (e.repeat) return;
+        e.preventDefault();
+        if (canEditObjects()) selectTool(useStore.getState().lastForce);
+        return;
+      }
+
+      /**
+       * Shift+S draws the whole board by hand, or puts it back. `S` is free of
+       * tools; Alt+Shift+S is "same stroke", a separate chord. The mode is a
+       * document write, so it is an editor's key.
+       */
+      if (e.shiftKey && key === 's') {
+        if (e.repeat) return;
+        e.preventDefault();
+        if (canEditObjects()) toggleBoardSketch();
         return;
       }
 

@@ -1,21 +1,16 @@
 import React, { useSyncExternalStore } from 'react';
-import { Check, ChevronDown, Crop, Download, ImageUp, Shrink } from 'lucide-react';
+import { Crop, Download, ImageUp } from 'lucide-react';
 import { cropMode } from '../../../engine/interaction/cropMode';
 import { slotReframe } from '../../../engine/interaction/slotReframe';
-import { FRAME_PRESETS, FRAME_PRESET_GROUPS, presetMatching } from '../../../engine/model/frames';
-import type { AnyNode, AudioNode, FrameNode, ImageNode } from '../../../engine/model/schema';
-import { useStore } from '../../../hooks/useStore';
-import { notify } from '../../../engine/ui/notices';
-import { FillEditor } from '../../ui/FillEditor';
-import { resizeFramesToFit } from '../../canvas/useContentShortcuts';
+import { pickImageFile, replaceImageFile } from '../../../engine/media/imageEdit';
+import type { AnyNode, AudioNode, ImageNode } from '../../../engine/model/schema';
 import { RailButton } from '../RailBase';
-import { RailPopover } from '../RailPopover';
 import { RailAnatomy } from './anatomy';
 import { OpacityControl } from './controls';
-import { downloadableSrc, pickImageFile, replaceImage } from './imageActions';
+import { downloadableSrc } from './imageActions';
 import { KindLabel } from './kind';
 import { kindOf } from './kindOf';
-import { appearanceOf, updateNode, type SingleRail } from './types';
+import { updateNode, type SingleRail } from './types';
 
 /** A file name for a download: the object's title, or what it is. */
 function fileNameFor(base: string, src: string, fallbackExt: string): string {
@@ -85,9 +80,9 @@ export const ImageRail: SingleRail<ImageNode> = ({ node, conditional, tail, tail
           node: (
             <RailButton
               label="Replace image"
-              hint="Choose another picture for this spot, same size and place"
+              hint="Choose another picture for this frame. It is cropped to fill the same box."
               onClick={() => {
-                void pickImageFile().then((file) => file && replaceImage(node, file));
+                void pickImageFile().then((file) => file && replaceImageFile(node, file));
               }}
             >
               <ImageUp size={16} />
@@ -106,7 +101,7 @@ export const ImageRail: SingleRail<ImageNode> = ({ node, conditional, tail, tail
             <DownloadLink
               src={downloadableSrc(node.src)}
               name={fileNameFor(node.title ?? 'image', node.src ?? '', 'png')}
-              label="Download image"
+              label="Download original"
             />
           ),
         },
@@ -139,88 +134,6 @@ export const AudioRail: SingleRail<AudioNode> = ({ node, conditional, tail, tail
     tailControls={tailControls}
   />
 );
-
-/** A frame's size, as the preset it matches: Desktop, Story, A4 — or its own numbers. */
-const FrameSizeControl: React.FC<{ node: FrameNode }> = ({ node }) => {
-  const match = presetMatching(node.width, node.height);
-  return (
-    <RailPopover
-      label="Frame size"
-      align="start"
-      trigger={
-        <span className="rail-kind">
-          <span className="rail-kind__name">{match ? match.label : `${Math.round(node.width)} × ${Math.round(node.height)}`}</span>
-          <ChevronDown size={12} aria-hidden className="rail-kind__chevron" />
-        </span>
-      }
-    >
-      {(close) => (
-        <div className="rail-list rail-list--wide" role="radiogroup" aria-label="Frame size">
-          {FRAME_PRESET_GROUPS.map((group) => (
-            <React.Fragment key={group}>
-              <span className="ctx-popover__label">{group}</span>
-              {FRAME_PRESETS.filter((p) => p.group === group).map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={match?.id === p.id}
-                  className="rail-list__item"
-                  onClick={() => {
-                    updateNode(node.id, { width: p.width, height: p.height, safeArea: p.safeArea });
-                    close();
-                  }}
-                >
-                  <span className="rail-list__label">{p.label}</span>
-                  <span className="rail-list__meta">
-                    {p.width} × {p.height}
-                  </span>
-                  {match?.id === p.id && <Check size={13} aria-hidden />}
-                </button>
-              ))}
-            </React.Fragment>
-          ))}
-        </div>
-      )}
-    </RailPopover>
-  );
-};
-
-/** A frame: its size leads, then its ground, then fitting it to what it holds. */
-export const FrameRail: SingleRail<FrameNode> = ({ node, conditional, tail, tailControls }) => {
-  const { appearance, setAppearance } = appearanceOf(node);
-  return (
-    <RailAnatomy
-      kind={<FrameSizeControl node={node} />}
-      kindControls={1}
-      paint={<FillEditor paint={appearance.fill?.[0]} onChange={(fill) => setAppearance({ fill: [fill] })} />}
-      paintControls={1}
-      verbs={[
-        {
-          id: 'fit',
-          controls: 1,
-          node: (
-            <RailButton
-              label="Resize to fit"
-              hint="Fit the frame to what it holds"
-              onClick={() => {
-                const objects = useStore.getState().objects;
-                if (resizeFramesToFit([node], objects) > 0) return;
-                const empty = !Object.values(objects).some((n) => n.frameId === node.id);
-                notify({ tone: 'info', message: empty ? 'This frame is empty, so there is nothing to fit.' : 'This frame already fits what it holds.' });
-              }}
-            >
-              <Shrink size={16} />
-            </RailButton>
-          ),
-        },
-      ]}
-      conditional={conditional}
-      tail={tail}
-      tailControls={tailControls}
-    />
-  );
-};
 
 /** Anything without a rail of its own: what it is, and the tail. */
 export const DefaultRail: SingleRail<AnyNode> = ({ node, subject, conditional, tail, tailControls }) => {

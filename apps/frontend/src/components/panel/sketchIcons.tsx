@@ -1,281 +1,221 @@
 import React from 'react';
-import type { ShadingDensity } from '../../engine/model/rough';
-import { rectRing, roughPolyline, shapeFill, type FillStyle, type SketchLevel } from '../../engine/model/rough';
+import type { FillStyle, ShadingDensity, SketchLevel } from '../../engine/model/rough';
+import './sections/sketch.css';
 
 /**
- * Specimens for the sketch controls, drawn by the sketch code itself.
+ * The sketch controls' glyphs.
  *
- * ## Why these are generated rather than authored
+ * Authored on the dock's grid (`components/dock/glyphs.tsx`) so they sit in
+ * the same family as every other icon in the chrome:
+ * - a 24-unit box with a 2-unit margin, so the live area is 20;
+ * - a 1.75 stroke with round caps and joins for every outline;
+ * - corners of 2 on rectangles.
  *
- * A hand-authored glyph for "Heavy" is a designer's *guess* at what heavy
- * looks like, and the moment the profile is retuned the guess is wrong with
- * nothing to catch it. These call `roughPolyline` and `shapeFill` — the same
- * functions the canvas calls — so the icon on the button is a small version of
- * the thing the button produces, and it cannot drift from it.
+ * Interior marks (hatching, dots) take a lighter 1.25 so a tile reads as a
+ * frame with a texture inside it, not as a grid of equal lines.
  *
- * The seed is fixed rather than random. Two buttons rendering the same level
- * must show the same specimen, and the specimen must not change on every
- * re-render of the panel — the same crawling problem the canvas has, and worse
- * here because a toolbar redraws constantly.
+ * Each set varies one thing only. The look pair is a ruled box against a
+ * drawn one; the roughness trio is one wave drawn by a steadier or looser
+ * hand; the fill styles share a frame and differ only inside it.
  *
- * `currentColor` throughout, so a specimen dims with its own segment rather
- * than sitting at full strength on an inactive one — the rule
- * `StrokeStyleIcon` already established.
+ * `currentColor` throughout, so a glyph dims with its own segment.
  */
 
-/** One seed for every specimen, so the set looks like one hand drew it. */
-const SPECIMEN_SEED = 20260819;
+const STROKE = 1.75;
+const MARK = 1.25;
 
-const BOX = 20;
-const PAD = 3;
-
-/** The rectangle the shading specimens are drawn from. */
-const ring = rectRing(BOX - PAD * 2, BOX - PAD * 2);
-
-/**
- * A sketch level, as a pair of short scribbled marks.
- *
- * `off` is the one specimen not generated: two ruled strokes are exactly what
- * the setting produces, and running them through the sketcher at zero would be
- * a more elaborate way of drawing the same two lines.
- */
-/**
- * The stroke every sketch specimen is drawn from: a compressed vertical
- * squiggle.
- *
- * ## Why vertical, and why tight
- *
- * A horizontal mark in a square icon reads as a *line* — which is what the
- * stroke-weight control next to it is. Turned upright it stops competing with
- * anything else on the rail, and it fills the glyph box in both directions
- * instead of leaving air above and below.
- *
- * Compressed, because a squiggle is defined by its *frequency* as much as its
- * amplitude: two lazy bends read as a curve, and it takes three tight ones
- * before the eye calls it a scribble. That is the mark a person actually makes
- * when they hatch something in.
- *
- * ## Why the levels look genuinely different
- *
- * The sketcher's wobble is in **absolute units**, so on a small mark every
- * level lands within a pixel of every other — which is why the first two
- * attempts at this icon failed. Each level is therefore generated at its *own*
- * scale and shrunk to fit: heavy is drawn seven times life size and reduced,
- * so its deviation is seven times larger relative to the mark, while light is
- * barely magnified at all.
- *
- * That is exaggeration, and it is legitimate for the same reason a typeface
- * has optical sizes: the *ordering* is the real one — same profiles, same
- * seeds, same passes — and the specimen's job at 20px is to make the ordering
- * legible, not to be a scale model.
- *
- * Three things then separate them, and none is drawn on top:
- *
- *  - **Wander**, magnified per level as above.
- *  - **Density** — medium and heavy draw two passes, so the mark doubles and
- *    the strokes cross. A hand going over a line twice never lands twice in
- *    the same place.
- *  - **Weight** — each level a little heavier, so the set reads as a
- *    progression from a light touch to a hard scribble before any of the
- *    detail resolves.
- */
-const SQUIGGLE_STEPS = 20;
-
-/** Bends per specimen. Three is where a curve stops reading as a curve. */
-const SQUIGGLE_BENDS = 3;
-
-function squiggle(span: number, scale: number): Array<{ x: number; y: number }> {
-  return Array.from({ length: SQUIGGLE_STEPS + 1 }, (_, i) => {
-    const t = i / SQUIGGLE_STEPS;
-    return {
-      // Across the glyph, narrow — the swing is what makes it a squiggle, and
-      // a wide one at this size is just a wave.
-      x: (span * 0.5 + Math.sin(t * Math.PI * SQUIGGLE_BENDS) * span * 0.26) * scale,
-      // Down it, end to end.
-      y: (0.6 + t * (span - 1.2)) * scale,
-    };
-  });
+interface GlyphProps {
+  size?: number;
+  children: React.ReactNode;
 }
 
+function Glyph({ size = 20, children }: GlyphProps) {
+  return (
+    <svg
+      className="sketch-glyph"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={STROKE}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {children}
+    </svg>
+  );
+}
+
+type Sized = { size?: number };
+
+/** A box drawn by hand: four strokes, each running past its corner. */
+const DRAWN_BOX =
+  'M3.6 5.3 C8.5 4.7 14.5 4.9 20.3 4.5 ' +
+  'M19.4 3.7 C19.9 9 19.6 14 19.9 20.2 ' +
+  'M20.6 19.3 C14.8 19.8 9.4 19.5 3.8 19.9 ' +
+  'M4.7 20.6 C4.3 15 4.6 9.6 4.2 3.8';
+
+/** Clean: the object is drawn with ruled lines. */
+export const CleanLookGlyph: React.FC<Sized> = ({ size }) => (
+  <Glyph size={size}>
+    <rect x="4.5" y="4.5" width="15" height="15" rx="2" />
+  </Glyph>
+);
+
+/** Sketch: the object is drawn by hand. Also the board's sketch-mode glyph. */
+export const SketchLookGlyph: React.FC<Sized> = ({ size }) => (
+  <Glyph size={size}>
+    <path d={DRAWN_BOX} />
+  </Glyph>
+);
+
 /**
- * How far each level is magnified before being shrunk into the glyph.
- *
- * The whole reason the levels are distinguishable at all — see above.
+ * One wave per lap. `off` is the ruled wave (the pencil's smooth nib uses it
+ * too); Neat is one lap by hand, a little uneven and gone over at the start;
+ * Sketchy goes round twice; Wild goes round twice, wanders further, and runs
+ * past both ends.
  */
-const LEVEL_SCALE: Record<SketchLevel | 'off', number> = {
-  off: 3,
-  light: 3.4,
-  medium: 5.2,
-  heavy: 7.4,
+const LEVEL_LAPS: Record<SketchLevel | 'off', string[]> = {
+  off: ['M4 15 C7.2 8.6 10.4 8.6 12 12 C13.6 15.4 16.8 15.4 20 9'],
+  light: [
+    'M3.6 15.6 C6.8 8.4 10.6 8 12.1 12.1 C13.5 15.9 17.2 15.6 20.4 8.4',
+    'M5.4 17.2 C6 15.6 6.7 14 7.6 12.6',
+  ],
+  medium: [
+    'M3.7 14.6 C6.9 7.6 10.5 7.6 12.1 11.6 C13.7 15.6 17.2 15.4 20.3 8',
+    'M4.5 17.4 C7.5 10.6 10.3 9.8 11.9 13.4 C13.5 17 16.7 17.4 19.7 10.6',
+  ],
+  heavy: [
+    'M2.9 13.6 C6.4 5.4 10.8 6.2 12.3 11.2 C13.8 16.2 18 17 21.2 6.6',
+    'M5.4 18.6 C7.6 11.2 9.6 9.2 11.5 14 C13.1 18.2 15.8 19.2 18.9 12.2',
+  ],
 };
 
-/** How heavy each level draws, so the set reads as a progression at a glance. */
-const LEVEL_WEIGHT: Record<SketchLevel | 'off', number> = {
-  off: 1.25,
-  light: 1.35,
-  medium: 1.6,
-  heavy: 2,
-};
+/** A roughness level, as one wave drawn by that hand; `off` is the ruled wave. */
+export const SketchLevelIcon: React.FC<{ level: SketchLevel | 'off' } & Sized> = ({ level, size }) => (
+  <Glyph size={size}>
+    {LEVEL_LAPS[level].map((d, i) => (
+      <path key={i} d={d} />
+    ))}
+  </Glyph>
+);
 
-export const SketchLevelIcon: React.FC<{ level: SketchLevel | 'off' }> = ({ level }) => {
-  const span = BOX - PAD * 2;
-  const S = LEVEL_SCALE[level];
-  const stroke = squiggle(span, S);
-  const d = stroke
-    .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`)
+/**
+ * Either look as one glyph, for a trigger that shows the current state:
+ * the ruled box when crisp, the level's wave when sketched.
+ */
+export const SketchStateIcon: React.FC<{ level: SketchLevel | undefined } & Sized> = ({ level, size }) =>
+  level ? <SketchLevelIcon level={level} size={size} /> : <CleanLookGlyph size={size} />;
+
+// ----------------------------------------------------------------- fills
+
+/** The frame every fill tile shares, and the square its marks are kept inside. */
+const FRAME = { x: 4, y: 4, size: 16 };
+const INNER = { lo: 6.5, hi: 17.5 };
+
+/**
+ * A segment of the line `x + y = c` ("/") or `x - y = c` ("\") clipped to the
+ * inner square, or null when the line misses it.
+ */
+function diagonal(c: number, dir: 'up' | 'down'): string | null {
+  const { lo, hi } = INNER;
+  if (dir === 'up') {
+    const x0 = Math.max(lo, c - hi);
+    const x1 = Math.min(hi, c - lo);
+    if (x1 - x0 < 0.5) return null;
+    return `M${x0.toFixed(2)} ${(c - x0).toFixed(2)} L${x1.toFixed(2)} ${(c - x1).toFixed(2)}`;
+  }
+  const x0 = Math.max(lo, lo + c);
+  const x1 = Math.min(hi, hi + c);
+  if (x1 - x0 < 0.5) return null;
+  return `M${x0.toFixed(2)} ${(x0 - c).toFixed(2)} L${x1.toFixed(2)} ${(x1 - c).toFixed(2)}`;
+}
+
+/** Parallel strokes through the inner square's centre, at these offsets from it. */
+function hatch(offsets: readonly number[], dir: 'up' | 'down'): string {
+  const centre = dir === 'up' ? INNER.lo + INNER.hi : 0;
+  return offsets
+    .map((o) => diagonal(centre + o, dir))
+    .filter(Boolean)
     .join(' ');
+}
 
-  return (
-    <svg width={BOX} height={BOX} viewBox={`0 0 ${BOX} ${BOX}`} aria-hidden="true" focusable="false">
-      <g transform={`translate(${PAD} ${PAD - 1}) scale(${1 / S})`}>
-        <path
-          // `off` is the one specimen not generated: a clean squiggle is
-          // exactly what the setting produces, and running it through the
-          // sketcher at zero would be a more elaborate way of drawing the same
-          // curve.
-          d={level === 'off' ? d : roughPolyline(stroke, { seed: SPECIMEN_SEED, level, closed: false })}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={LEVEL_WEIGHT[level] * S}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+const HACHURE = hatch([-8.25, -2.75, 2.75, 8.25], 'up');
+const CROSSHATCH = `${hatch([-7, 0, 7], 'up')} ${hatch([-7, 0, 7], 'down')}`;
+const SCRIBBLE = 'M7 8.4 L17 7 L7 12.6 L17 11.2 L7 16.8 L17 15.4';
+const DOTS: ReadonlyArray<readonly [number, number]> = [
+  [8.5, 8.5], [12, 8.5], [15.5, 8.5],
+  [10.25, 12], [13.75, 12],
+  [8.5, 15.5], [12, 15.5], [15.5, 15.5],
+];
+
+const Frame: React.FC = () => <rect x={FRAME.x} y={FRAME.y} width={FRAME.size} height={FRAME.size} rx="2" />;
+
+/** Solid is the frame with its inside filled, inset like the other tiles' marks so it is not a heavier glyph. */
+const SOLID_INSET = 2.75;
+
+/** A fill style, as the frame with that shading inside it. */
+export const FillStyleIcon: React.FC<{ style: FillStyle } & Sized> = ({ style, size }) => (
+  <Glyph size={size}>
+    <Frame />
+    {style === 'solid' && (
+      <rect
+        x={FRAME.x + SOLID_INSET}
+        y={FRAME.y + SOLID_INSET}
+        width={FRAME.size - SOLID_INSET * 2}
+        height={FRAME.size - SOLID_INSET * 2}
+        rx="0.75"
+        fill="currentColor"
+        stroke="none"
+      />
+    )}
+    {style === 'hachure' && <path d={HACHURE} strokeWidth={MARK} />}
+    {style === 'crosshatch' && <path d={CROSSHATCH} strokeWidth={MARK} />}
+    {style === 'zigzag' && <path d={SCRIBBLE} strokeWidth={MARK} />}
+    {style === 'dots' && (
+      <g fill="currentColor" stroke="none">
+        {DOTS.map(([cx, cy]) => (
+          <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r="1.15" />
+        ))}
       </g>
-    </svg>
-  );
+    )}
+  </Glyph>
+);
+
+const DENSITY_OFFSETS: Record<ShadingDensity, readonly number[]> = {
+  light: [-6, 0, 6],
+  medium: [-8.25, -2.75, 2.75, 8.25],
+  dense: [-9, -6, -3, 0, 3, 6, 9],
 };
 
-/**
- * A fill style, as a box with that shading inside it.
- *
- * The outline is drawn at `light` for all three so the *fill* is the only thing
- * that differs between them — a specimen that varied two things at once would
- * not say which one the control changes.
- *
- * The gap is tightened for the specimen. At the canvas's 9-unit spacing a 14px
- * box holds one or two strokes, which reads as a scratch rather than as
- * shading; the pattern has to repeat at least three times before the eye sees
- * it as a texture.
- */
-export const FillStyleIcon: React.FC<{ style: FillStyle }> = ({ style }) => {
-  const inner = BOX - PAD * 2;
-  // Unique per instance. These specimens render several times on one screen —
-  // once per segment in the panel, again in the toolbar popover — and a fixed
-  // `clipPath` id would put duplicate ids in the document, where every
-  // reference silently resolves to whichever one mounted first.
-  const clipId = `fill-specimen-${React.useId()}`;
-  const shading = React.useMemo(
-    () =>
-      style === 'solid'
-        ? ''
-        : shapeFill(ring, { seed: SPECIMEN_SEED, style, level: 'light' }),
-    [style]
-  );
-
-  return (
-    <svg width={BOX} height={BOX} viewBox={`0 0 ${BOX} ${BOX}`} aria-hidden="true" focusable="false">
-      <g transform={`translate(${PAD} ${PAD})`}>
-        {style === 'solid' && (
-          <rect x="0" y="0" width={inner} height={inner} fill="currentColor" opacity="0.85" rx="1" />
-        )}
-        {shading && (
-          <path
-            d={shading}
-            fill={style === 'dots' ? 'currentColor' : 'none'}
-            stroke={style === 'dots' ? 'none' : 'currentColor'}
-            strokeWidth={style === 'dots' ? undefined : '0.9'}
-            strokeLinecap="round"
-            opacity="0.95"
-            // Clipped to the box, because the shading strokes deliberately
-            // overshoot the shape they fill and a specimen has no room for it.
-            clipPath={`url(#${clipId})`}
-          />
-        )}
-        <path
-          d={roughPolyline(ring, { seed: SPECIMEN_SEED, level: 'light' })}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.1"
-          strokeLinecap="round"
-        />
-      </g>
-      <defs>
-        <clipPath id={clipId}>
-          <rect x="-1" y="-1" width={inner + 2} height={inner + 2} />
-        </clipPath>
-      </defs>
-    </svg>
-  );
-};
-
-/**
- * How closely the strokes are laid, drawn as itself.
- *
- * Through the same `shapeFill` the canvas uses, at the same three densities, so
- * a tile cannot promise a tone the shape will not produce. The alternative — a
- * hand-drawn glyph of "sparse", "medium", "dense" — is three pictures somebody
- * has to keep in step with three numbers, and the numbers are the thing that
- * changed the last time this was wrong.
- */
-export const ShadingDensityIcon: React.FC<{ density: ShadingDensity }> = ({ density }) => {
-  const inner = BOX - PAD * 2;
-  const clipId = `density-specimen-${React.useId()}`;
-  const shading = React.useMemo(
-    () => shapeFill(ring, { seed: SPECIMEN_SEED, style: 'hachure', level: 'light', density }),
-    [density]
-  );
-
-  return (
-    <svg width={BOX} height={BOX} viewBox={`0 0 ${BOX} ${BOX}`} aria-hidden="true" focusable="false">
-      <g transform={`translate(${PAD} ${PAD})`}>
-        <path
-          d={shading}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="0.9"
-          strokeLinecap="round"
-          opacity="0.95"
-          clipPath={`url(#${clipId})`}
-        />
-        <path
-          d={roughPolyline(ring, { seed: SPECIMEN_SEED, level: 'light' })}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.1"
-          strokeLinecap="round"
-          opacity="0.5"
-        />
-      </g>
-      <defs>
-        <clipPath id={clipId}>
-          <rect x="-1" y="-1" width={inner + 2} height={inner + 2} />
-        </clipPath>
-      </defs>
-    </svg>
-  );
-};
+/** How closely the strokes are laid: the hachure tile at three spacings. */
+export const ShadingDensityIcon: React.FC<{ density: ShadingDensity } & Sized> = ({ density, size }) => (
+  <Glyph size={size}>
+    <Frame />
+    <path d={hatch(DENSITY_OFFSETS[density], 'up')} strokeWidth={density === 'dense' ? 1 : MARK} />
+  </Glyph>
+);
 
 /**
  * The hatch angle, drawn at the angle.
  *
  * An angle is the one number in the sketch panel you cannot picture from the
- * digits: 41° against 90° is a real difference in how a hatched shape reads,
- * and neither figure says which way the strokes run. Turning three short
- * parallel strokes to match makes the field answer its own question.
- *
- * Negative degrees turn the other way, and the CSS rotation is clockwise while
- * the shading's own convention is anticlockwise from horizontal — so the sign
- * is flipped here rather than in the model, which is the one place the two
- * conventions meet.
+ * digits, so three short parallel strokes turn to match. The CSS rotation is
+ * clockwise while the shading's convention is anticlockwise from horizontal,
+ * so the sign is flipped here, the one place the two conventions meet.
  */
 export const HatchAngleGlyph: React.FC<{ degrees: number }> = ({ degrees }) => (
   <svg
+    className="sketch-angle-glyph"
     width="13"
     height="13"
     viewBox="0 0 14 14"
     aria-hidden="true"
     focusable="false"
-    style={{ transform: `rotate(${-degrees}deg)`, transition: 'transform 120ms var(--ease-settle)' }}
+    style={{ '--sketch-angle': `${-degrees}deg` } as React.CSSProperties}
   >
     <g stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
       <line x1="1.5" y1="7" x2="12.5" y2="7" />

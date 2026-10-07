@@ -113,7 +113,7 @@ export interface MermaidGraph {
   subgraphs?: MermaidSubgraph[];
 }
 
-export type DiagramThemeId = 'indigo' | 'pastel' | 'emerald' | 'amber' | 'mono';
+export type DiagramThemeId = 'indigo' | 'pastel' | 'emerald' | 'amber' | 'mono' | 'night';
 
 export interface DiagramTheme {
   id: DiagramThemeId;
@@ -207,7 +207,30 @@ export const DIAGRAM_THEMES: Record<DiagramThemeId, DiagramTheme> = {
     accentFills: ['#FFFFFF', '#F1F5F9', '#E2E8F0', '#CBD5E1'],
     canvasInk: '#7B8794',
   },
+  /**
+   * The one dark palette: deep slate boxes with light labels, for a diagram
+   * that should sit on a dark board as part of it rather than as a row of lit
+   * panels. Its clusters are near-opaque so a note on one reads the same on a
+   * light board, where the translucent light palettes lean on the board.
+   */
+  night: {
+    id: 'night',
+    name: 'Night',
+    primaryFill: '#1E2433',
+    primaryStroke: '#7C93FF',
+    textColor: '#E8ECF5',
+    clusterFill: 'rgba(30, 36, 51, 0.92)',
+    clusterStroke: '#4B5675',
+    connectorColor: '#8A97B8',
+    accentFills: ['#1E2433', '#242C40', '#2B2542', '#1F2F31'],
+    canvasInk: '#7C8AA5',
+  },
 };
+
+/** The palette a new diagram opens with: Night on a dark board, Indigo on a light one. */
+export function themeForBoard(boardDark: boolean): DiagramThemeId {
+  return boardDark ? 'night' : 'indigo';
+}
 
 export interface ParseResult {
   graph: MermaidGraph | null;

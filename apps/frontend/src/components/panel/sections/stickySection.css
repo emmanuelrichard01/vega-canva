@@ -1,0 +1,47 @@
+/* The note colour row: each paper drawn as itself, with a dot of its ink. */
+.note-swatches {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  width: 100%;
+}
+
+.note-swatch {
+  display: grid;
+  place-items: center;
+  height: 24px;
+  padding: 0;
+  border: 1px solid;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: transform var(--motion-hover);
+}
+.note-swatch:hover {
+  transform: translateY(-1px);
+}
+
+.note-swatch__ink {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  opacity: 0;
+}
+
+/* The chosen paper: ringed in the app's ink, with its own ink dot showing. */
+.note-swatch[aria-checked='true'] {
+  box-shadow: 0 0 0 2px var(--surface-elevated), 0 0 0 3.5px var(--text-primary);
+}
+.note-swatch[aria-checked='true'] .note-swatch__ink {
+  opacity: 1;
+}
+
+.note-swatch:focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .note-swatch { transition: none; }
+  .note-swatch:hover { transform: none; }
+}

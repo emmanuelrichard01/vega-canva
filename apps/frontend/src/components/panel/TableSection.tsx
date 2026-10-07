@@ -27,6 +27,7 @@ import type { MenuEntry } from '../menu/menuModel';
 import { columnLetter } from '../sheet/useSheet';
 import { columnMenuEntries, columnName, TYPE_ICONS } from '../table/columnMenu';
 import { FilterPanel } from '../table/FilterPanel';
+import { TableCharts } from '../data/TableCharts';
 
 /** The paints a rule offers: six tints that each hold their text at AA, and two inks for a quieter mark. */
 const RULE_PAINTS: Array<{ label: string; fill?: string; color: string }> = [
@@ -221,6 +222,8 @@ export const TableSection: React.FC<{ node: TableNode }> = ({ node }) => {
           </span>
         )}
       </p>
+
+      <TableCharts node={node} />
 
       <Section id="table-style" title="Style" subject="table">
         <SpecimenPicker<TableTheme>

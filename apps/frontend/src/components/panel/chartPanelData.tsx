@@ -1,15 +1,6 @@
 import React from 'react';
-import { Eye, EyeOff, Link2, Unlink } from 'lucide-react';
-import { useShallow } from 'zustand/react/shallow';
-import { useStore } from '../../hooks/useStore';
+import { Eye, EyeOff } from 'lucide-react';
 import { IconToggle, Note, Row, SegmentedControl, Select, Switch } from './grammar';
-import {
-  parseRangeLabel,
-  rangeLabel,
-  resolveTableLink,
-  unlinkedSpec,
-  withResolvedData,
-} from '../../engine/chart/chartFromTable';
 import {
   isComboKind,
   isPlot,
@@ -20,7 +11,7 @@ import {
   type ChartSpec,
   type SeriesMark,
 } from '../../engine/chart/chartTypes';
-import type { TableSpec } from '../../engine/table/tableTypes';
+import { ChartDataSource } from '../data/ChartDataSource';
 
 /**
  * The chart panel's data link, series list and category-axis controls.
@@ -31,160 +22,14 @@ import type { TableSpec } from '../../engine/table/tableTypes';
 
 type Patch = (next: Partial<ChartSpec>) => void;
 
-interface TableEntry {
-  id: string;
-  name: string;
-}
-
-const SEP = '\u0000';
-
-function useBoardTables(): TableEntry[] {
-  const keys = useStore(
-    useShallow((s) => {
-      const out: string[] = [];
-      for (const [id, n] of Object.entries(s.objects)) {
-        if ((n as { type?: string }).type !== 'table') continue;
-        out.push(`${id}${SEP}${(n as { title?: string }).title ?? ''}`);
-      }
-      return out;
-    })
-  );
-  return keys.map((k, i) => {
-    const [id, title] = k.split(SEP);
-    return { id, name: title?.trim() || `Table ${i + 1}` };
-  });
-}
-
-function useTableSpec(id: string | undefined): TableSpec | null {
-  return useStore((s) => {
-    const n = id ? s.objects[id] : undefined;
-    return n && (n as { type?: string }).type === 'table' ? (n as unknown as { table: TableSpec }).table : null;
-  });
-}
-
 /**
- * Where the numbers come from: typed in, or a table on the board.
- *
- * Linking reads the chosen table's whole grid; the range can then be narrowed.
- * While linked the chart follows every edit to the table, on every client, and
- * Unlink keeps the values as they are at that moment.
+ * Where the numbers come from: typed in, or a table on the board. The link
+ * itself (source, range, name, mapping, filters, write-back) is the data
+ * panel's, in `components/data`.
  */
-export const TableSource: React.FC<{ spec: ChartSpec; replace: (next: ChartSpec) => void }> = ({ spec, replace }) => {
-  const tables = useBoardTables();
-  const link = spec.link;
-  const table = useTableSpec(link?.tableId);
-  const [rangeDraft, setRangeDraft] = React.useState<string | null>(null);
-
-  if (isPlot(spec.kind)) return null;
-
-  if (!link) {
-    if (tables.length === 0) return null;
-    return (
-      <Row label="Source">
-        <Select
-          label="Data source"
-          value="typed"
-          options={[
-            { value: 'typed', label: 'Typed in', icon: <Unlink size={14} /> },
-            ...tables.map((t) => ({ value: t.id, label: t.name, icon: <Link2 size={14} />, group: 'Tables on this board' })),
-          ]}
-          onChange={(id) => {
-            if (id === 'typed') return;
-            const t = useStore.getState().objects[id] as unknown as { table?: TableSpec } | undefined;
-            if (!t?.table) return;
-            const next = {
-              tableId: id,
-              r0: 0,
-              c0: 0,
-              r1: Math.max(0, t.table.cells.length - 1),
-              c1: Math.max(0, t.table.columns.length - 1),
-            };
-            replace({ ...withResolvedData(spec, resolveTableLink(t.table, next)), link: next });
-          }}
-        />
-      </Row>
-    );
-  }
-
-  const name = tables.find((t) => t.id === link.tableId)?.name ?? 'Table';
-  const label = rangeLabel(link);
-  const shown = rangeDraft ?? label;
-  const parsed = rangeDraft === null ? null : parseRangeLabel(rangeDraft);
-  const invalid = rangeDraft !== null && !parsed;
-
-  const commitRange = () => {
-    if (rangeDraft === null) return;
-    if (parsed) {
-      const next = { ...link, ...parsed };
-      replace({ ...(table ? withResolvedData(spec, resolveTableLink(table, next)) : spec), link: next });
-    }
-    setRangeDraft(null);
-  };
-
-  if (!table) {
-    return (
-      <>
-        <Note>The linked table has been deleted. The chart keeps the values it last read.</Note>
-        <button type="button" className="chartp-linkbtn" onClick={() => replace(unlinkedSpec(spec, null))}>
-          <Unlink size={14} aria-hidden="true" />
-          <span>Keep these values</span>
-        </button>
-      </>
-    );
-  }
-
-  return (
-    <>
-      <Row label="Source">
-        <div className="chartp-link">
-          <Link2 size={14} aria-hidden="true" />
-          <span className="chartp-link__name">{name}</span>
-          <button
-            type="button"
-            className="chartp-link__unlink"
-            onClick={() => replace(unlinkedSpec(spec, table))}
-            data-tooltip="Stop following the table and keep its current values"
-          >
-            Unlink
-          </button>
-        </div>
-      </Row>
-      <Row label="Range" htmlFor="chartp-range">
-        <input
-          id="chartp-range"
-          className="chartp-range"
-          value={shown}
-          spellCheck={false}
-          aria-invalid={invalid || undefined}
-          onChange={(e) => setRangeDraft(e.target.value)}
-          onBlur={commitRange}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commitRange();
-            else if (e.key === 'Escape') setRangeDraft(null);
-          }}
-        />
-      </Row>
-      <Row label="Series">
-        <SegmentedControl
-          ariaLabel="Where the series are in the range"
-          fill
-          value={link.seriesIn ?? 'columns'}
-          segments={[
-            { value: 'columns', label: 'Columns' },
-            { value: 'rows', label: 'Rows' },
-          ]}
-          onChange={(v) => {
-            const next = { ...link, ...(v === 'rows' ? { seriesIn: 'rows' as const } : {}) };
-            if (v !== 'rows') delete (next as { seriesIn?: string }).seriesIn;
-            replace({ ...withResolvedData({ ...spec, series: [] }, resolveTableLink(table, next)), link: next });
-          }}
-        />
-      </Row>
-      {invalid && <Note>Write the range as two corners, like A1:D9.</Note>}
-      {!invalid && <Note>Follows every edit to {name}, {label}. Values are set in the table.</Note>}
-    </>
-  );
-};
+export const TableSource: React.FC<{ chartId: string; spec: ChartSpec; replace: (next: ChartSpec) => void }> = (props) => (
+  <ChartDataSource {...props} />
+);
 
 const MARK_OPTIONS: Array<{ value: SeriesMark; label: string }> = [
   { value: 'bar', label: 'Bars' },

@@ -3,9 +3,10 @@ import * as Y from 'yjs';
 import {
   BOOKKEEPING_FIELD_NAMES,
   buildTimeline,
-  materialiseAt,
+  type Keyframe,
   type RawUpdate,
 } from './sessionTimeline';
+import { ReplayEngine } from './frames';
 
 /**
  * The timeline builder is the piece that turns a raw CRDT log into something a
@@ -385,7 +386,18 @@ describe('session bounds', () => {
   });
 });
 
-describe('materialiseAt', () => {
+/** The board the replay engine produces at `index`. */
+function seekFrame(log: RawUpdate[], index: number, keyframes: Keyframe[], baseline: Uint8Array | null = null) {
+  const engine = new ReplayEngine({ log: () => log, keyframes: () => keyframes, baseline });
+  const objects = engine.seek(index).state.objects;
+  engine.destroy();
+  return objects;
+}
+
+const keysAt = (log: RawUpdate[], index: number, keyframes: Keyframe[], baseline: Uint8Array | null = null) =>
+  Object.keys(seekFrame(log, index, keyframes, baseline)).sort();
+
+describe('seeking the log', () => {
   it('reproduces the document as of a given index', () => {
     const doc = new Y.Doc();
     const log: RawUpdate[] = [];
@@ -396,51 +408,8 @@ describe('materialiseAt', () => {
     objects.delete('a');
 
     const timeline = buildTimeline(log);
-
-    // After the first transaction: only 'a' exists.
-    const first = materialiseAt(log, 0, timeline.keyframes);
-    expect([...first.doc.getMap('objects').keys()]).toEqual(['a']);
-
-    // After all of them: 'a' is gone, 'b' remains.
-    const last = materialiseAt(log, log.length - 1, timeline.keyframes);
-    expect([...last.doc.getMap('objects').keys()]).toEqual(['b']);
-  });
-
-  it('reuses the existing doc when scrubbing forward', () => {
-    const doc = new Y.Doc();
-    const log: RawUpdate[] = [];
-    recorder(doc, log);
-    const objects = doc.getMap<Y.Map<unknown>>('objects');
-    objects.set('a', baseNode(doc));
-    objects.set('b', baseNode(doc, { text: 'Second' }));
-
-    const timeline = buildTimeline(log);
-    const step1 = materialiseAt(log, 0, timeline.keyframes);
-    const step2 = materialiseAt(log, 1, timeline.keyframes, step1);
-
-    expect(step2.doc).toBe(step1.doc); // forward scrub is incremental
-    expect(step2.appliedThrough).toBe(1);
-    expect([...step2.doc.getMap('objects').keys()].sort()).toEqual(['a', 'b']);
-  });
-
-  it('rewinds without replaying from the very beginning', () => {
-    const doc = new Y.Doc();
-    const log: RawUpdate[] = [];
-    recorder(doc, log);
-    const objects = doc.getMap<Y.Map<unknown>>('objects');
-    for (let i = 0; i < 40; i++) {
-      objects.set(`n${i}`, baseNode(doc, { text: `Note ${i}` }));
-    }
-
-    const timeline = buildTimeline(log, { maxKeyframes: 8 });
-    expect(timeline.keyframes.length).toBeGreaterThan(0);
-
-    const atEnd = materialiseAt(log, log.length - 1, timeline.keyframes);
-    const rewound = materialiseAt(log, 20, timeline.keyframes, atEnd);
-
-    expect(rewound.doc).not.toBe(atEnd.doc); // a rewind needs a fresh doc
-    expect(rewound.appliedThrough).toBe(20);
-    expect([...rewound.doc.getMap('objects').keys()]).toHaveLength(21);
+    expect(keysAt(log, 0, timeline.keyframes)).toEqual(['a']);
+    expect(keysAt(log, log.length - 1, timeline.keyframes)).toEqual(['b']);
   });
 
   /**
@@ -461,48 +430,34 @@ describe('materialiseAt', () => {
     };
 
     it('gives back an empty board for a seek before the first update', () => {
-      // "Rewind to before this moment" on the very first moment asks for -1,
-      // and the honest answer is the room as it was: empty.
       const { log, timeline } = session();
-      const start = materialiseAt(log, -1, timeline.keyframes);
-      expect([...start.doc.getMap('objects').keys()]).toEqual([]);
+      expect(keysAt(log, -1, timeline.keyframes)).toEqual([]);
     });
 
     it('clamps a seek past the end to the last update', () => {
       const { log, timeline } = session();
-      const past = materialiseAt(log, 999, timeline.keyframes);
-      expect(past.appliedThrough).toBe(log.length - 1);
-      expect([...past.doc.getMap('objects').keys()].sort()).toEqual(['a', 'b']);
+      expect(keysAt(log, 999, timeline.keyframes)).toEqual(['a', 'b']);
     });
 
-    it('rewinds to the beginning from a doc that is already ahead', () => {
-      // The forward fast-path must not be taken here: `appliedThrough` is past
-      // the target, so it has to rebuild rather than hand back a doc that still
-      // holds everything.
+    it('rewinds to the beginning from a document that is already ahead', () => {
       const { log, timeline } = session();
-      const atEnd = materialiseAt(log, log.length - 1, timeline.keyframes);
-      const rewound = materialiseAt(log, -1, timeline.keyframes, atEnd);
-      expect(rewound.doc).not.toBe(atEnd.doc);
-      expect([...rewound.doc.getMap('objects').keys()]).toEqual([]);
+      const engine = new ReplayEngine({ log: () => log, keyframes: () => timeline.keyframes, baseline: null });
+      engine.seek(log.length - 1);
+      expect(Object.keys(engine.seek(-1).state.objects)).toEqual([]);
+      engine.destroy();
     });
 
     it('works with no keyframes at all', () => {
-      // A short session never accumulates one, so the rewind path has to cope
-      // with an empty list rather than assume a seed is always available.
       const { log } = session();
-      const at0 = materialiseAt(log, 0, []);
-      expect([...at0.doc.getMap('objects').keys()]).toEqual(['a']);
+      expect(keysAt(log, 0, [])).toEqual(['a']);
     });
 
     it('survives an empty log without throwing', () => {
-      const empty = materialiseAt([], 0, []);
-      expect([...empty.doc.getMap('objects').keys()]).toEqual([]);
+      expect(keysAt([], 0, [])).toEqual([]);
     });
   });
 
   it('skips a corrupt row rather than abandoning the seek', () => {
-    // The log is server-side data and one unreadable row must not cost the
-    // whole replay — the surrounding updates still apply.
     const doc = new Y.Doc();
     const log: RawUpdate[] = [];
     recorder(doc, log);
@@ -510,9 +465,7 @@ describe('materialiseAt', () => {
     objects.set('a', baseNode(doc));
     log.push({ createdAt: new Date().toISOString(), update: 'not-base64-at-all!!' });
     objects.set('b', baseNode(doc, { text: 'Second' }));
-
-    const result = materialiseAt(log, log.length - 1, []);
-    expect([...result.doc.getMap('objects').keys()].sort()).toEqual(['a', 'b']);
+    expect(keysAt(log, log.length - 1, [])).toEqual(['a', 'b']);
   });
 });
 
@@ -552,26 +505,17 @@ describe('replay baseline', () => {
     // something that was always working.
     const { retained } = splitSession();
     const timeline = buildTimeline(retained);
-    const doc = materialiseAt(retained, retained.length - 1, timeline.keyframes).doc;
-    expect(doc.getMap('objects').size).toBe(0);
+    expect(keysAt(retained, retained.length - 1, timeline.keyframes)).toEqual([]);
   });
 
   it('reconstructs the board when seeded from the baseline', () => {
     const { retained, baseline } = splitSession();
     const timeline = buildTimeline(retained, { baseline });
-    const doc = materialiseAt(
-      retained,
-      retained.length - 1,
-      timeline.keyframes,
-      null,
-      baseline
-    ).doc;
-
-    const objects = doc.getMap<Y.Map<unknown>>('objects');
-    expect([...objects.keys()].sort()).toEqual(['a', 'b', 'c']);
+    const objects = seekFrame(retained, retained.length - 1, timeline.keyframes, baseline);
+    expect(Object.keys(objects).sort()).toEqual(['a', 'b', 'c']);
     // And the retained edits landed on top of it.
-    expect(objects.get('a')!.get('x')).toBe(400);
-    expect(objects.get('b')!.get('text')).toBe('Renamed');
+    expect(objects.a.x).toBe(400);
+    expect(objects.b.text).toBe('Renamed');
   });
 
   it('does not invent a moment for the baseline itself', () => {
@@ -587,8 +531,7 @@ describe('replay baseline', () => {
     const { retained, baseline } = splitSession();
     const timeline = buildTimeline(retained, { baseline });
     // The very start of the retained window uses no keyframe at all.
-    const doc = materialiseAt(retained, -1, timeline.keyframes, null, baseline).doc;
-    expect(doc.getMap('objects').size).toBe(3);
+    expect(keysAt(retained, -1, timeline.keyframes, baseline)).toHaveLength(3);
   });
 
   it('degrades to an empty start rather than throwing on a corrupt baseline', () => {

@@ -3,7 +3,7 @@ import type { NewNodeInput } from '../document/mutations';
 import { defaultChartSpec, type ChartSpec } from '../chart/chartTypes';
 import type { TableSpec } from '../table/tableTypes';
 import type { Template } from './templates';
-import { INK_SOFT, INK_STRONG } from './templateKit';
+import { frameIdentity, INK_SOFT, INK_STRONG } from './templateKit';
 
 /**
  * Science and maths, each board drawn twice.
@@ -55,7 +55,7 @@ export const frame = (x: number, y: number, width: number, height: number, name:
   y,
   width,
   height,
-  title: name,
+  ...frameIdentity(name),
 });
 
 export const chart = (x: number, y: number, spec: ChartSpec, sketch: boolean, w = 520, h = 340): NewNodeInput =>

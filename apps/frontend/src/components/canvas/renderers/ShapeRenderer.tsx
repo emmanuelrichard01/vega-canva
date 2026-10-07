@@ -13,8 +13,9 @@ import { terminateRun } from '../../../engine/model/connectorEnds';
 import { contourData } from '../../../engine/model/pathGeometry';
 import { shapeFeaturePaths } from '../../../engine/model/shapeOutline';
 import { labelPlated, shapeLabelBox } from '../../../engine/model/shapes/labelBox';
-import { roughShape } from '../../../engine/model/roughShape';
-import { fillsInterior, roughEllipse, roughPolyline, seedFrom } from '../../../engine/model/rough';
+import { roughLineCaps, roughShape } from '../../../engine/model/roughShape';
+import { featureStrokeWidth, fillsInterior, shadingStrokeWidth, sketchNib } from '../../../engine/model/rough';
+import { useSketchLevel } from '../../../engine/model/roughBoard';
 import { ThemeService } from '../../../engine/ThemeService';
 import { readableOnSurface } from '../../../engine/model/color';
 import { useLiveTransform } from '../../../engine/model/liveTransformStore';
@@ -161,24 +162,40 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
   /**
    * The sketch, regenerated only when something it is generated *from* changes.
    *
-   * The dependency list is load-bearing and was wrong: it carried `isSketch`, a
-   * **boolean**, so switching a shape between Light, Medium and Heavy — or
-   * between solid, hachure and cross-hatch — changed nothing the memo could
-   * see, and it kept serving the geometry it had built the first time. Turning
-   * the feature on and off worked, which is exactly what made it look like the
-   * levels were unimplemented rather than uncached.
+   * The level is resolved against the board's sketch mode (`useSketchLevel`),
+   * so a board switched to sketch redraws every object that follows it.
    *
-   * The level and the fill style are named individually rather than depending
-   * on `node.appearance`, which is a fresh object on every write and would
-   * rebuild the sketch on every colour nudge.
+   * Every input is named individually rather than depending on
+   * `node.appearance`, which is a fresh object on every write and would
+   * rebuild the sketch on every colour nudge. The geometry and the corner
+   * radii are compared by value for the same reason: the node is rebuilt on
+   * every write, so their identities change when their contents do not.
    */
-  const level = node.appearance?.sketch;
+  const level = useSketchLevel(node.appearance);
   const fillStyle = node.appearance?.fillStyle;
   const hasFill = Boolean(node.appearance?.fill?.length);
+  const shadingDensity = node.appearance?.shadingDensity;
+  const shadingAngle = node.appearance?.shadingAngle;
+  const sketchSeed = node.appearance?.sketchSeed;
+  const sketchWidth = node.appearance?.stroke?.width;
+  const sketchDashed = (node.appearance?.stroke?.dash?.length ?? 0) > 0;
+  const geometryKey = React.useMemo(
+    () => (level ? JSON.stringify([node.geometry, node.appearance?.cornerRadius ?? 0]) : ''),
+    [level, node.geometry, node.appearance?.cornerRadius]
+  );
+  const sketchInputs = [
+    node.id, level, fillStyle, hasFill, shadingDensity, shadingAngle, sketchSeed, sketchWidth, sketchDashed, w, h, geometryKey, open,
+  ];
   const sketch = React.useMemo(
-    () => (level ? roughShape(node, hasFill && !open) : null),
+    () => (level ? roughShape(node, hasFill && !open, level) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [node.id, level, fillStyle, hasFill, w, h, node.geometry, open]
+    sketchInputs
+  );
+  /** A sketched line's end markers, drawn by the same hand (see `roughLineCaps`). */
+  const sketchCaps = React.useMemo(
+    () => (level && open ? roughLineCaps(node, level) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    sketchInputs
   );
 
   /**
@@ -451,59 +468,11 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
   });
 
   if (sketch) {
-    // The nib is the stroke weight, floored — a hairline sketch reads as a
-    // rendering artefact rather than as a drawing, and the style's whole point
-    // is a visible pen.
-    const nib = Math.max(1.2, sw || 2);
+    // The nib is the stroke weight, floored: a hairline sketch reads as a
+    // rendering artefact rather than as a drawing. See `sketchNib`.
+    const nib = sketchNib(sw);
     const inkColor = stroke ?? DEFAULT_INK;
     const fillPaint = node.appearance?.fill?.[0];
-
-    /**
-     * The end caps, drawn by hand like everything else in this branch.
-     *
-     * Built from `endCapShape`'s own points so a sketched head is the same
-     * shape and size as a crisp one — only the strokes differ. Seeded off the
-     * node's own seed plus the end, so the two ends of one line wander
-     * differently while both staying stable across renders.
-     */
-    const sketchCaps: string[] = [];
-    if (open) {
-      const seed = seedFrom(node.id);
-      // The very same two markers the crisp branch draws — position, facing,
-      // size and alignment — only rendered by hand. Seeded off the node's seed
-      // plus the end, so the two ends of one line wander differently while
-      // both stay stable across renders.
-      ([
-        [startCap, seed ^ 0x11] as const,
-        [endCap, seed ^ 0x22] as const,
-      ]).forEach(([cap, capSeed]) => {
-        if (!cap) return;
-        if (cap.circle) {
-          sketchCaps.push(
-            roughEllipse(cap.circle.x, cap.circle.y, cap.circle.radius, cap.circle.radius, {
-              seed: capSeed,
-              level: node.appearance?.sketch,
-              width: nib,
-            })
-          );
-          return;
-        }
-        const pts = cap.points ?? [];
-        const ring: { x: number; y: number }[] = [];
-        for (let i = 0; i + 1 < pts.length; i += 2) ring.push({ x: pts[i], y: pts[i + 1] });
-        if (ring.length < 2) return;
-        sketchCaps.push(
-          roughPolyline(ring, {
-            seed: capSeed,
-            // A filled head is a closed triangle; a bar or a plain arrow is an
-            // open run and must not have its two ends joined.
-            closed: Boolean(cap.filled),
-            level: node.appearance?.sketch,
-            width: nib,
-          })
-        );
-      });
-    }
     // Hachure takes the fill's *colour* and draws it as strokes. A gradient
     // has no single colour to shade with, so it keeps the ordinary fill and
     // only the outline is sketched.
@@ -570,6 +539,12 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
             perfectDrawEnabled={false}
           />
         )}
+        {/* A gradient or pattern has no single colour to shade with, so it
+            fills the drawn silhouette whatever the style, and only the
+            outline is sketched. */}
+        {!open && hasFill && sketch.silhouette && !hachureColor && (
+          <Path data={sketch.silhouette} {...rectFill} listening={false} perfectDrawEnabled={false} />
+        )}
         {/*
           An inner shadow on a sketched shape, which used to be offered and
           then dropped.
@@ -599,11 +574,7 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
           <Path
             data={sketch.fill}
             stroke={hachureColor}
-            strokeWidth={
-              node.appearance?.fillStyle === 'dots'
-                ? (node.appearance?.sketch === 'heavy' ? 3.6 : node.appearance?.sketch === 'light' ? 2.2 : 2.8)
-                : Math.max(0.8, nib * 0.7)
-            }
+            strokeWidth={shadingStrokeWidth(fillStyle, level, nib)}
             lineCap="round"
             lineJoin="round"
             opacity={fillPaint?.opacity ?? 1}
@@ -649,7 +620,7 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
           <Path
             data={sketch.features}
             stroke={inkColor}
-            strokeWidth={Math.max(0.75, nib * 0.78)}
+            strokeWidth={featureStrokeWidth(nib)}
             lineCap="round"
             lineJoin="round"
             listening={false}

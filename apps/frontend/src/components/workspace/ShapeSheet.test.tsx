@@ -6,6 +6,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 const placeShapeAt = vi.fn();
 vi.mock('../../engine/tools/ShapeTool', () => ({ placeShapeAt: (...args: unknown[]) => placeShapeAt(...args) }));
 
+import { LIBRARY_LAYOUT } from './shapeLibrary';
 import { ShapeSheet } from './ShapeSheet';
 import { getPinnedShapes, togglePinnedShape } from '../../engine/tools/recentShapes';
 
@@ -84,6 +85,6 @@ describe('the shape library', () => {
     const tiles = Array.from(basic.querySelectorAll<HTMLButtonElement>('.shape-lib__tile'));
     tiles[1].focus();
     fireEvent.keyDown(tiles[1], { key: 'ArrowDown' });
-    expect(document.activeElement).toBe(tiles[9]);
+    expect(document.activeElement).toBe(tiles[1 + LIBRARY_LAYOUT.cols]);
   });
 });

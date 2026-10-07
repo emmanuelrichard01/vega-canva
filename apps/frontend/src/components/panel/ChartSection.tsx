@@ -629,20 +629,12 @@ const DataPanel: React.FC<{ node: ChartNode } & FieldProps> = ({ node, spec, pat
   const points = spec.series.reduce((n, s) => n + s.values.filter((v) => v !== null).length, 0);
   const replace = (next: ChartSpec) => updateChart(node.id, next);
 
-  if (spec.link) {
-    return (
-      <>
-        <TableSource spec={spec} replace={replace} />
-        <div className="chartp-datafoot">
-          <span>{`${spec.categories.length} rows · ${spec.series.length} series · ${points} values`}</span>
-        </div>
-      </>
-    );
-  }
+  // A linked chart's numbers are the table's: the data panel shows them and their count.
+  if (spec.link) return <TableSource chartId={node.id} spec={spec} replace={replace} />;
 
   return (
     <>
-      <TableSource spec={spec} replace={replace} />
+      <TableSource chartId={node.id} spec={spec} replace={replace} />
       <div className="chartp-databar" role="toolbar" aria-label="Table">
         <button type="button" className="chartp-databar__open" onClick={() => void run('sheet')}>
           <Sheet size={14} aria-hidden="true" />

@@ -302,7 +302,16 @@
   text-align: right;
 }
 
+.frames-row__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .frames-row__name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -311,17 +320,24 @@
 
 .frame-thumb {
   display: block;
+  width: 32px;
+  height: 20px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
-.frame-thumb__paper {
-  fill: var(--paper, var(--surface-primary));
-  stroke: var(--border-strong);
-  stroke-width: 1;
+.frame-thumb > * {
+  width: 100%;
+  height: 100%;
 }
 
-.frame-thumb__item {
-  fill: var(--text-tertiary);
-  opacity: 0.55;
+.frames-list > li[data-drop='before'] {
+  box-shadow: 0 -2px 0 0 var(--text-secondary);
+}
+
+.frames-list > li[data-drop='after'] {
+  box-shadow: 0 2px 0 0 var(--text-secondary);
 }
 
 .frames-list__foot {

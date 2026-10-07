@@ -1,15 +1,15 @@
-import React, { useDeferredValue, useEffect, useMemo, useRef } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Frame as FrameIcon } from 'lucide-react';
 import { cameraSystem } from '../../engine/CameraSystem';
 import { nodeLabel } from '../../engine/model/nodeLabel';
 import { nodeBounds } from '../../engine/model/selection';
-import { paintColor } from '../../engine/model/paint';
-import type { AnyNode, Appearance } from '../../engine/model/schema';
+import type { AnyNode } from '../../engine/model/schema';
+import { useRoomPermissions } from '../../hooks/useRoomPermissions';
+import { WorkspaceCover } from '../WorkspaceCover';
+import { Emoji } from '../emoji/Emoji';
+import { framePreview, orderedSlides, reorderSlides } from '../canvas/FramePresenterThumbs';
 import { layerHover } from '../../engine/interaction/layerHover';
 import { fitPose, framesInReadingOrder, stepFrame } from './framesOrder';
-
-const THUMB_W = 32;
-const THUMB_H = 20;
 
 /**
  * Every frame's contents, nested frames included, in one pass over the board:
@@ -89,38 +89,15 @@ export function useFrameStepping(objects: Record<string, AnyNode>, selectedIds: 
 }
 
 /**
- * A frame's contents as a schematic: its own paper, and a block per object
- * inside it, in their real proportions. Enough to tell "the pricing slide"
- * from "the team slide" at a glance without rendering either.
+ * A frame's contents as a picture, drawn from the document by the same
+ * component as the presenter's slide strip, so a slide looks the same in both.
  */
-const FrameThumb: React.FC<{ frame: AnyNode; children: AnyNode[] }> = ({ frame, children }) => {
-  const s = Math.min(THUMB_W / Math.max(1, frame.width), THUMB_H / Math.max(1, frame.height));
-  const w = frame.width * s;
-  const h = frame.height * s;
-  const ox = (THUMB_W - w) / 2;
-  const oy = (THUMB_H - h) / 2;
-  const paper = paintColor((frame as { appearance?: Appearance }).appearance?.fill?.[0], '');
+const FrameThumb: React.FC<{ frame: AnyNode; objects: Record<string, AnyNode> }> = ({ frame, objects }) => {
+  const preview = useMemo(() => framePreview(frame.id, objects), [frame.id, objects]);
   return (
-    <svg className="frame-thumb" width={THUMB_W} height={THUMB_H} viewBox={`0 0 ${THUMB_W} ${THUMB_H}`} aria-hidden="true">
-      <rect
-        className="frame-thumb__paper"
-        x={ox + 0.5}
-        y={oy + 0.5}
-        width={Math.max(1, w - 1)}
-        height={Math.max(1, h - 1)}
-        rx={1.5}
-        style={paper.startsWith('#') ? ({ '--paper': paper } as React.CSSProperties) : undefined}
-      />
-      {children.slice(0, 40).map((c) => {
-        const b = nodeBounds(c);
-        const x = ox + (b.x - frame.x) * s;
-        const y = oy + (b.y - frame.y) * s;
-        const cw = Math.max(1, b.width * s);
-        const ch = Math.max(1, b.height * s);
-        if (x > THUMB_W || y > THUMB_H || x + cw < 0 || y + ch < 0) return null;
-        return <rect key={c.id} className="frame-thumb__item" x={x} y={y} width={cw} height={ch} rx={0.5} />;
-      })}
-    </svg>
+    <span className="frame-thumb" aria-hidden="true">
+      <WorkspaceCover workspaceId={`slide:${frame.id}`} name={nodeLabel(frame)} preview={preview} />
+    </span>
   );
 };
 
@@ -141,6 +118,11 @@ export const FramesOutline: React.FC<FramesOutlineProps> = ({ objects, selectedI
   const all = useMemo(() => Object.values(deferredObjects), [deferredObjects]);
   const frames = useMemo(() => framesInReadingOrder(all), [all]);
   const childrenOf = useMemo(() => framesContents(all, deferredObjects), [all, deferredObjects]);
+  // The slides' own order is the one the presenter plays; only they can be rearranged.
+  const slideIds = useMemo(() => orderedSlides(deferredObjects).map((f) => f.id), [deferredObjects]);
+  const { canEdit } = useRoomPermissions();
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dropAt, setDropAt] = useState<number | null>(null);
 
   if (frames.length === 0) {
     return (
@@ -156,8 +138,34 @@ export const FramesOutline: React.FC<FramesOutlineProps> = ({ objects, selectedI
       {frames.map((frame, i) => {
         const children = childrenOf.get(frame.id) ?? [];
         const selected = selectedIds.includes(frame.id);
+        const slide = slideIds.indexOf(frame.id);
+        const draggable = canEdit && slide >= 0 && slideIds.length > 1;
         return (
-          <li key={frame.id}>
+          <li
+            key={frame.id}
+            draggable={draggable}
+            data-drop={dropAt === slide && dragFrom !== null && dragFrom !== slide ? (dragFrom < slide ? 'after' : 'before') : undefined}
+            onDragStart={(e) => {
+              setDragFrom(slide);
+              e.dataTransfer.effectAllowed = 'move';
+              e.dataTransfer.setData('text/plain', String(slide));
+            }}
+            onDragOver={(e) => {
+              if (dragFrom === null || slide < 0) return;
+              e.preventDefault();
+              setDropAt(slide);
+            }}
+            onDragEnd={() => {
+              setDragFrom(null);
+              setDropAt(null);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (dragFrom !== null && slide >= 0) reorderSlides(deferredObjects, dragFrom, slide);
+              setDragFrom(null);
+              setDropAt(null);
+            }}
+          >
             <button
               type="button"
               className="frames-row"
@@ -172,8 +180,11 @@ export const FramesOutline: React.FC<FramesOutlineProps> = ({ objects, selectedI
               onBlur={() => layerHover.clearPanel()}
             >
               <span className="frames-row__index" aria-hidden="true">{i + 1}</span>
-              <FrameThumb frame={frame} children={children} />
-              <span className="frames-row__name">{nodeLabel(frame)}</span>
+              <FrameThumb frame={frame} objects={deferredObjects} />
+              <span className="frames-row__name">
+                {frame.type === 'frame' && frame.icon && <Emoji native={frame.icon} size={13} />}
+                <span className="frames-row__text">{nodeLabel(frame)}</span>
+              </span>
               <span className="frames-row__count" aria-label={`${children.length} object${children.length === 1 ? '' : 's'}`}>
                 {children.length}
               </span>

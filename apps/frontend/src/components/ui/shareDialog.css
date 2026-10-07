@@ -450,3 +450,16 @@
 .sh .share__unfurl {
   margin-top: 0;
 }
+
+/* ----------------------------------------------------------- present link */
+
+.sh-present {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-top: var(--space-1);
+}
+
+.sh-present .sh-hint svg {
+  vertical-align: -1px;
+}

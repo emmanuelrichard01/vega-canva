@@ -1,0 +1,81 @@
+/* The dashboard's first-run additions: the guided start and the quiet links.
+   The rest of `.qstart` (title, lede, primary, starters) is the library's. */
+
+.qstart__go { align-items: stretch; }
+
+/* The second door: hairline, no fill, two lines so it can say what it brings.
+   One accent per screen, and that is the blank board. */
+.qstart__guided {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: var(--space-1) var(--space-4) var(--space-1) var(--space-3);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover);
+}
+
+.qstart__guided:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.qstart__guided > svg { flex-shrink: 0; color: var(--text-secondary); }
+
+.qstart__guided-text { display: flex; flex-direction: column; gap: 1px; }
+
+.qstart__guided-label {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: 1.3;
+}
+
+.qstart__guided-hint {
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  line-height: 1.3;
+}
+
+.qstart__guided:focus-visible,
+.qstart__link:focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.qstart__quiet {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: var(--space-4) 0 0;
+}
+
+.qstart__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--control-h-sm);
+  padding: 0 var(--space-1);
+  margin-left: calc(-1 * var(--space-1));
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: color var(--motion-hover), background-color var(--motion-hover);
+}
+
+.qstart__link:hover { color: var(--text-primary); background: var(--surface-hover); }
+
+@media (prefers-reduced-motion: reduce) {
+  .qstart__guided,
+  .qstart__link { transition: none; }
+}

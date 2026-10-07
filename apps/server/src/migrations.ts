@@ -144,6 +144,33 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    id: 5,
+    name: 'keep autosaved and named versions of a board',
+    sql: `
+      -- Version history. 'auto' rows are written by retention, one per working
+      -- session, as it folds rows out of room_updates; 'named' rows are kept
+      -- on purpose by an editor and are never trimmed. state is a full
+      -- encoded Yjs document.
+      CREATE TABLE room_versions (
+        id BIGSERIAL PRIMARY KEY,
+        room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('auto', 'named')),
+        name TEXT,
+        description TEXT,
+        state BYTEA NOT NULL,
+        started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        ended_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        update_count INTEGER NOT NULL DEFAULT 0,
+        authors JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_by_name TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE INDEX room_versions_room_idx
+        ON room_versions (room_id, ended_at DESC);
+    `,
+  },
 ];
 
 /** Postgres advisory lock id. Arbitrary, but must be stable across versions. */

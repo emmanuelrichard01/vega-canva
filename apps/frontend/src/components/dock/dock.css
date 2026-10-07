@@ -1,9 +1,61 @@
+/* ------------------------------------------------------------ flyout scale */
+
+/* Everything that rises from the dock takes one of three widths: a list of
+   rows (sm), a library or a sheet (md), the drawing tray (lg). Outer,
+   border-box widths with an 8px inset inside on both sides. `flyoutScale.ts`
+   holds the same numbers for script, and a test keeps the two in step. */
+:root {
+  --flyout-w-sm: 240px;
+  --flyout-w-md: 408px;
+  --flyout-w-lg: 480px;
+}
+
+/* A panel takes its step and keeps it, whatever it is showing: a seat menu's
+   row and the sheet that opens above it share the width, so More grows the
+   panel upward only. Never wider than the window allows. */
+.tool-dock .dock-flyout__panel[data-size] {
+  box-sizing: border-box;
+  width: min(var(--flyout-w), calc(100vw - 2 * var(--gutter)));
+  min-width: 0;
+}
+
+.tool-dock .dock-flyout__panel[data-size='sm'] { --flyout-w: var(--flyout-w-sm); }
+.tool-dock .dock-flyout__panel[data-size='md'] { --flyout-w: var(--flyout-w-md); }
+.tool-dock .dock-flyout__panel[data-size='lg'] { --flyout-w: var(--flyout-w-lg); }
+
+/* Inside a sized panel, the libraries fill the width between the insets
+   rather than holding widths of their own. */
+.tool-dock .dock-flyout__panel[data-size] .tool-lib,
+.tool-dock .dock-flyout__panel[data-size] .seat-menu {
+  width: 100%;
+  max-width: none;
+}
+
+/* A seat menu's row runs the panel's width: the choices from the left inset,
+   More and the padlock against the right one, rather than a short row
+   floating in the middle of a wider panel. */
+.tool-dock .dock-flyout__panel[data-size] .seat-menu__row {
+  align-self: stretch;
+}
+
+.tool-dock .dock-flyout__panel[data-size] .seat-menu__row > .seat-menu__rule:nth-last-child(3) {
+  margin-left: auto;
+}
+
+/* The frame sizes' three columns share the md width rather than holding a
+   400px floor of their own past its insets. */
+.tool-dock .dock-flyout__panel[data-size] .frame-picker {
+  min-width: 0;
+}
+
 /* ------------------------------------------------------------ drawing tray */
 
-/* The Draw seat's tray: the tools as objects standing in a recess, then the
-   ink well. Shares the shelf's place above the dock and its `.tool-shelf`
-   class, so the bands placed from `--dock-h` clear it and the dock's arrow
-   keys leave it alone. See `DrawingTray`. */
+/* The Draw seat's tray: the tools as objects standing in a recess and the ink
+   well on one row, the options for the tool in hand on a row of fixed height
+   below. One width per breakpoint, from `trayLayout`, published on the inner
+   box as `--tray-*`. Shares the shelf's place above the dock and its
+   `.tool-shelf` class, so the bands placed from `--dock-h` clear it and the
+   dock's arrow keys leave it alone. See `DrawingTray`. */
 
 .tool-dock {
   /* A critically damped spring: fast off the mark, settled without a rebound.
@@ -11,15 +63,24 @@
   --tray-spring: linear(0, 0.1, 0.287, 0.473, 0.627, 0.743, 0.827, 0.886, 0.925, 0.952, 0.969, 0.98, 0.987, 0.992, 0.995, 0.997, 1);
 }
 
+/* Symmetric insets: the panel's own 8px on every side. */
 .tool-shelf.dock-tray {
-  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1);
+  padding: var(--space-2);
 }
 
 .dock-tray__inner {
   position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(calc(var(--tray-w) - 2 * var(--space-2)), calc(100vw - 2 * var(--gutter) - 2 * var(--space-2)));
+}
+
+.dock-tray__top {
   display: flex;
   align-items: center;
-  gap: 2px;
+  min-width: 0;
 }
 
 /* The recess the tools stand in. Sunken against the panel, which is the one
@@ -27,8 +88,11 @@
 .dock-tray__rack {
   position: relative;
   display: flex;
+  flex: none;
   align-items: flex-start;
   gap: 2px;
+  box-sizing: border-box;
+  width: var(--tray-rack-w);
   height: 66px;
   padding: 0 var(--space-1);
   overflow: hidden;
@@ -162,20 +226,117 @@
   color: var(--text-primary);
 }
 
-.dock-tray__rule {
+.dock-tray__top > .dock-tray__rule {
   height: 28px;
+  margin: 0 var(--tray-rule-margin);
 }
 
+/* The well takes what the rack leaves; its swatches spread to its edges, so
+   the last one ends one inset from the tray's right edge. */
 .dock-tray__well {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Out by the 5px between a swatch's edge and its chip, so the chips, which
+   are what the eye reads, sit on the lines: the last one ends one inset from
+   the tray's edge, as the rack does on the left, and the rule stands as far
+   from the first chip as from the rack. */
+.dock-ink {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  margin-inline: -5px;
+}
+
+.dock-ink__swatch {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--tray-swatch);
+  height: var(--tray-swatch);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color var(--motion-hover);
+}
+
+.dock-ink__swatch:hover {
+  background: var(--surface-hover);
+}
+
+.dock-ink__swatch:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+.dock-ink__chip {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-pill);
+  /* The chip's own edge, so a white or near-board ink still has a shape. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 18%, transparent);
+}
+
+/* The chosen ink: an ink ring standing off the chip, never the accent. */
+.dock-ink__swatch[aria-checked='true'] .dock-ink__chip {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 18%, transparent),
+    0 0 0 2px var(--surface-elevated),
+    0 0 0 3.5px var(--text-primary);
+}
+
+.dock-tray__inner[data-mode='glyph'] .dock-ink__chip {
+  width: 16px;
+  height: 16px;
+}
+
+/* The options for the tool in hand. One fixed height, ruled off from the
+   tools; each tool's set fills it from the left and cross-fades with the
+   next, so changing tools moves no edge. */
+.dock-tray__options {
+  position: relative;
+  box-sizing: border-box;
+  height: calc(var(--tray-options-h) + var(--space-2) + 1px);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-divider);
+}
+
+/* Its right edge is 5px past the row's, for the settings button: see
+   `.dock-ink`. */
+.dock-tray__options-set {
+  position: absolute;
+  inset: var(--space-2) -5px 0 0;
   display: flex;
   align-items: center;
   gap: 2px;
+  min-width: 0;
+  overflow: hidden;
 }
 
-/* `DrawTray`'s brush picker is the rack itself here, in art or glyphs. */
-.dock-tray__ink .draw-tray > .seg:first-child,
-.dock-tray__ink .draw-tray > .seg:first-child + .draw-tray__divider {
-  display: none;
+.dock-tray__options-set > .dock-rule {
+  margin: 0 var(--space-2);
+}
+
+/* The brush's settings close the row, its glyph on the same line as the last
+   chip above it. */
+.dock-tray__options-set > .dock-tray__settings-btn {
+  margin-left: auto;
+}
+
+.dock-tray__hint {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dock-tray__options-set .draw-tray {
+  min-height: 0;
 }
 
 /* ------------------------------------------------------------- width dots */
@@ -219,10 +380,11 @@
 
 /* --------------------------------------------------------- brush settings */
 
+/* Stands on the tray's right edge, 8px above it. */
 .dock-tray__settings {
   position: absolute;
   right: calc(-1 * var(--space-2));
-  bottom: calc(100% + var(--space-3));
+  bottom: calc(100% + 2 * var(--space-2));
   z-index: 5;
   display: flex;
   flex-direction: column;
@@ -248,9 +410,15 @@
   font-size: var(--text-xs);
 }
 
-/* The tray is taller than a shelf; the bands above the dock clear it. */
+/* The tray is taller than a shelf; the bands above the dock clear it. Its
+   height is the top row, the options row and the insets: 131px with the
+   art, 97px with glyphs. */
 body:has(.dock-tray__inner[data-mode='art']) {
-  --dock-h: 148px;
+  --dock-h: 211px;
+}
+
+body:has(.dock-tray__inner[data-mode='glyph']) {
+  --dock-h: 177px;
 }
 
 /* ------------------------------------------------------------ seat caret */

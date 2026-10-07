@@ -64,7 +64,7 @@ export const FORCE_SPECS: Record<ForceId, ForceSpec> = {
   magnet: {
     id: 'magnet',
     short: 'pull objects in',
-    label: 'Pull',
+    label: 'Attract',
     hint: 'Hold to draw objects toward the cursor',
     radius: 600,
     strength: 0.001,
@@ -74,7 +74,7 @@ export const FORCE_SPECS: Record<ForceId, ForceSpec> = {
   repel: {
     id: 'repel',
     short: 'push objects away',
-    label: 'Push',
+    label: 'Repel',
     hint: 'Hold to push objects away from the cursor',
     radius: 600,
     strength: 0.001,
@@ -103,9 +103,9 @@ export const FORCE_SPECS: Record<ForceId, ForceSpec> = {
   },
   gravity: {
     id: 'gravity',
-    short: 'pull objects downward',
-    label: 'Drop',
-    hint: 'Hold to pull objects downward, like tipping the table',
+    short: 'tip the board',
+    label: 'Gravity',
+    hint: 'Hold to pull objects in the direction you choose, like tipping the table',
     radius: 700,
     strength: 0.0006,
     continuous: true,

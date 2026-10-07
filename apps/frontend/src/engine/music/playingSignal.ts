@@ -7,6 +7,7 @@
  * `signalBridge.ts`); until then nothing can be playing.
  */
 import { useSyncExternalStore } from 'react';
+import { storageGet, storageSet } from '../../utils/safeStorage';
 
 export interface PlayingSignal {
   playing: boolean;
@@ -34,4 +35,29 @@ export function subscribePlayingSignal(fn: () => void): () => void {
 
 export function usePlayingSignal(): PlayingSignal {
   return useSyncExternalStore(subscribePlayingSignal, getPlayingSignal, getPlayingSignal);
+}
+
+// The compact player: a one-row now-playing bar in the popover, and the title beside the record in the header.
+const MINI_KEY = 'vega.music.mini';
+let mini = storageGet(MINI_KEY) === '1';
+const miniListeners = new Set<() => void>();
+
+export function setMiniMode(on: boolean): void {
+  if (on === mini) return;
+  mini = on;
+  storageSet(MINI_KEY, on ? '1' : '0');
+  miniListeners.forEach((fn) => fn());
+}
+
+export function useMiniMode(): boolean {
+  return useSyncExternalStore(
+    (fn) => {
+      miniListeners.add(fn);
+      return () => {
+        miniListeners.delete(fn);
+      };
+    },
+    () => mini,
+    () => false
+  );
 }

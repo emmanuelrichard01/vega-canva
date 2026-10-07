@@ -3,7 +3,7 @@ import { Path } from 'react-konva';
 import type { PathNode } from '../../../engine/model/schema';
 import { DEFAULT_INK } from '../../../engine/model/schema';
 import { contourData } from '../../../engine/model/pathGeometry';
-import { roughLoop, seedFor } from '../../../engine/model/rough';
+import { roughPencil } from '../../../engine/model/roughNodes';
 import { loopPath } from '../../../engine/model/freehandLoop';
 import { shadowProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
 import { useFillProps } from './useFillProps';
@@ -25,6 +25,23 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
   // shadow. `supportsShadowSpread` is therefore false for paths.
   const shadow = shadowProps(node.appearance);
   const dark = useDarkTheme();
+
+  /**
+   * Sketching applies to freehand strokes only (pen paths have no centreline),
+   * and only when the stroke itself asks for it. A pencil stroke is already
+   * drawn by hand, so the board's sketch mode leaves it, and its pressure
+   * taper, alone.
+   */
+  const sketchLevel = node.appearance?.sketch;
+  const freehand = node.geometry.kind === 'freehand' ? node.geometry : null;
+  const sketchSeed = node.appearance?.sketchSeed;
+  const pencil = React.useMemo(
+    () =>
+      sketchLevel && freehand && freehand.points.length > 1
+        ? roughPencil({ id: node.id, appearance: { sketchSeed }, geometry: freehand }, sketchLevel)
+        : null,
+    [sketchLevel, freehand, node.id, sketchSeed]
+  );
 
   if (node.geometry.kind === 'freehand') {
     // perfect-freehand produces a filled outline polygon, not a stroked line,
@@ -52,31 +69,6 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
      * The taper is given up in exchange, which is the honest trade: a hand
      * drawing over its own line does not taper either.
      */
-    if (node.appearance?.sketch && node.geometry.points.length > 1) {
-      // The width the sketch is actually drawn at, so the wander is scaled to
-      // the nib rather than to the outline weight the pencil no longer uses.
-      const nib = Math.max(1, node.geometry.strokeSize * 0.66);
-      return (
-        <Path
-          data={roughLoop(node.geometry.points, {
-            seed: seedFor(node.id, node.appearance?.sketchSeed),
-            level: node.appearance.sketch,
-            width: nib,
-            closed: false,
-          })}
-          stroke={strokeColor(node.appearance) ?? DEFAULT_INK}
-          // The stored stroke size is the *width of the outline*, so a sketched
-          // run at that weight would be far heavier than the stroke it
-          // replaces. Two thirds lands it about where the pencil looked.
-          strokeWidth={nib}
-          lineCap="round"
-          lineJoin="round"
-          {...shadow}
-          hitStrokeWidth={Math.max(20, node.geometry.strokeSize)}
-        />
-      );
-    }
-
     /**
      * The ink is the **stroke** colour, and `fill` is the interior.
      *
@@ -112,6 +104,24 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
       node.geometry.closed && node.geometry.points.length > 2 && node.appearance?.fill?.length
         ? loopPath(node.geometry.points)
         : '';
+
+    if (pencil) {
+      return (
+        <>
+          {interior && <Path data={interior} {...pathFill} {...shadow} listening={false} />}
+          <Path
+            data={pencil.d}
+            stroke={ink}
+            strokeWidth={pencil.nib}
+            lineCap="round"
+            lineJoin="round"
+            {...(interior ? null : shadow)}
+            hitStrokeWidth={Math.max(20, node.geometry.strokeSize)}
+            perfectDrawEnabled={false}
+          />
+        </>
+      );
+    }
 
     return (
       <>

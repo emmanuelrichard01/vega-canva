@@ -28,7 +28,7 @@ import type { ChartSpec, ChartSeries } from '../engine/chart/chartTypes';
 import { getPaletteColors, isSampleKind, seriesColor } from '../engine/chart/chartTypes';
 import { CHART_LABELS } from '../engine/chart/chartKinds';
 import { updateChart } from '../engine/chart/chartApply';
-import { rangeLabel, unlinkedSpec } from '../engine/chart/chartFromTable';
+import { linkRangeLabel, unlinkedSpec } from '../engine/chart/chartFromTable';
 import { chartToSvg } from '../engine/chart/chartSvg';
 import {
   chartToCsv,
@@ -146,7 +146,7 @@ const LinkedNotice: React.FC<{ node: ChartNode; onClose: () => void }> = ({ node
         <div className="cdm__linked">
           <p>
             {table
-              ? <>These values come from <strong>{name}</strong>, {rangeLabel(link)}. Edit them there and the chart follows.</>
+              ? <>These values come from <strong>{name}</strong>, {linkRangeLabel(table?.table, link)}. Edit them there and the chart follows.</>
               : <>The linked table has been deleted. The chart keeps the values it last read.</>}
           </p>
           <div className="cdm__linked-actions">

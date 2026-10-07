@@ -2,8 +2,8 @@ import { nanoid } from 'nanoid';
 import React, { useState, useRef, useEffect, useCallback, useSyncExternalStore, Suspense, lazy } from 'react';
 import { Canvas } from './components/Canvas';
 import { AuthModal } from './components/AuthModal';
-import { BoardHeaderLeft, BoardHeaderRight, UNTITLED_BOARD } from './components/workspace/WorkspaceShell';
-import { usePublishBoardLayout, useRegionCycle } from './components/workspace/boardLayout';
+import { BoardColumn, BoardHeaderLeft, BoardHeaderRight, UNTITLED_BOARD } from './components/workspace/WorkspaceShell';
+import { useBoardPanels, usePublishBoardLayout, useRegionCycle } from './components/workspace/boardLayout';
 import { PanelWidthHandle } from './components/workspace/PanelWidthHandle';
 import { ToolWorkspace } from './components/workspace/ToolWorkspace';
 import { takePendingRestore, takePendingTemplate } from './engine/export/pendingRestore';
@@ -26,6 +26,7 @@ import { useAuth } from './hooks/useAuth';
 import { doc, provider, deleteNode, localAuthorId, publishLocalIdentity, setBoardMetadata, whenDocumentReady } from './engine/document';
 import { startDocumentUpkeep } from './engine/document/upkeep';
 import { storageGet, storageSet } from './utils/safeStorage';
+import { OBJECT_HISTORY_EVENT } from './engine/history/objectHistory';
 import { useRoomState } from './hooks/useSync';
 import { useOpeningFrame } from './hooks/useOpeningFrame';
 import { fitPose } from './engine/cameraFit';
@@ -38,7 +39,7 @@ import { PresenceStage } from './components/PresenceStage';
 import { isForceTool, type ForceId } from './engine/physics/forces';
 import { calculateLayout, animateToLayout, type LayoutMode } from './utils/spatialLayout';
 import { Mic, TriangleAlert } from 'lucide-react';
-import { RemoteCursors } from './engine/cursor';
+import { RemoteCursors, cursorHint } from './engine/cursor';
 import type { ContextTarget } from './components/CanvasContextMenu';
 import { RoomModals } from './components/workspace/RoomModals';
 import { useRoomShortcuts } from './hooks/useRoomShortcuts';
@@ -66,7 +67,7 @@ import { looksLikeSvg } from './engine/clipboard/svgImport';
 import { DEFAULT_TYPOGRAPHY } from './engine/model/schema';
 import { cameraSystem } from './engine/CameraSystem';
 import { useBreakpoint } from './hooks/useBreakpoint';
-import { CanvasEmptyState } from './components/CanvasEmptyState';
+import { EmptyBoardHints } from './components/onboarding/EmptyBoardHints';
 import { LessonCoach } from './components/learn/LessonCoach';
 import { WalkthroughGuide } from './components/learn/WalkthroughGuide';
 import { TourGuide, TourOffer } from './components/learn/TourGuide';
@@ -694,18 +695,16 @@ export default function Room() {
    * the stored value being `expanded`, so only a browser that has never been
    * told gets the new default.
    */
-  const [leftExpanded, setLeftExpanded] = useState(
-    () => storageGet('vega_panel_left') === 'expanded'
-  );
-  const [rightExpanded, setRightExpanded] = useState(
-    () => storageGet('vega_panel_right') === 'expanded'
-  );
+  const { roomId, status, metadata, awarenessUsers, synced } = useRoomState();
+  const {
+    left: leftExpanded,
+    right: rightExpanded,
+    setLeft: setLeftExpanded,
+    setRight: setRightExpanded,
+  } = useBoardPanels(roomId);
   const [radarOpen, setRadarOpen] = useState(
     () => storageGet('vega_radar') === 'expanded'
   );
-  useEffect(() => {
-    storageSet('vega_panel_left', leftExpanded ? 'expanded' : 'collapsed');
-  }, [leftExpanded]);
 
   /**
    * Opening a panel is what "learned" means for a panel lesson.
@@ -722,18 +721,15 @@ export default function Room() {
   const openLayers = useCallback(() => {
     setLeftExpanded(true);
     learnState.learn('panel-layers');
-  }, []);
+  }, [setLeftExpanded]);
   const openProperties = useCallback(() => {
     setRightExpanded(true);
     learnState.learn('panel-properties');
-  }, []);
+  }, [setRightExpanded]);
   const openRadar = useCallback(() => {
     setRadarOpen(true);
     learnState.learn('panel-layers');
   }, []);
-  useEffect(() => {
-    storageSet('vega_panel_right', rightExpanded ? 'expanded' : 'collapsed');
-  }, [rightExpanded]);
   useEffect(() => {
     storageSet('vega_radar', radarOpen ? 'expanded' : 'collapsed');
   }, [radarOpen]);
@@ -756,6 +752,12 @@ export default function Room() {
       setActiveTool((current) => (current === 'audio' ? 'select' : current));
     },
   });
+  // The pointer wears the recording state for as long as a voice note records.
+  useEffect(() => {
+    if (!isRecording) return;
+    cursorHint.set('recording');
+    return () => cursorHint.set('idle');
+  }, [isRecording]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const selectTool = (tool: string) => {
@@ -765,7 +767,6 @@ export default function Room() {
       fileInputRef.current.click();
     }
   };
-  const { roomId, status, metadata, awarenessUsers, synced } = useRoomState();
 
   /**
    * Frame the board when it opens, rather than inheriting the last one's view.
@@ -947,10 +948,16 @@ export default function Room() {
   const openHelp = useCallback(() => setShowHelp(true), []);
   const hideUi = useCallback(() => setIsUiVisible(false), []);
   const toggleTimeline = useCallback(() => setShowTimeTravel((v) => !v), []);
+  /** "Show history" on an object opens Time Travel; the timeline takes the parked id on mount. */
+  useEffect(() => {
+    const open = () => setShowTimeTravel(true);
+    window.addEventListener(OBJECT_HISTORY_EVENT, open);
+    return () => window.removeEventListener(OBJECT_HISTORY_EVENT, open);
+  }, []);
   const toggleInbox = useCallback(() => setShowInbox((v) => !v), []);
   const openCommands = useCallback(() => setShowCommandPalette(true), []);
-  const collapseRight = useCallback(() => setRightExpanded(false), []);
-  const collapseLeft = useCallback(() => setLeftExpanded(false), []);
+  const collapseRight = useCallback(() => setRightExpanded(false), [setRightExpanded]);
+  const collapseLeft = useCallback(() => setLeftExpanded(false), [setLeftExpanded]);
   const commentUnread = unreadCount(comments, commentMarks, myAuthorId);
   const commentMentioned = commentUnread > 0 && comments.some((t) => !t.resolved && mentionsMe(t, commentMarks, myAuthorId));
 
@@ -981,7 +988,7 @@ export default function Room() {
     const anyOpen = leftExpanded || (rightExpanded && canEdit);
     setLeftExpanded(!anyOpen);
     setRightExpanded(!anyOpen);
-  }, [isCompact, leftExpanded, rightExpanded, canEdit]);
+  }, [isCompact, leftExpanded, rightExpanded, canEdit, setLeftExpanded, setRightExpanded]);
   // Keyboard Shortcuts routed through dedicated useRoomShortcuts hook
   useRoomShortcuts({
     selectTool,
@@ -1435,42 +1442,20 @@ export default function Room() {
           right header, properties. Closed, it is a pill in the top-left. */}
       {isUiVisible && (
         <>
-          {leftOpen ? (
-            <nav
-              className="hierarchy-panel panel-surface"
-              aria-label="Board and layers"
-              data-region="0"
-              data-tour="layers"
-              data-radar-collapsed={!radarOpen}
-            >
-              <BoardHeaderLeft
-                variant="panel"
-                localTitle={localTitle}
-                setLocalTitle={setLocalTitle}
-                onTitleSave={handleSaveTitle}
-                isDarkTheme={isDarkTheme}
-                setIsDarkTheme={setIsDarkTheme}
-                onShareClick={openShare}
-                onExportClick={openBoardExport}
-                onHelpClick={openHelp}
-                onHideUi={hideUi}
-                onToggleTimeline={toggleTimeline}
-                timelineOpen={showTimeTravel}
-                onOpenCommands={openCommands}
-              />
-              <LayersPanel
-                selectedIds={selectedIds}
-                setSelectedId={setSelectedId}
-                setSelectedIds={setSelectedIds}
-                overrideObjects={timeTravelSnapshot}
-                onCollapse={collapseLeft}
-              />
-              <PanelWidthHandle />
-            </nav>
-          ) : (
-            <nav className="board-pill board-pill--left" aria-label="Board" data-region="0" data-tour="layers">
+          <BoardColumn
+            side="left"
+            open={leftOpen}
+            onPin={expandLeft}
+            panelLabel="Board and layers"
+            pillLabel="Board"
+            region={0}
+            tour="layers"
+            panelClassName="hierarchy-panel panel-surface"
+            panelData={{ 'data-radar-collapsed': !radarOpen }}
+            pill={(toggle) => (
               <BoardHeaderLeft
                 variant="pill"
+                toggle={toggle}
                 localTitle={localTitle}
                 setLocalTitle={setLocalTitle}
                 onTitleSave={handleSaveTitle}
@@ -1483,10 +1468,33 @@ export default function Room() {
                 onToggleTimeline={toggleTimeline}
                 timelineOpen={showTimeTravel}
                 onOpenCommands={openCommands}
-                onExpand={expandLeft}
               />
-            </nav>
-          )}
+            )}
+          >
+            <BoardHeaderLeft
+              variant="panel"
+              localTitle={localTitle}
+              setLocalTitle={setLocalTitle}
+              onTitleSave={handleSaveTitle}
+              isDarkTheme={isDarkTheme}
+              setIsDarkTheme={setIsDarkTheme}
+              onShareClick={openShare}
+              onExportClick={openBoardExport}
+              onHelpClick={openHelp}
+              onHideUi={hideUi}
+              onToggleTimeline={toggleTimeline}
+              timelineOpen={showTimeTravel}
+              onOpenCommands={openCommands}
+            />
+            <LayersPanel
+              selectedIds={selectedIds}
+              setSelectedId={setSelectedId}
+              setSelectedIds={setSelectedIds}
+              overrideObjects={timeTravelSnapshot}
+              onCollapse={collapseLeft}
+            />
+            <PanelWidthHandle />
+          </BoardColumn>
           <GroupIsolationBar />
         </>
       )}
@@ -1591,7 +1599,7 @@ export default function Room() {
 
         {/* Teaches the core gesture on a blank canvas, and gets out of the way
             the moment anything exists. */}
-        <CanvasEmptyState visible={isUiVisible && !timeTravelSnapshot} />
+        <EmptyBoardHints visible={isUiVisible && !timeTravelSnapshot} />
         
         {/* `multiple`, because selecting eight photos and getting one is not
             a limitation anyone expects from a file picker. */}
@@ -1622,7 +1630,7 @@ export default function Room() {
             <TimeTravelBar
               roomId={roomId}
               onClose={() => { setShowTimeTravel(false); applyReplaySnapshot(null); setTimeTravelSnapshot(null); }}
-              onApplySnapshot={(snap, changedIds) => { applyReplaySnapshot(snap, changedIds); setTimeTravelSnapshot(snap); }}
+              onApplySnapshot={(snap, changedIds, listed) => { applyReplaySnapshot(snap, changedIds); setTimeTravelSnapshot(listed ?? snap); }}
             />
           )}
         </Suspense>
@@ -1710,8 +1718,31 @@ export default function Room() {
       {/* RIGHT COLUMN: who is here and how work leaves, above Properties.
           Viewers have no properties to change, so for them it is always the
           pill. Closed, it is a pill in the top-right. */}
-      {isUiVisible && (rightOpen ? (
-        <aside className="context-inspector panel-surface" aria-label="People and properties" data-region="3" data-tour="properties">
+      {isUiVisible && (
+        <BoardColumn
+          side="right"
+          open={rightOpen}
+          canOpen={canEdit}
+          onPin={expandRight}
+          panelLabel="People and properties"
+          pillLabel="People"
+          region={3}
+          tour="properties"
+          panelClassName="context-inspector panel-surface"
+          pill={(toggle) => (
+            <BoardHeaderRight
+              variant="pill"
+              toggle={toggle}
+              onShareClick={openShare}
+              onToggleTimeline={toggleTimeline}
+              onToggleComments={toggleInbox}
+              commentsOpen={showInbox}
+              timelineOpen={showTimeTravel}
+              commentUnread={commentUnread}
+              commentMentioned={commentMentioned}
+            />
+          )}
+        >
           <BoardHeaderRight
             variant="panel"
             onShareClick={openShare}
@@ -1727,22 +1758,8 @@ export default function Room() {
             overrideObjects={timeTravelSnapshot}
             onCollapse={collapseRight}
           />
-        </aside>
-      ) : (
-        <aside className="board-pill board-pill--right" aria-label="People" data-region="3" data-tour="properties">
-          <BoardHeaderRight
-            variant="pill"
-            onShareClick={openShare}
-            onToggleTimeline={toggleTimeline}
-            onToggleComments={toggleInbox}
-            commentsOpen={showInbox}
-            timelineOpen={showTimeTravel}
-            commentUnread={commentUnread}
-            commentMentioned={commentMentioned}
-            onExpand={canEdit ? expandRight : undefined}
-          />
-        </aside>
-      ))}
+        </BoardColumn>
+      )}
 
       {/* What this product is for is said on the way in, on the auth screen's
           other half, while somebody types their name. There used to be a
@@ -1829,7 +1846,7 @@ export default function Room() {
         *
         * An empty board is the best moment for it, not the worst. There is
         * nothing to interrupt, nothing to lose, and every question a person has
-        * at that moment is "where is anything". `CanvasEmptyState` sits in the
+        * at that moment is "where is anything". `EmptyBoardHints` sits in the
         * middle of the canvas and this sits above the dock, so the two do not
         * collide.
         */}

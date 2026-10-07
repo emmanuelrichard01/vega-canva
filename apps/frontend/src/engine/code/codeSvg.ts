@@ -1,5 +1,6 @@
 import { layoutCode } from './codeLayout';
-import { CODE_FONT, CODE_THEMES, CODE_UI_FONT } from './codeThemes';
+import { CODE_FONT, CODE_UI_FONT, diffColours, resolveCodeTheme } from './codeThemes';
+import { ThemeService } from '../ThemeService';
 import { languageById } from './codeLanguages';
 import type { CodeSpec } from './codeTypes';
 
@@ -12,8 +13,17 @@ const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
  * exported code block should still be selectable and searchable in whatever
  * opens the file, which is most of the reason to export code as vector.
  */
-export function codeToSvg(spec: CodeSpec, width: number, height: number, id: string): string {
-  const theme = CODE_THEMES[spec.theme];
+export function codeToSvg(
+  spec: CodeSpec,
+  width: number,
+  height: number,
+  id: string,
+  boardDark: boolean = typeof document !== 'undefined' && ThemeService.isDarkMode()
+): string {
+  // The export shows the block as its author is seeing it: a block that
+  // follows the board exports in the partner that matches the board.
+  const theme = resolveCodeTheme(spec, boardDark);
+  const diffInk = diffColours(theme.dark);
   const layout = layoutCode(spec, width);
   const m = layout.metrics;
   const clip = `code-clip-${id.replace(/[^\w-]/g, '')}`;
@@ -29,6 +39,10 @@ export function codeToSvg(spec: CodeSpec, width: number, height: number, id: str
 
   for (const row of layout.rows) {
     if (row.y > height) break;
+    if (row.diff) {
+      const tint = row.diff === 'add' ? diffInk.addRow : row.diff === 'del' ? diffInk.delRow : diffInk.hunkRow;
+      parts.push(`<rect x="0" y="${row.y}" width="${width}" height="${m.lineHeight}" fill="${tint}"/>`);
+    }
     if (row.highlighted) {
       parts.push(`<rect x="0" y="${row.y}" width="${width}" height="${m.lineHeight}" fill="${theme.highlight}"/>`);
       parts.push(`<rect x="0" y="${row.y}" width="3" height="${m.lineHeight}" fill="${theme.highlightBar}"/>`);
@@ -41,6 +55,11 @@ export function codeToSvg(spec: CodeSpec, width: number, height: number, id: str
     } else if (spec.lineNumbers && !row.first) {
       parts.push(
         `<text x="${m.padX + m.gutterWidth - m.fontSize}" y="${baseline}" text-anchor="end" dominant-baseline="central" font-family="${esc(CODE_FONT)}" font-size="${Math.round(m.fontSize * 0.82)}" fill="${theme.gutter}">↳</text>`
+      );
+    }
+    if ((row.diff === 'add' || row.diff === 'del') && row.first) {
+      parts.push(
+        `<text x="${layout.codeLeft}" y="${baseline}" dominant-baseline="central" font-family="${esc(CODE_FONT)}" font-size="${m.fontSize}" font-weight="600" fill="${row.diff === 'add' ? diffInk.addInk : diffInk.delInk}">${row.diff === 'add' ? '+' : '-'}</text>`
       );
     }
     const spans = row.tokens

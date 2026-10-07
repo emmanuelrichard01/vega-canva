@@ -98,7 +98,7 @@ export const ZoomControl: React.FC<{ compact?: boolean }> = ({ compact = false }
   };
 
   return (
-    <div className={`zoom-ctl${compact ? ' zoom-ctl--compact' : ''}`} role="group" aria-label="Zoom" ref={groupRef}>
+    <div className={`zoom-ctl${compact ? ' zoom-ctl--compact' : ''}`} role="group" aria-label="Zoom" data-tour="zoom" ref={groupRef}>
       {!compact && (
         <button
           type="button"

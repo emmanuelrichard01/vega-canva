@@ -2,9 +2,10 @@ import React from 'react';
 import { Group, Rect, Shape } from 'react-konva';
 import type { CodeNode } from '../../../engine/model/schema';
 import { layoutCode, measureCharWidth } from '../../../engine/code/codeLayout';
-import { CODE_FONT, CODE_THEMES, CODE_UI_FONT } from '../../../engine/code/codeThemes';
+import { CODE_FONT, CODE_UI_FONT, diffColours, resolveCodeTheme } from '../../../engine/code/codeThemes';
 import { languageById } from '../../../engine/code/codeLanguages';
 import { useStore } from '../../../hooks/useStore';
+import { useDarkTheme } from './useDarkTheme';
 
 /**
  * A code block on the canvas.
@@ -42,7 +43,9 @@ export const CodeRenderer: React.FC<{ node: CodeNode }> = ({ node }) => {
   const charWidth = measureCharWidth(spec.fontSize, CODE_FONT);
   const layout = React.useMemo(() => layoutCode(spec, node.width, charWidth), [spec, node.width, charWidth]);
   const editing = useStore((s) => s.codeEditNodeId === node.id);
-  const theme = CODE_THEMES[spec.theme];
+  const boardDark = useDarkTheme();
+  const theme = resolveCodeTheme(spec, boardDark);
+  const diffInk = diffColours(theme.dark);
   const language = languageById(spec.language);
 
   const draw = React.useCallback(
@@ -107,11 +110,23 @@ export const CodeRenderer: React.FC<{ node: CodeNode }> = ({ node }) => {
       for (const row of layout.rows) {
         if (row.y + lh < top - 4 || row.y > bottom + 4) continue;
         if (row.y > bodyBottom) break;
+        if (row.diff) {
+          ctx.fillStyle = row.diff === 'add' ? diffInk.addRow : row.diff === 'del' ? diffInk.delRow : diffInk.hunkRow;
+          ctx.fillRect(0, row.y, w, lh);
+        }
         if (row.highlighted) {
           ctx.fillStyle = theme.highlight;
           ctx.fillRect(0, row.y, w, lh);
           ctx.fillStyle = theme.highlightBar;
           ctx.fillRect(0, row.y, 3, lh);
+        }
+        // The change marker sits in the column the source gave it, in the
+        // change's own colour, so `+` and `-` read before the code does.
+        if ((row.diff === 'add' || row.diff === 'del') && row.first && !editing) {
+          ctx.font = `600 ${m.fontSize}px ${CODE_FONT}`;
+          ctx.textAlign = 'left';
+          ctx.fillStyle = row.diff === 'add' ? diffInk.addInk : diffInk.delInk;
+          ctx.fillText(row.diff === 'add' ? '+' : '−', layout.codeLeft, row.y + baselineShift);
         }
         if (spec.lineNumbers && row.first) {
           ctx.font = `${m.fontSize}px ${CODE_FONT}`;
@@ -173,7 +188,7 @@ export const CodeRenderer: React.FC<{ node: CodeNode }> = ({ node }) => {
       ctx.lineWidth = 1;
       ctx.stroke();
     },
-    [node.width, node.height, layout, theme, language, spec.filename, spec.lineNumbers, spec.source, editing, charWidth]
+    [node.width, node.height, layout, theme, diffInk, language, spec.filename, spec.lineNumbers, spec.source, editing, charWidth]
   );
 
   return (

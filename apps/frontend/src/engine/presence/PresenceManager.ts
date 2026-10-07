@@ -1,6 +1,7 @@
 import { provider } from '../document';
 import { CHAT_MAX_CHARS, type ActivityKind } from './collaborators';
 import { SPOTLIGHT_MS } from './spotlight';
+import { PING_COOLDOWN_MS, PING_MS } from './ping';
 import type { PresenceState } from "./PresenceTypes";
 
 /**
@@ -35,6 +36,7 @@ class PresenceEngine {
 
   private spotlightTimeout: ReturnType<typeof setTimeout> | null = null;
   private chatTimeout: ReturnType<typeof setTimeout> | null = null;
+  private pingTimeout: ReturnType<typeof setTimeout> | null = null;
   private spotlightListeners = new Set<() => void>();
 
   private pendingUpdate = false;
@@ -262,6 +264,30 @@ class PresenceEngine {
     if (!this.localState.chat) return;
     this.localState.chat = null;
     this.scheduleUpdate();
+  }
+
+  /**
+   * "Look here": show everyone a pulse at a world point.
+   *
+   * Cleared after `PING_MS` so it never lingers in awareness for people who
+   * join later, and rate-limited so a held key is one ping, not a flood.
+   * Returns whether it went out.
+   */
+  public ping(x: number, y: number): boolean {
+    const now = Date.now();
+    const last = this.localState.ping;
+    if (last && now - last.at < PING_COOLDOWN_MS) return false;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+    if (this.pingTimeout) clearTimeout(this.pingTimeout);
+    this.localState.ping = { x, y, at: now };
+    this.resetIdleTimer();
+    this.scheduleUpdate();
+    this.pingTimeout = setTimeout(() => {
+      this.pingTimeout = null;
+      this.localState.ping = null;
+      this.scheduleUpdate();
+    }, PING_MS);
+    return true;
   }
 
   public broadcastReaction(emoji: string) {

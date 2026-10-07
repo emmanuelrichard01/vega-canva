@@ -4,6 +4,7 @@ import type { StickyTheme } from '../model/schema';
 import { defaultChartSpec, type ChartSpec } from '../chart/chartTypes';
 import { defaultCodeSpec, type CodeSpec } from '../code/codeTypes';
 import type { TableSpec } from '../table/tableTypes';
+import { isEmojiLike } from '../emoji/emojiText';
 
 /**
  * The pieces every template board is built from.
@@ -560,6 +561,50 @@ export const sticky = (
   };
 };
 
+/** What a template frame's name implies: a leading emoji, or an icon and a line for a known kind. */
+const FRAME_KINDS: ReadonlyArray<readonly [RegExp, string, string]> = [
+  [/desktop|landing/i, '🖥️', 'The full page at desktop width'],
+  [/story/i, '📱', 'A vertical story format'],
+  [/square/i, '🔳', 'A square social post'],
+  [/banner/i, '🪧', 'A wide banner'],
+  [/artboard/i, '🎨', 'A page to design on'],
+  [/design system/i, '🧩', 'Tokens, type and components in one place'],
+  [/action items|ownership/i, '✅', 'Who owns what, and by when'],
+  [/quick win/i, '⚡', 'High impact for little effort'],
+  [/big bet/i, '🎯', 'High impact, worth planning properly'],
+  [/fill-in/i, '🧱', 'Low impact, low effort'],
+  [/thankless/i, '🚫', 'Low impact for a lot of effort'],
+  [/three states/i, '🔄', 'Every node is in exactly one of these'],
+  [/cluster|replication/i, '🗄️', 'How the nodes copy a write'],
+  [/^backlog/i, '📥', 'Waiting to be picked up'],
+  [/in progress/i, '🚧', 'Being worked on now'],
+  [/in review/i, '👀', 'Waiting for a second pair of eyes'],
+  [/^done/i, '🎉', 'Finished and shipped'],
+  [/raw ideas/i, '💡', 'Everything, before anyone judges it'],
+  [/clustering/i, '🧲', 'Ideas grouped by what they share'],
+  [/voted/i, '🗳️', 'What the group picked'],
+  [/parked/i, '🅿️', 'Good, but not now'],
+  [/presentation/i, '📊', 'The clean version'],
+  [/whiteboard/i, '🖍️', 'The hand-drawn version'],
+];
+
+const LEADING_EMOJI = /^(\p{Extended_Pictographic}(?:\ufe0f|\u200d\p{Extended_Pictographic}|[\u{1f3fb}-\u{1f3ff}])*)\s+/u;
+
+/**
+ * The title, icon and description a template frame carries.
+ *
+ * An emoji already leading the name moves into `icon`, where the frame draws
+ * it as artwork; otherwise a known kind of frame gets a fitting one. Every icon
+ * passes `isEmojiLike`, the same check the document applies on read.
+ */
+export function frameIdentity(name: string): { title: string; icon?: string; description?: string } {
+  const lead = LEADING_EMOJI.exec(name);
+  if (lead && isEmojiLike(lead[1])) return { title: name.slice(lead[0].length), icon: lead[1] };
+  const kind = FRAME_KINDS.find(([pattern]) => pattern.test(name));
+  if (!kind || !isEmojiLike(kind[1])) return { title: name };
+  return { title: name, icon: kind[1], description: kind[2] };
+}
+
 export const frame = (x: number, y: number, width: number, height: number, title: string): NewNodeInput => ({
   id: nanoid(),
   type: 'frame',
@@ -567,7 +612,7 @@ export const frame = (x: number, y: number, width: number, height: number, title
   y,
   width,
   height,
-  title,
+  ...frameIdentity(title),
 });
 
 // ---------------------------------------------------------------------------

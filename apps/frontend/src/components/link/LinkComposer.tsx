@@ -1,8 +1,9 @@
 import React from 'react';
-import { ClipboardPaste, CornerDownLeft, Link2, Play } from 'lucide-react';
+import { ClipboardPaste, CornerDownLeft, ImageIcon, Link2, Play } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import { parseLink, providerFor } from '../../engine/link/linkProviders';
 import { createLink, replaceLinkUrl } from '../../engine/link/linkApply';
+import { insertImageFromUrl } from '../../engine/media/imageFromUrl';
 import { PORTAL_SURFACE_ATTR } from '../ui/portalSurface';
 import './link.css';
 
@@ -38,6 +39,10 @@ const Composer: React.FC<{
   const [value, setValue] = React.useState(replacing && replacing.type === 'link' ? replacing.link.url : '');
   const [clip, setClip] = React.useState<string | null>(null);
   const [error, setError] = React.useState(false);
+  /** Image mode: what went wrong, in the words the placement gave, and whether it is still working. */
+  const [imageError, setImageError] = React.useState<string | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const imageMode = at.as === 'image';
   const inputRef = React.useRef<HTMLInputElement>(null);
   const rootRef = React.useRef<HTMLFormElement>(null);
 
@@ -73,6 +78,20 @@ const Composer: React.FC<{
   const willEmbed = Boolean(provider?.embed && ['video', 'audio', 'design'].includes(provider.kind));
 
   const submit = (raw: string) => {
+    if (imageMode) {
+      if (busy) return;
+      setBusy(true);
+      void insertImageFromUrl(raw, { x: at.x, y: at.y }).then((result) => {
+        if (result.ok) {
+          window.dispatchEvent(new CustomEvent('requestSelectNodes', { detail: { ids: [result.id] } }));
+          onClose();
+          return;
+        }
+        setBusy(false);
+        setImageError(result.reason);
+      });
+      return;
+    }
     if (replacing && replacing.type === 'link') {
       if (!replaceLinkUrl(replacing, raw)) {
         setError(true);
@@ -106,18 +125,23 @@ const Composer: React.FC<{
       }}
     >
       <div className="lnk-composer__field">
-        <Link2 size={15} aria-hidden className="lnk-composer__glyph" />
+        {imageMode ? (
+          <ImageIcon size={15} aria-hidden className="lnk-composer__glyph" />
+        ) : (
+          <Link2 size={15} aria-hidden className="lnk-composer__glyph" />
+        )}
         <input
           ref={inputRef}
           value={value}
-          placeholder={replacing ? 'Replace the link' : 'Paste or type a link'}
+          placeholder={imageMode ? 'Paste the address of a picture' : replacing ? 'Replace the link' : 'Paste or type a link'}
           spellCheck={false}
           autoCapitalize="off"
-          aria-label="Link address"
-          aria-invalid={error || undefined}
+          aria-label={imageMode ? 'Picture address' : 'Link address'}
+          aria-invalid={error || Boolean(imageError) || undefined}
           onChange={(e) => {
             setValue(e.target.value);
             setError(false);
+            setImageError(null);
           }}
           onKeyDown={(e) => {
             e.stopPropagation();
@@ -130,18 +154,26 @@ const Composer: React.FC<{
             e.stopPropagation();
             // A pasted link is a finished thought: place it now.
             const text = e.clipboardData.getData('text');
-            if (parseLink(text)) {
+            if (!imageMode && parseLink(text)) {
               e.preventDefault();
               submit(text);
             }
           }}
         />
-        <button type="submit" className="lnk-composer__go" disabled={!parsed} aria-label={replacing ? 'Replace link' : 'Add link'}>
+        <button type="submit" className="lnk-composer__go" disabled={!parsed || busy} aria-label={imageMode ? 'Add picture' : replacing ? 'Replace link' : 'Add link'}>
           <CornerDownLeft size={14} />
         </button>
       </div>
 
-      {error ? (
+      {imageMode ? (
+        imageError ? (
+          <p className="lnk-composer__hint lnk-composer__hint--error" role="alert">{imageError}</p>
+        ) : (
+          <p className="lnk-composer__hint lnk-composer__hint--idle" role="status">
+            {busy ? 'Fetching the picture…' : 'The picture is kept with the board, so it stays if the original goes.'}
+          </p>
+        )
+      ) : error ? (
         <p className="lnk-composer__hint lnk-composer__hint--error">That does not look like a web address.</p>
       ) : provider && parsed ? (
         <p className="lnk-composer__hint">

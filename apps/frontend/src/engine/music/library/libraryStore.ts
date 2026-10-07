@@ -31,6 +31,8 @@ export interface LibraryState {
   buffering: boolean;
   position: number;
   duration: number;
+  /** Seconds of the current track ready to play. */
+  buffered: number;
   shuffle: boolean;
   repeat: RepeatMode;
   /** A track that failed to load, so the list can mark it. */
@@ -65,6 +67,7 @@ let state: LibraryState = {
   buffering: false,
   position: 0,
   duration: 0,
+  buffered: 0,
   shuffle: saved.shuffle === true,
   repeat: saved.repeat === 'one' || saved.repeat === 'off' ? saved.repeat : 'all',
   failed: null,
@@ -108,6 +111,7 @@ function syncFromPlayer() {
   if (snap.buffering !== state.buffering) patch.buffering = snap.buffering;
   if (Math.abs(snap.position - state.position) >= 0.25 || snap.position < state.position) patch.position = snap.position;
   if (Math.abs(snap.duration - state.duration) > 0.01) patch.duration = snap.duration;
+  if (Math.abs(snap.buffered - state.buffered) >= 1 || (snap.buffered >= snap.duration) !== (state.buffered >= state.duration)) patch.buffered = snap.buffered;
   if (Object.keys(patch).length > 0) set(patch);
   publish();
 }

@@ -14,12 +14,26 @@
  * here, rather than in each caller.
  */
 
-import { ellipseRing, rectRing, roughEllipse, roughLoop, roughPolyline, roughSilhouette, seedFor, shapeFill } from './rough';
+import {
+  ellipseRing,
+  rectRing,
+  roughEllipse,
+  roughLoop,
+  roughPolyline,
+  roughSilhouette,
+  seedFor,
+  shapeFill,
+  sketchNib,
+  type SketchLevel,
+} from './rough';
+import { runPoints } from './lineEnds';
+import { terminateRun } from './connectorEnds';
+import { defaultEndAlign } from './linePath';
 import { shapeOutline } from './shapeOutline';
 import { shapeToPath } from './shapeToPath';
 import { flattenPath, subpathsOf } from './pathGeometry';
 import { shapeFeatureContours } from './shapes/features';
-import type { Point, ShapeNode } from './schema';
+import { isOpenShape, type Point, type ShapeNode } from './schema';
 
 export interface RoughShape {
   /** The sketched outline, as SVG path data. Empty when nothing is drawn. */
@@ -93,13 +107,19 @@ export interface RoughShape {
  */
 const SAMPLED_PROFILES: ReadonlySet<string> = new Set(['curved', 'wavy', 'coil']);
 
+/**
+ * `level` is the level the painter resolved for this node (see
+ * `resolveSketch`): the node's own pinned level, or the board's. It defaults to
+ * the node's own, so a caller that knows nothing about the board still draws a
+ * pinned sketch.
+ */
 export function roughShape(
   node: Pick<ShapeNode, 'geometry' | 'width' | 'height' | 'appearance'> & { id: string },
-  wantsFill: boolean
+  wantsFill: boolean,
+  level: SketchLevel | undefined = node.appearance?.sketch
 ): RoughShape {
-  if (!node.appearance?.sketch) return { outline: '', fill: '', silhouette: '', features: '' };
+  if (!level || !node.appearance) return { outline: '', fill: '', silhouette: '', features: '' };
 
-  const level = node.appearance.sketch;
   const style = node.appearance.fillStyle ?? 'solid';
   const seed = seedFor(node.id, node.appearance.sketchSeed);
   /**
@@ -291,4 +311,53 @@ export function roughShape(
     // is the question it asks.
     silhouette: wantsFill ? roughSilhouette(rings ?? ring, { seed, level, width, curved }) : '',
   };
+}
+
+/**
+ * A sketched line's or arrow's end markers, in node-local coordinates.
+ *
+ * The same markers the crisp branch draws (position, facing, size and
+ * alignment, from `terminateRun`), only drawn by hand. Each end is seeded off
+ * the node's seed and its end, so the two heads wander independently and both
+ * stay put across renders. A round marker is a loop; a filled head is a
+ * closed triangle; a bar or an open arrow is an open run whose ends are not
+ * joined.
+ *
+ * One function for the canvas and the exporter, so the heads in the file are
+ * the heads on the board.
+ */
+export function roughLineCaps(
+  node: Pick<ShapeNode, 'geometry' | 'width' | 'height' | 'appearance'> & { id: string },
+  level: SketchLevel | undefined
+): string[] {
+  if (!level || !isOpenShape(node.geometry.kind)) return [];
+  const sw = node.appearance?.stroke?.width ?? 0;
+  const points = runPoints(node as ShapeNode).flatMap((p) => [p.x, p.y]);
+  const { start, end } = terminateRun(points, {
+    start: node.geometry.endStart ?? 'none',
+    end: node.geometry.endEnd ?? 'none',
+    strokeWidth: sw || 2,
+    scale: node.geometry.endScale,
+    align: node.geometry.endAlign ?? defaultEndAlign(node.geometry.lineProfile),
+  });
+  const width = sketchNib(sw);
+  const base = seedFor(node.id, node.appearance?.sketchSeed);
+  const out: string[] = [];
+  for (const [cap, seed] of [
+    [start, base ^ 0x11],
+    [end, base ^ 0x22],
+  ] as const) {
+    if (!cap) continue;
+    if (cap.circle) {
+      const { x, y, radius } = cap.circle;
+      out.push(roughEllipse(x, y, radius, radius, { seed, level, width }));
+      continue;
+    }
+    const pts = cap.points ?? [];
+    const ring: Point[] = [];
+    for (let i = 0; i + 1 < pts.length; i += 2) ring.push({ x: pts[i], y: pts[i + 1] });
+    if (ring.length < 2) continue;
+    out.push(roughPolyline(ring, { seed, closed: Boolean(cap.filled), level, width }));
+  }
+  return out;
 }

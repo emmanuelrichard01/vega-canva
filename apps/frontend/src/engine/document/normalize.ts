@@ -16,6 +16,7 @@ import { normalizeLinkSpec } from '../link/linkTypes';
 import { normalizeIconSpec } from '../icons/iconSpec';
 import { nudgeKey, parseNudgeKey } from '../model/connectorRouter/pathOps';
 import { LIST_STYLES, MAX_ALT_LENGTH } from '../model/schema';
+import { isEmojiLike } from '../emoji/emojiText';
 import { CALLOUT_TAILS, clampParam, shapeParams } from '../model/shapeParams';
 import { CYCLE_UNITS } from '../text/colorCycle';
 import { isCssColor, cssColorOr } from '../text/cssColor';
@@ -125,6 +126,20 @@ const SVG_PATH_DATA = /^[MmLlHhVvCcSsQqTtAaZz0-9eE.,+\-\s]*$/;
 
 const bool = (value: unknown, fallback: boolean): boolean =>
   typeof value === 'boolean' ? value : fallback;
+
+/** The longest description a frame keeps. One line under its name, not a document. */
+export const MAX_FRAME_DESCRIPTION = 280;
+
+/** A frame's description: one line of plain text, control characters removed. Absent when empty. */
+function normalizeFrameDescription(raw: unknown): { description: string } | null {
+  if (typeof raw !== 'string') return null;
+  const clean = Array.from(raw, (c) => (c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127 ? ' ' : c))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_FRAME_DESCRIPTION);
+  return clean ? { description: clean } : null;
+}
 
 /**
  * A frame's safe-area insets, or undefined for "no guide".
@@ -591,6 +606,9 @@ function toStroke(value: unknown, legacyColor: unknown, legacyWidth: unknown): S
   return undefined;
 }
 
+/** A transcript is a note about a clip, not a document: capped so a bad write cannot bloat the board. */
+const MAX_TRANSCRIPT_LENGTH = 6000;
+
 function normalizeAppearance(raw: any): Appearance {
   const legacy = raw?.content ?? {};
   const source = raw?.appearance ?? {};
@@ -658,10 +676,16 @@ function normalizeAppearance(raw: any): Appearance {
   if (SKETCH_LEVELS.includes(source.sketch)) appearance.sketch = source.sketch;
   else if (source.sketch === true || num(source.roughness, 0) > 0) appearance.sketch = 'medium';
 
+  // Clean means "crisp on a sketched board", so it only has meaning while no
+  // level is pinned: a pinned level always wins.
+  if (source.sketchClean === true && !appearance.sketch) appearance.sketchClean = true;
+
   // Absent is `solid`, so a shape that has never been shaded stores nothing —
   // and only stored at all when there is a sketch for it to describe, since
-  // hachure on a crisp shape is a setting with no effect.
-  if (appearance.sketch && FILL_STYLES.includes(source.fillStyle) && source.fillStyle !== 'solid') {
+  // hachure on a crisp shape is a setting with no effect. An object that
+  // follows the board keeps its shading, so the gate is "not pinned clean"
+  // rather than "has its own level".
+  if (!appearance.sketchClean && FILL_STYLES.includes(source.fillStyle) && source.fillStyle !== 'solid') {
     appearance.fillStyle = source.fillStyle;
 
     /**
@@ -699,7 +723,7 @@ function normalizeAppearance(raw: any): Appearance {
    * a malformed document would still draw, just not the drawing it was saved
    * with.
    */
-  if (appearance.sketch && Number.isFinite(source.sketchSeed)) {
+  if (!appearance.sketchClean && Number.isFinite(source.sketchSeed)) {
     const variant = Math.max(0, Math.floor(Number(source.sketchSeed)));
     if (variant > 0) appearance.sketchSeed = variant;
   }
@@ -1252,6 +1276,11 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         tags: Array.isArray(raw?.tags) ? raw.tags : Array.isArray(raw?.metadata?.tags) ? raw.metadata.tags : [],
         pinned: bool(raw?.pinned, bool(raw?.metadata?.pinned, false)),
         ...(hasAppearance ? { appearance: app } : null),
+        ...(raw?.textSizing === 'fixed' || raw?.textSizing === 'auto' ? { textSizing: raw.textSizing } : null),
+        ...(typeof raw?.showAuthor === 'boolean' ? { showAuthor: raw.showAuthor } : null),
+        ...(typeof raw?.showDate === 'boolean' ? { showDate: raw.showDate } : null),
+        ...(typeof raw?.showStamps === 'boolean' ? { showStamps: raw.showStamps } : null),
+        ...(typeof raw?.checklist === 'boolean' ? { checklist: raw.checklist } : null),
       };
     }
 
@@ -1285,7 +1314,7 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         src: str(raw?.src ?? raw?.assetId ?? raw?.content?.url, ''),
         durationMs: num(raw?.durationMs ?? raw?.content?.durationMs, 0),
         waveform: Array.isArray(raw?.waveform) ? raw.waveform.filter((n: unknown) => typeof n === 'number') : [],
-        transcript: typeof raw?.transcript === 'string' ? raw.transcript : undefined,
+        transcript: typeof raw?.transcript === 'string' ? raw.transcript.slice(0, MAX_TRANSCRIPT_LENGTH) : undefined,
         author: normalizeAuthor(raw),
       };
 
@@ -1426,6 +1455,11 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         appearance: normalizeAppearance(raw),
         safeArea: normalizeSafeArea(raw?.safeArea),
         layoutGuide: normalizeLayoutGuide(raw?.layoutGuide),
+        ...(isEmojiLike(raw?.icon) ? { icon: raw.icon } : null),
+        ...normalizeFrameDescription(raw?.description),
+        ...(typeof raw?.clipContent === 'boolean' ? { clipContent: raw.clipContent } : null),
+        ...(typeof raw?.slideOrder === 'number' && Number.isFinite(raw.slideOrder) ? { slideOrder: raw.slideOrder } : null),
+        ...(typeof raw?.preset === 'string' && /^[a-z0-9-]{1,40}$/.test(raw.preset) ? { preset: raw.preset } : null),
       };
   }
 }
@@ -1547,6 +1581,21 @@ function normalizeChartLink(raw: any): ChartTableLink | undefined {
   const r1 = idx(raw.r1);
   const c1 = idx(raw.c1);
   if (r0 === null || c0 === null || r1 === null || c1 === null || r1 < r0 || c1 < c0) return undefined;
+  // Row and column ids as the table writes them: short word characters.
+  const lineId = (v: unknown): string | null => (typeof v === 'string' && /^[\w-]{1,40}$/.test(v) ? v : null);
+  const ids = raw.ids && typeof raw.ids === 'object' ? raw.ids : null;
+  const corners = ids ? [lineId(ids.r0), lineId(ids.r1), lineId(ids.c0), lineId(ids.c1)] : [];
+  const name = typeof raw.name === 'string' ? raw.name.trim().slice(0, 80) : '';
+  const seriesLines = Array.isArray(raw.seriesLines)
+    ? [...new Set<string>(raw.seriesLines.map(lineId).filter((v: string | null): v is string => v !== null))].slice(0, 200)
+    : null;
+  const FILTER_OPS = new Set(['eq', 'ne', 'gt', 'lt', 'contains', 'filled']);
+  const filters = Array.isArray(raw.filters)
+    ? raw.filters
+        .filter((f: any) => f && typeof f === 'object' && lineId(f.line) && FILTER_OPS.has(f.op))
+        .slice(0, 12)
+        .map((f: any) => ({ line: f.line as string, op: f.op, value: typeof f.value === 'string' ? f.value.slice(0, 200) : '' }))
+    : [];
   return {
     tableId: raw.tableId,
     r0,
@@ -1554,6 +1603,16 @@ function normalizeChartLink(raw: any): ChartTableLink | undefined {
     r1,
     c1,
     ...(raw.seriesIn === 'rows' ? { seriesIn: 'rows' as const } : {}),
+    ...(corners.length === 4 && corners.every(Boolean)
+      ? { ids: { r0: corners[0]!, r1: corners[1]!, c0: corners[2]!, c1: corners[3]! } }
+      : {}),
+    ...(raw.grow === true ? { grow: true } : {}),
+    ...(name ? { name } : {}),
+    ...(typeof raw.header === 'boolean' ? { header: raw.header } : {}),
+    ...(lineId(raw.categoryLine) ? { categoryLine: raw.categoryLine as string } : {}),
+    ...(seriesLines ? { seriesLines } : {}),
+    ...(['sum', 'avg', 'count', 'min', 'max'].includes(raw.aggregate) ? { aggregate: raw.aggregate } : {}),
+    ...(filters.length ? { filters } : {}),
   };
 }
 

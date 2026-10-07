@@ -1,14 +1,17 @@
 import { usePhysics } from '../hooks/usePhysics';
 import React, { useRef, useState, useEffect, useCallback, useMemo, useSyncExternalStore } from "react";
-import { Stage, Layer, Circle, Group, Path } from "react-konva";
+import { Stage, Layer, Group, Path } from "react-konva";
 import Konva from "konva";
 import { selectionWithin } from '../engine/model/groupTree';
 import { updateNode } from '../engine/document';
 import { useStore } from '../hooks/useStore';
 import { FORCE_SPECS, canLatch, isForceTool } from '../engine/physics/forces';
+import { usePhysicsSettings } from '../engine/physics/settings';
+import { ForceField } from './physics/ForceField';
 import { editor } from '../engine/api/EditorAPI';
 import { EXPORT_CHROME } from '../engine/export/chrome';
 import { DataLinkOverlay } from './canvas/DataLinkOverlay';
+import { WriteBackConfirm } from './data/WriteBackConfirm';
 import { LayerHoverOutline } from './canvas/LayerHoverOutline';
 import { QuickCreateMagnets } from './canvas/QuickCreateMagnets';
 import { boardBackgroundStyle, useBoardBackground } from './canvas/boardBackground';
@@ -75,8 +78,9 @@ import { setSlotFit } from '../engine/grid/gridSlotApply';
 import { CommentsOverlay } from "./CommentsOverlay";
 import { FramePresenter } from './canvas/FramePresenter';
 import { FrameNameEditor } from './canvas/FrameNameEditor';
+import { CanvasEmojiPickerHost } from './emoji/EmojiPickerPopover';
 import { useContentShortcuts } from './canvas/useContentShortcuts';
-import { AudioRecordingHUD } from "./AudioRecordingHUD";
+import { RecordingHud } from './media/RecordingHud';
 import { useComments } from "../hooks/useComments";
 import { engineEvents } from '../engine/EventBus';
 import { canvasEngine } from '../engine/CanvasEngine';
@@ -517,6 +521,8 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   const activeForce = isForceTool(activeTool) ? FORCE_SPECS[activeTool] : null;
   // Subscribed, so dragging the Area slider resizes the ring as you drag it.
   const forceRadiusScale = useStore((state) => state.forceRadiusScale);
+  const forceFalloff = useStore((state) => state.forceFalloff);
+  const physicsSettings = usePhysicsSettings();
 
   // The force ring follows the pointer and pulses on the render tick, so the
   // frame loop must keep running while a force tool is armed.
@@ -1216,28 +1222,15 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
           {/* The force field, drawn at the radius the simulation will actually
               use. Non-interactive so it never intercepts the press that applies
               the force. */}
-          {activeForce && (
-            <Group ref={forceRingRef} listening={false} visible={false} name={EXPORT_CHROME}>
-              {/* Scaled by the Area control. Without this the ring would keep
-                  drawing the force's built-in radius while the simulation used
-                  the adjusted one — a sight worse than no ring at all, because
-                  it would be confidently wrong about where the force reaches. */}
-              <Circle
-                radius={activeForce.radius * forceRadiusScale}
-                stroke={activeForce.colorToken}
-                strokeWidth={2}
-                dash={[10, 8]}
-                opacity={0.7}
-              />
-              <Circle
-                radius={activeForce.radius * forceRadiusScale}
-                fill={activeForce.colorToken}
-                opacity={0.06}
-              />
-              {/* A solid centre mark, so the point the force originates from is
-                  unmistakable even when the ring runs off-screen. */}
-              <Circle radius={5} fill={activeForce.colorToken} />
-            </Group>
+          {activeForce && isForceTool(activeTool) && (
+            <ForceField
+              mode={activeTool}
+              radiusScale={forceRadiusScale}
+              falloff={forceFalloff}
+              gravityAngle={physicsSettings.gravityAngle}
+              groupRef={forceRingRef}
+              chromeName={EXPORT_CHROME}
+            />
           )}
 
           {/* One shared Transformer for the whole canvas. */}
@@ -1355,6 +1348,8 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
         <GestureOverlay />
         <FramePresenter />
         <FrameNameEditor />
+        <WriteBackConfirm />
+        <CanvasEmojiPickerHost />
         <CommentsOverlay
           comments={comments}
           objects={objects}
@@ -1395,15 +1390,6 @@ const AudioRecordingOverlay: React.FC<{ onStop: () => void }> = ({ onStop }) => 
   const overlay = useToolOverlay();
   if (overlay?.type !== 'audio-recording') return null;
   return (
-    <AudioRecordingHUD
-      elapsedMs={overlay.elapsedMs || 0}
-      levels={overlay.levels || []}
-      remainingMs={overlay.remainingMs}
-      paused={overlay.paused}
-      silent={overlay.silent}
-      onCancel={overlay.onCancel}
-      onTogglePause={overlay.onTogglePause}
-      onStop={onStop}
-    />
+    <RecordingHud overlay={overlay} onStop={onStop} />
   );
 };

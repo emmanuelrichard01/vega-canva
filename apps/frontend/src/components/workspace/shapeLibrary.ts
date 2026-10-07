@@ -93,14 +93,15 @@ function unique(list: readonly string[]): string[] {
 /**
  * The sheet's measurements, which the stylesheet reads as custom properties.
  *
- * Eight 40px tiles on a 2px gap make a 334px grid inside a 344px sheet. The
+ * Nine 40px tiles on a 2px gap make a 376px grid inside a 392px sheet, which
+ * with the panel padding is the dock's md flyout width (408, see `flyoutScale`). The
  * scroll reaches out through the flyout panel's 8px padding to its edges and
  * reserves the scrollbar's gutter on *both* sides, then centres the grid in
  * what is left. So the grid sits the same distance from the panel's left and
  * right edges whatever the platform's scrollbar is: none (an overlay
  * scrollbar), a thin one, or a classic one up to 13px.
  */
-export const LIBRARY_LAYOUT = { cols: 8, tile: 40, gap: 2, width: 344, panelPad: 8 } as const;
+export const LIBRARY_LAYOUT = { cols: 9, tile: 40, gap: 2, width: 392, panelPad: 8 } as const;
 
 export const LIBRARY_GRID = LIBRARY_LAYOUT.cols * LIBRARY_LAYOUT.tile + (LIBRARY_LAYOUT.cols - 1) * LIBRARY_LAYOUT.gap;
 

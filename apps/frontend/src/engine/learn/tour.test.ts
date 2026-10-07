@@ -2,7 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { nextVisibleStep, placeCard, TOUR, TOUR_GAP, type TourSide } from './tour';
+import {
+  nextVisibleStep,
+  placeCard,
+  resolveAnchor,
+  stepAllowed,
+  stepBody,
+  stepsFor,
+  TOUR,
+  TOUR_GAP,
+  type Box,
+  type TourSide,
+  type TourStep,
+} from './tour';
+import { OUTLINE_PAD, roundedOutline } from './tourSketch';
 
 /** Every source file under `src`, so an anchor can be looked for in all of them. */
 function sources(dir: string, out: string[] = []): string[] {
@@ -52,6 +65,8 @@ describe('the tour', () => {
      * the work, and it stops creeping every time somebody adds a component.
      */
     const carried = new Set<string>();
+    const propped = new Set<string>();
+    let hasTourProp = false;
     for (const file of sources(root)) {
       if (file.endsWith('tour.test.ts')) continue;
       const text = readFileSync(file, 'utf8');
@@ -59,14 +74,36 @@ describe('the tour', () => {
       // A template-literal anchor is a *prefix* — `data-tour={`seat-${id}`}` —
       // so what is recorded is the part before the interpolation.
       for (const match of text.matchAll(/data-tour=\{`([^`$]*)/g)) carried.add(match[1]);
+      // A component that writes `data-tour={tour}` (the board's columns) is
+      // handed the anchor as a `tour` prop where it is used.
+      if (text.includes('data-tour={tour}')) hasTourProp = true;
+      for (const match of text.matchAll(/\btour="([^"]+)"/g)) propped.add(match[1]);
     }
 
+    if (hasTourProp) propped.forEach((a) => carried.add(a));
+
+    /** Every class name and quoted attribute value a fallback selector names. */
+    const fragments = (selector: string) => [
+      ...[...selector.matchAll(/\.([a-z][\w-]*)/g)].map((m) => m[1]),
+      ...[...selector.matchAll(/="([^"]+)"/g)].map((m) => m[1]),
+    ];
+    const texts = sources(root)
+      .filter((f) => !f.endsWith('tour.test.ts') && !f.endsWith('tour.ts'))
+      .map((f) => readFileSync(f, 'utf8'));
+
     for (const step of TOUR) {
-      expect(
+      const hooked =
         carried.has(step.anchor) ||
-          [...carried].some((prefix) => prefix.length > 0 && step.anchor.startsWith(prefix)),
-        `step "${step.id}" anchors to "${step.anchor}", which nothing carries`
-      ).toBe(true);
+        [...carried].some((prefix) => prefix.length > 0 && step.anchor.startsWith(prefix));
+      if (hooked) continue;
+      // Not hooked yet: the fallback has to name something the source writes.
+      expect(step.fallback, `step "${step.id}" anchors to "${step.anchor}", which nothing carries, and has no fallback`).toBeTruthy();
+      for (const fragment of fragments(step.fallback!)) {
+        expect(
+          texts.some((t) => t.includes(fragment)),
+          `step "${step.id}" falls back on "${fragment}", which nothing writes`
+        ).toBe(true);
+      }
     }
   });
 
@@ -74,19 +111,96 @@ describe('the tour', () => {
     expect(new Set(TOUR.map((s) => s.id)).size).toBe(TOUR.length);
   });
 
-  it('keeps every step to one sentence', () => {
-    /**
-     * The limit is the point. A tour that explains is a tour people skip; one
-     * that locates is one they finish. Two sentences is allowed where the
-     * second is a short aside; three is a lesson, and lessons belong in
-     * `lessons.ts` where they arrive when the tool is picked up.
-     */
+  it('keeps every step short, for every role', () => {
+    /** A tour that explains is a tour people skip; one that locates is one they finish. */
+    const roles = ['editor', 'commenter', 'viewer'] as const;
     for (const step of TOUR) {
-      const sentences = step.body.split(/\.\s/).length;
-      expect(sentences, `${step.id}: "${step.body}"`).toBeLessThanOrEqual(2);
-      expect(step.body.length, step.id).toBeLessThanOrEqual(140);
-      expect(step.body, step.id).not.toContain('—');
+      for (const role of roles) {
+        const body = stepBody(step, role);
+        expect(body.split(/\.\s/).length, `${step.id}/${role}: "${body}"`).toBeLessThanOrEqual(2);
+        expect(body.length, `${step.id}/${role}`).toBeLessThanOrEqual(120);
+        expect(body, step.id).not.toContain('—');
+      }
       expect(step.title, step.id).not.toContain('—');
+    }
+  });
+
+  it('fits the whole walk in about a minute', () => {
+    // Roughly 200 words a minute of reading, plus a beat per step to look.
+    for (const role of ['editor', 'commenter', 'viewer'] as const) {
+      const words = stepsFor(role).reduce((n, i) => n + stepBody(TOUR[i], role).split(/\s+/).length, 0);
+      const seconds = (words / 200) * 60 + stepsFor(role).length * 2;
+      expect(seconds, role).toBeLessThanOrEqual(60);
+    }
+  });
+});
+
+describe('roles', () => {
+  it('walks editors through the whole layout, in order', () => {
+    expect(stepsFor('editor').map((i) => TOUR[i].id)).toEqual([
+      'board', 'dock', 'insert', 'all-tools', 'properties', 'share', 'zoom', 'music',
+    ]);
+  });
+
+  it('never shows a viewer or a commenter the editing tools', () => {
+    for (const role of ['viewer', 'commenter'] as const) {
+      const ids = stepsFor(role).map((i) => TOUR[i].id);
+      expect(ids).not.toContain('insert');
+      expect(ids).not.toContain('all-tools');
+      expect(ids.length).toBeGreaterThanOrEqual(4);
+    }
+  });
+
+  it('says the dock differently to somebody who cannot draw', () => {
+    const dock = TOUR.find((s) => s.id === 'dock')!;
+    expect(stepBody(dock, 'viewer')).not.toBe(stepBody(dock, 'editor'));
+    expect(stepBody(dock, 'commenter')).toMatch(/comment/i);
+    expect(stepAllowed(dock, 'viewer')).toBe(true);
+  });
+});
+
+describe('resolveAnchor', () => {
+  const step: TourStep = { id: 's', anchor: 'zoom', fallback: '.zoom-ctl', title: 'Zoom', body: 'x', side: 'top' };
+  const el = (name: string, box: Box) => ({ name, box: () => box });
+  const shown = { x: 10, y: 10, width: 80, height: 32 };
+  const hidden = { x: 0, y: 0, width: 0, height: 0 };
+
+  it('prefers the data-tour hook over the fallback', () => {
+    const query = (sel: string) =>
+      sel === '[data-tour="zoom"]' ? [el('hook', shown)] : sel === '.zoom-ctl' ? [el('fallback', shown)] : [];
+    expect(resolveAnchor(step, query)?.name).toBe('hook');
+  });
+
+  it('uses the fallback while nothing carries the hook', () => {
+    const query = (sel: string) => (sel === '.zoom-ctl' ? [el('fallback', shown)] : []);
+    expect(resolveAnchor(step, query)?.name).toBe('fallback');
+  });
+
+  it('skips matches that are not laid out, and takes the one on screen', () => {
+    // The open panel and the collapsed pill both carry `layers`; one is hidden.
+    const query = (sel: string) => (sel === '[data-tour="zoom"]' ? [el('pill', hidden), el('panel', shown)] : []);
+    expect(resolveAnchor(step, query)?.name).toBe('panel');
+  });
+
+  it('finds nothing when nothing is on screen', () => {
+    expect(resolveAnchor(step, () => [el('ghost', hidden)])).toBeNull();
+    expect(resolveAnchor({ ...step, fallback: undefined }, () => [])).toBeNull();
+  });
+});
+
+describe('the pen outline', () => {
+  it('stays outside the spotlit element on every side, wide or round', () => {
+    const cases: Array<[Box, number]> = [
+      [{ x: 100, y: 700, width: 820, height: 52 }, 16], // the dock
+      [{ x: 20, y: 20, width: 36, height: 36 }, 18], // a round button
+      [{ x: 400, y: 300, width: 300, height: 600 }, 12], // a panel
+    ];
+    for (const [box, radius] of cases) {
+      for (const p of roundedOutline(box, radius, OUTLINE_PAD)) {
+        const outside =
+          p.x <= box.x + 0.01 || p.x >= box.x + box.width - 0.01 || p.y <= box.y + 0.01 || p.y >= box.y + box.height - 0.01;
+        expect(outside, `${JSON.stringify(p)} inside ${JSON.stringify(box)}`).toBe(true);
+      }
     }
   });
 });
@@ -94,7 +208,7 @@ describe('the tour', () => {
 describe('nextVisibleStep', () => {
   const all = () => true;
   const none = () => false;
-  const only = (...anchors: string[]) => (a: string) => anchors.includes(a);
+  const only = (...anchors: string[]) => (s: TourStep) => anchors.includes(s.anchor);
 
   it('stays put when the step it is asked about is present', () => {
     expect(nextVisibleStep(0, 1, all)).toBe(0);

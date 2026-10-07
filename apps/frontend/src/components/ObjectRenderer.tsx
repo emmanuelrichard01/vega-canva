@@ -59,6 +59,7 @@ import { connectorDragPatch, syncConnectedConnectors } from '../engine/model/con
 import { fitPathToBox } from '../engine/model/pathGeometry';
 import { duplicationSet, travelledEnough } from '../engine/interaction/altDuplicate';
 import { claimCursor } from '../engine/cursor/cursorOverride';
+import { claimable } from '../engine/cursor/claimCursors';
 import { cursorCss } from '../engine/cursor/cursorCss';
 import { moveVisual } from '../engine/cursor/cursorVisual';
 import { ThemeService } from '../engine/ThemeService';
@@ -237,7 +238,7 @@ function setDuplicateCursor(_stage: Konva.Stage | null | undefined, on: boolean)
    * still holds one wins on its own — which is what that `dataset` was
    * approximating, and it could only remember one level deep.
    */
-  claimCursor('alt-duplicate', on ? 'copy' : null);
+  claimCursor('alt-duplicate', on ? claimable.duplicate() : null);
 }
 
 /** How recently the pointer must have moved for a release to count as a throw. */
@@ -337,7 +338,7 @@ export const ObjectRenderer = React.memo(
      * object out of sight on every screen.
      */
     const clipCorners = useMemo(() => {
-      if (!node || node.type === 'connector' || !ownerFrame || ownerFrame.type !== 'frame') return null;
+      if (!node || node.type === 'connector' || !ownerFrame || ownerFrame.type !== 'frame' || ownerFrame.clipContent === false) return null;
       return frameClipCorners(
         {
           x: ownerLive?.x ?? ownerFrame.x,
@@ -485,7 +486,7 @@ export const ObjectRenderer = React.memo(
       if (Date.now() - node.createdAt > 2000) return;
       const konvaNode = shapeRef.current;
       konvaNode.scale({ x: 0.5, y: 0.5 });
-      konvaNode.to({ scaleX: 1, scaleY: 1, duration: 0.4, easing: Konva.Easings.ElasticEaseOut });
+      konvaNode.to({ scaleX: 1, scaleY: 1, duration: 0.4, easing: Konva.Easings.StrongEaseOut });
       // Intentionally mount-only.
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -1361,7 +1362,7 @@ export const ObjectRenderer = React.memo(
              * `listening={false}`, so it receives no hover at all and there is
              * nothing here to hang a cursor on.
              */
-            if (!canDrag || isPinned(node)) claimCursor('object-hover', 'not-allowed');
+            if (!canDrag || isPinned(node)) claimCursor('object-hover', claimable.notAllowed());
             else if (isSelected && selectable) {
               claimCursor('object-hover', cursorCss(moveVisual(ThemeService.isDarkMode()), 'move'));
             }
@@ -1401,7 +1402,7 @@ export const ObjectRenderer = React.memo(
             };
           }}
         >
-          <NodeContent node={liveNode} isEditing={isEditing} />
+          <NodeContent node={liveNode} isEditing={isEditing} isSelected={isSelected} />
 
           {isHovered && selectable && !isSelected && (
             // Sized from the node's real bounds. This used to read
@@ -1464,7 +1465,7 @@ const HoverOutline: React.FC<{ width: number; height: number }> = ({ width, heig
   );
 };
 
-const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean }> = ({ node, isEditing }) => {
+const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean; isSelected?: boolean }> = ({ node, isEditing, isSelected }) => {
   switch (node.type) {
     case 'text':
       return <TextRenderer node={node} visible={!isEditing} />;
@@ -1494,7 +1495,7 @@ const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean }> = ({ node, is
         </Group>
       );
     case 'frame':
-      return <FrameRenderer node={node} />;
+      return <FrameRenderer node={node} selected={isSelected} />;
     case 'connector':
       return <ConnectorRenderer node={node} />;
     case 'grid':

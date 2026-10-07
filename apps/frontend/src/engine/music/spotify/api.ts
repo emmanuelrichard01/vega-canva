@@ -2,6 +2,8 @@
  * The few Spotify Web API calls the player makes.
  */
 import { accessToken, readTokens } from './auth';
+import { repeatToSpotify, retryAfterMs, snapshotFromApi, type PlayerSnapshot } from './playerSync';
+import type { RepeatMode } from '../library/queue';
 
 const API = 'https://api.spotify.com/v1';
 
@@ -35,10 +37,13 @@ export class SpotifyError extends Error {
   readonly status: number;
   /** Spotify's machine-readable reason, such as `PREMIUM_REQUIRED` or `NO_ACTIVE_DEVICE`. */
   readonly reason: string | null;
-  constructor(message: string, status: number, reason: string | null = null) {
+  /** Milliseconds Spotify asked us to wait (a 429's Retry-After); 0 otherwise. */
+  readonly retryAfter: number;
+  constructor(message: string, status: number, reason: string | null = null, retryAfter = 0) {
     super(message);
     this.status = status;
     this.reason = reason;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -59,7 +64,12 @@ async function call<T>(path: string, init: RequestInit = {}, fetchImpl: typeof f
   const body = await res.json().catch(() => null);
   if (!res.ok) {
     const message = body?.error?.message ?? `Spotify responded ${res.status}.`;
-    throw new SpotifyError(message, res.status, typeof body?.error?.reason === 'string' ? body.error.reason : null);
+    throw new SpotifyError(
+      message,
+      res.status,
+      typeof body?.error?.reason === 'string' ? body.error.reason : null,
+      res.status === 429 ? retryAfterMs(res.headers?.get?.('Retry-After')) : 0
+    );
   }
   return body as T;
 }
@@ -166,4 +176,47 @@ export function embedUrl(playlist: SpotifyPlaylist): string | null {
 export async function skipPrevious(deviceId: string | null, fetchImpl?: typeof fetch): Promise<void> {
   const query = deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : '';
   await call(`/me/player/previous${query}`, { method: 'POST' }, fetchImpl);
+}
+
+const deviceQuery = (deviceId: string | null) => (deviceId ? `device_id=${encodeURIComponent(deviceId)}` : '');
+const withDevice = (path: string, deviceId: string | null, extra = '') => {
+  const q = [extra, deviceQuery(deviceId)].filter(Boolean).join('&');
+  return q ? `${path}?${q}` : path;
+};
+
+/** Moves the playhead of the current track. */
+export async function seekTo(positionMs: number, deviceId: string | null, fetchImpl?: typeof fetch): Promise<void> {
+  await call(withDevice('/me/player/seek', deviceId, `position_ms=${Math.max(0, Math.round(positionMs))}`), { method: 'PUT' }, fetchImpl);
+}
+
+export async function setShuffleState(on: boolean, deviceId: string | null, fetchImpl?: typeof fetch): Promise<void> {
+  await call(withDevice('/me/player/shuffle', deviceId, `state=${on}`), { method: 'PUT' }, fetchImpl);
+}
+
+export async function setRepeatState(mode: RepeatMode, deviceId: string | null, fetchImpl?: typeof fetch): Promise<void> {
+  await call(withDevice('/me/player/repeat', deviceId, `state=${repeatToSpotify(mode)}`), { method: 'PUT' }, fetchImpl);
+}
+
+/** What is playing and how, or null when nothing is. */
+export async function fetchPlayer(fetchImpl?: typeof fetch): Promise<PlayerSnapshot | null> {
+  return snapshotFromApi(await call<unknown>('/me/player', {}, fetchImpl));
+}
+
+/** The next few tracks Spotify will play. */
+export async function fetchQueue(fetchImpl?: typeof fetch): Promise<PlayerSnapshot['upNext']> {
+  const body = await call<{ queue?: unknown[] }>('/me/player/queue', {}, fetchImpl);
+  const items = (body?.queue ?? []).filter((i) => (i as { type?: string } | null)?.type !== 'episode');
+  return items
+    .map((item) => snapshotFromApi({ is_playing: false, item })?.track ?? null)
+    .filter((t): t is NonNullable<typeof t> => t !== null);
+}
+
+/** Whether the track is in the person's Liked Songs. */
+export async function isTrackSaved(id: string, fetchImpl?: typeof fetch): Promise<boolean> {
+  const body = await call<boolean[]>(`/me/tracks/contains?ids=${encodeURIComponent(id)}`, {}, fetchImpl);
+  return body?.[0] === true;
+}
+
+export async function setTrackSaved(id: string, saved: boolean, fetchImpl?: typeof fetch): Promise<void> {
+  await call(`/me/tracks?ids=${encodeURIComponent(id)}`, { method: saved ? 'PUT' : 'DELETE' }, fetchImpl);
 }

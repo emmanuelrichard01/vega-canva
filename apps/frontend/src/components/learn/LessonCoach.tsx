@@ -42,22 +42,12 @@ import { LessonDemo } from './LessonDemo';
  * radar and the zoom control. `NoticeLayer` picked the same place for the same
  * reason, and the two are stacked rather than overlapping.
  *
- * ## Why one mute, and also one dismissal each
+ * ## Why once, and one mute
  *
- * Somebody who closes the third of these has told you something about all
- * twelve. Making them close twelve is the product not listening, so there is a
- * mute for all of them, reversible from the reference library.
- *
- * But "I know this one" is a different thing from "I want none of them", and
- * conflating the two pushes people to the mute. So each card also has its own
- * "Do not show this again", which retires that lesson alone.
- *
- * ## Why it appears at most twice
- *
- * A card that returns every time the tool is armed until you happen to make
- * something is a nag. It is allowed two appearances (`MAX_SHOWS`): the first
- * is often while the pointer is somewhere else, and after the second it lives
- * in the reference.
+ * A tool's tip appears the first time the tool is picked up and not again; the
+ * lesson stays in Help with its demo. Closing it retires that lesson. "Don't
+ * show tips" turns every tip off, reversible from Help, because somebody who
+ * closes the third of these has told you something about all of them.
  *
  * ## Why it points at the seat
  *
@@ -83,6 +73,15 @@ interface Props {
  * and short enough that it never feels like a wait.
  */
 const SETTLE_MS = 550;
+
+/**
+ * A tool's tip appears on its first use and not again.
+ *
+ * `learnState` would allow a second showing; on the canvas that is one more
+ * interruption than a first run needs, and the lesson stays in Help with its
+ * demo for anybody who wants it back.
+ */
+const shownBefore = (id: string) => (learnState.getSnapshot().shown[id] ?? 0) >= 1;
 
 export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
   const { muted } = useSyncExternalStore(
@@ -120,7 +119,9 @@ export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
    * card that vanished the instant it appeared would be a flicker.
    */
   const candidate: Lesson | undefined =
-    found && (found.id === shownId.current || !learnState.isRetired(found.id)) ? found : undefined;
+    found && (found.id === shownId.current || (!learnState.isRetired(found.id) && !shownBefore(found.id)))
+      ? found
+      : undefined;
   const candidateId = candidate?.id ?? null;
 
   useEffect(() => {
@@ -245,21 +246,9 @@ export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
         </ul>
 
         <div className="coach__foot">
-          {/* Two offers, kept apart: this one, or all of them. */}
           <span className="coach__quiet">
-            <button
-              type="button"
-              className="coach__mute"
-              onClick={() => {
-                learnState.dismiss(shown.id);
-                setShown(null);
-              }}
-            >
-              Do not show this again
-            </button>
-            <span aria-hidden="true">·</span>
             <button type="button" className="coach__mute" onClick={() => learnState.mute()}>
-              Stop all tips
+              Don’t show tips
             </button>
           </span>
           <span className="coach__more">
@@ -271,7 +260,10 @@ export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
       <button
         type="button"
         className="coach__close"
-        onClick={() => setShown(null)}
+        onClick={() => {
+          learnState.dismiss(shown.id);
+          setShown(null);
+        }}
         aria-label="Dismiss this tip"
         data-tooltip="Dismiss"
       >

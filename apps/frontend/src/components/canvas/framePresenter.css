@@ -112,6 +112,9 @@
 }
 
 .fp-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   max-width: 240px;
   margin-left: 8px;
   overflow: hidden;
@@ -139,6 +142,93 @@
   box-shadow: var(--shadow-overlay);
   color: var(--text-primary);
   font: 500 var(--text-base, 13px) / 1.4 var(--font-sans);
+}
+
+/* The deck: thumbnails above the controls, current one ringed, drag to reorder. */
+.fp-strip {
+  position: fixed;
+  left: 50%;
+  bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  margin: 0;
+  padding: 10px;
+  overflow-x: auto;
+  list-style: none;
+  border-radius: var(--radius-xl);
+  background: var(--fp-hud);
+  color: var(--fp-ink);
+  font: 500 var(--text-xs, 11px) / 1.2 var(--font-sans);
+  pointer-events: auto;
+  scrollbar-width: thin;
+}
+
+.fp-strip__item {
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 6px;
+  width: 132px;
+}
+.fp-strip__item[draggable='true'] {
+  cursor: grab;
+}
+/* Where a dragged slide will land: a bar on the side it will take. */
+.fp-strip__item[data-drop]::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 22px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--fp-ink);
+}
+.fp-strip__item[data-drop='before']::after { left: -6px; }
+.fp-strip__item[data-drop='after']::after { right: -6px; }
+
+.fp-strip__thumb {
+  display: block;
+  overflow: hidden;
+  width: 132px;
+  aspect-ratio: 100 / 62;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: #1c1d21;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+.fp-strip__thumb > * {
+  width: 100%;
+  height: 100%;
+}
+.fp-strip__item[data-current] .fp-strip__thumb {
+  box-shadow: 0 0 0 2px var(--fp-ink);
+}
+.fp-strip__thumb:focus-visible {
+  outline: 2px solid var(--fp-focus);
+  outline-offset: 3px;
+}
+
+.fp-strip__label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--fp-ink-quiet);
+}
+.fp-strip__num {
+  color: var(--fp-ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.fp-strip__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (prefers-reduced-motion: no-preference) {

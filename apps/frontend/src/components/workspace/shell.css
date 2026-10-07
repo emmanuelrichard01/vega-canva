@@ -186,14 +186,22 @@
 /* ---------------------------------------------------------------- pills */
 
 /* A closed column is its header as a pill in that top corner, clear of the
-   ruler, with the board running edge to edge underneath. One elevation: a
-   shadow, no border. */
+   ruler, with the board running edge to edge underneath. A solid surface and
+   one elevation: `--shadow-float`, whose own last layer is the crisp 1px
+   edge (a solid ring under increased contrast). 40px tall, 4px inset all
+   round, so every control in it is a full 32px target and the corner is
+   concentric with theirs (6 + 4). See `BoardColumn`. */
 .board-pill {
   position: absolute;
   top: calc(var(--inset-top) + var(--space-2));
   z-index: 96;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  height: var(--board-pill-h);
   max-width: calc(50vw - var(--space-6));
-  border-radius: var(--radius-lg);
+  padding: var(--space-1);
+  border-radius: calc(var(--radius-md) + var(--space-1));
   background: var(--surface-elevated);
   box-shadow: var(--shadow-float);
   animation: board-pill-in 160ms var(--ease-settle, cubic-bezier(0.16, 1, 0.3, 1));
@@ -202,13 +210,63 @@
 .board-pill--left { left: var(--shell-inset, var(--space-2)); }
 .board-pill--right { right: var(--space-2); }
 
+/* While it narrows in from the panel's width, what does not fit yet is
+   clipped from the edge facing the board. */
+.board-pill[data-morphing] { overflow: hidden; }
+.board-pill--right[data-morphing] { justify-content: flex-end; }
+
 .board-pill .board-head--pill {
-  height: var(--board-pill-h);
-  padding: 0 var(--space-1);
+  flex: none;
+  height: 100%;
+  gap: 2px;
+  padding: 0;
 }
+
+/* Every control in a pill is the full 32px. */
+.board-pill .hdr-home,
+.board-pill .hdr-title,
+.board-pill .hdr-doc__menu,
+.board-pill .hdr-presence,
+.board-pill .hdr-btn--primary {
+  height: var(--control-h-md);
+}
+
+.board-pill .hdr-home { width: var(--control-h-md); }
 
 .board-pill--left .hdr-title {
   max-width: 220px;
+}
+
+.board-pill .hdr-btn--primary {
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+}
+
+.board-pill .zoom-ctl__field { height: var(--control-h-md); }
+
+/* Between the board's own controls and the way back into its panel; between
+   the people and zoom. */
+.board-pill__rule {
+  flex: none;
+  width: 1px;
+  height: 20px;
+  margin: 0 var(--space-1);
+  background: var(--border-divider);
+}
+
+.board-pill .board-pill__toggle {
+  color: var(--text-secondary);
+}
+
+.board-pill .board-pill__toggle:hover {
+  color: var(--text-primary);
+}
+
+/* A peeking panel floats over the board rather than taking its edge: the
+   insets stay as they were, and it sits above the pills' layer. */
+:root[data-surface='board'] .hierarchy-panel[data-peek],
+:root[data-surface='board'] .context-inspector[data-peek] {
+  z-index: 97;
 }
 
 @keyframes board-pill-in {

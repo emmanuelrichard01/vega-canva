@@ -3,9 +3,13 @@ import { useCallback, useEffect, useRef } from 'react';
 // a 26kB gzipped chunk on the board's critical path -- to get one function.
 import throttle from 'lodash/throttle';
 import Konva from 'konva';
-import { doc, updateNode, provider } from '../engine/document';
-import { PhysicsSimulation, type SimTransform } from '../engine/physics/simulation';
+import { doc, updateNode, provider, undoManager } from '../engine/document';
+import { PhysicsSimulation, BODY_BUDGET, type SimTransform } from '../engine/physics/simulation';
 import { type ForceId } from '../engine/physics/forces';
+import { PhysicsSession } from '../engine/physics/session';
+import { physicsSettings, physicsRuntime } from '../engine/physics/settings';
+import { canEditObjects } from '../engine/model/permissions';
+import { notify } from '../engine/ui/notices';
 import { useStore } from './useStore';
 import { engineEvents } from '../engine/EventBus';
 
@@ -87,6 +91,12 @@ const remoteOwnedIds = (): Set<string> => {
  * Yjs merges nested transactions, so each write still goes through the
  * canonical `updateNode` path.
  */
+/**
+ * One session per mode: every settle between the first force and leaving is a
+ * single undo step. See `PhysicsSession`.
+ */
+const session = new PhysicsSession(undoManager);
+
 const commitSettled = (settled: SimTransform[]) => {
   if (settled.length === 0) return;
   doc.transact(() => {
@@ -95,6 +105,19 @@ const commitSettled = (settled: SimTransform[]) => {
     });
   });
 };
+
+/** Said once per burst: the board has more in reach than can move at once. */
+let budgetNoticeAt = 0;
+function announceBudget(sim: PhysicsSimulation) {
+  if (!sim.takeBudgetHit()) return;
+  const now = performance.now();
+  if (now - budgetNoticeAt < 8000) return;
+  budgetNoticeAt = now;
+  notify({
+    message: `Moving the ${BODY_BUDGET} nearest objects. The rest stay where they are.`,
+    tone: 'info',
+  });
+}
 
 export function usePhysics(
   objects: Record<string, any>,
@@ -185,6 +208,9 @@ export function usePhysics(
       }
 
       const { moving, settled, woken } = sim.advance(delta);
+      physicsRuntime.moving = sim.activeCount;
+      physicsRuntime.latched = latched.current !== null;
+      announceBudget(sim);
 
       // Objects set moving by being hit need owning too, or a peer could start
       // simulating the same collision and the two results would fight.
@@ -252,6 +278,8 @@ export function usePhysics(
         frameId = requestAnimationFrame(tick);
       } else {
         running = false;
+        physicsRuntime.moving = 0;
+        physicsRuntime.latched = false;
         /**
          * Flush before parking.
          *
@@ -330,9 +358,16 @@ export function usePhysics(
     (x: number, y: number, mode: ForceId, extra?: { dx?: number; dy?: number; gesture?: number }) => {
       const sim = simRef.current;
       if (!sim) return;
+      // The simulation is local, but what it settles is written to the shared
+      // document. Without edit access there is nothing it could keep.
+      if (!canEditObjects()) return;
+      session.begin();
       const state = useStore.getState();
       const selected = selectedIdsRef?.current ?? [];
+      const { gravityAngle, includeFrames } = physicsSettings.get();
+      sim.setIncludeFrames(includeFrames);
       const woken = sim.applyForce(x, y, mode, {
+        angle: gravityAngle,
         scale: state.forceScale,
         radiusScale: state.forceRadiusScale,
         falloff: state.forceFalloff,
@@ -347,6 +382,7 @@ export function usePhysics(
         gesture: extra?.gesture,
       });
       claimOwnershipAll(woken);
+      announceBudget(sim);
       /**
        * A one-shot force has to start the loop itself.
        *
@@ -403,6 +439,23 @@ export function usePhysics(
   }, []);
 
   applyForceRef.current = applyGlobalForce;
+
+  /**
+   * Leaving the mode settles everything and closes the undo step.
+   *
+   * Watches the store flag the canvas sets for every way of leaving — Done,
+   * Escape, picking another tool — rather than hooking each one. Whatever is
+   * still moving is frozen where it is and committed with the rest, so the
+   * session is exactly one step to undo.
+   */
+  const forceToolActive = useStore((state) => state.forceToolActive);
+  useEffect(() => {
+    if (forceToolActive) return;
+    const sim = simRef.current;
+    if (sim && (sim.activeCount > 0 || latched.current)) calmAll();
+    session.end();
+  }, [forceToolActive, calmAll]);
+  useEffect(() => () => session.end(), []);
 
   const handleThrow = useCallback((id: string, x: number, y: number, vx: number, vy: number) => {
     const sim = simRef.current;
@@ -466,6 +519,15 @@ export function usePhysics(
     held.y = y;
     held.dx += dx;
     held.dy += dy;
+    // Wind is drawn blowing the way the pointer is travelling. Tiny movements
+    // are noise and would make the streaks shiver.
+    if (Math.hypot(dx, dy) > 1.5) {
+      const target = (Math.atan2(dy, dx) * 180) / Math.PI;
+      // Ease toward the target around the short way, so a turn through
+      // 180 degrees does not spin the whole field.
+      const diff = ((target - physicsRuntime.windAngle + 540) % 360) - 180;
+      physicsRuntime.windAngle += diff * 0.35;
+    }
   }, []);
 
   const endHeldForce = useCallback(() => {

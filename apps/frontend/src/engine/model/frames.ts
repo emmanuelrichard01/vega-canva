@@ -28,11 +28,27 @@ export interface Inset {
   left: number;
 }
 
+/** The glyph a preset is shown with; drawn by `FramePresetIcon`. */
+export type FramePresetIcon =
+  | 'desktop'
+  | 'laptop'
+  | 'tablet'
+  | 'phone'
+  | 'slide'
+  | 'square'
+  | 'portrait'
+  | 'story'
+  | 'video'
+  | 'link'
+  | 'page'
+  | 'card';
+
 export interface FramePreset {
   id: string;
   label: string;
   /** For grouping in the picker. */
-  group: 'Screen' | 'Social' | 'Print';
+  group: 'Screen' | 'Slides' | 'Social' | 'Print';
+  icon: FramePresetIcon;
   width: number;
   height: number;
   /**
@@ -64,38 +80,41 @@ function evenInset(value: number): Inset {
  * rather than something that needs a scale factor explained to it.
  */
 export const FRAME_PRESETS: FramePreset[] = [
-  { id: 'desktop', label: 'Desktop', group: 'Screen', width: 1440, height: 1024 },
-  { id: 'desktop-hd', label: 'Desktop HD', group: 'Screen', width: 1920, height: 1080 },
-  { id: 'laptop', label: 'Laptop', group: 'Screen', width: 1280, height: 800 },
-  { id: 'tablet', label: 'Tablet', group: 'Screen', width: 820, height: 1180 },
-  { id: 'phone', label: 'Phone', group: 'Screen', width: 390, height: 844 },
+  { id: 'desktop', label: 'Desktop', group: 'Screen', icon: 'desktop', width: 1440, height: 1024 },
+  { id: 'desktop-hd', label: 'Desktop HD', group: 'Screen', icon: 'desktop', width: 1920, height: 1080 },
+  { id: 'laptop', label: 'Laptop', group: 'Screen', icon: 'laptop', width: 1280, height: 800 },
+  { id: 'tablet', label: 'Tablet', group: 'Screen', icon: 'tablet', width: 820, height: 1180 },
+  { id: 'phone', label: 'Phone', group: 'Screen', icon: 'phone', width: 390, height: 844 },
+  // A projector or a shared screen crops nothing, but a talk recorded for a
+  // feed is cut to fit, so the margin keeps a title off the edge either way.
+  { id: 'slide', label: 'Slide 16:9', group: 'Slides', icon: 'slide', width: 1920, height: 1080, safeArea: evenInset(64) },
+  { id: 'slide-4-3', label: 'Slide 4:3', group: 'Slides', icon: 'slide', width: 1440, height: 1080, safeArea: evenInset(64) },
   // A square post is cropped to 4:5 or 1.91:1 depending on where it is shown,
   // and the grid thumbnail crops it again — 64 units in from every edge is
   // what survives all of that.
-  { id: 'square', label: 'Square post', group: 'Social', width: 1080, height: 1080, safeArea: evenInset(64) },
-  // The story's own interface: the profile row and close button along the top,
-  // the reply bar and share row along the bottom. The sides are clear.
-  { id: 'story', label: 'Story', group: 'Social', width: 1080, height: 1920, safeArea: { top: 250, right: 64, bottom: 320, left: 64 } },
+  { id: 'square', label: 'Square 1:1', group: 'Social', icon: 'square', width: 1080, height: 1080, safeArea: evenInset(64) },
   // 4:5 is the tallest a feed will show uncropped, which is why it is the
   // format anything meant to be *read* in a feed is made at.
-  { id: 'portrait-post', label: 'Portrait post', group: 'Social', width: 1080, height: 1350, safeArea: evenInset(64) },
-  { id: 'slide', label: 'Slide', group: 'Social', width: 1920, height: 1080, safeArea: evenInset(64) },
+  { id: 'portrait-post', label: 'Portrait 4:5', group: 'Social', icon: 'portrait', width: 1080, height: 1350, safeArea: evenInset(64) },
+  // The story's own interface: the profile row and close button along the top,
+  // the reply bar and share row along the bottom. The sides are clear.
+  { id: 'story', label: 'Story 9:16', group: 'Social', icon: 'story', width: 1080, height: 1920, safeArea: { top: 250, right: 64, bottom: 320, left: 64 } },
   // A video thumbnail is shown at a dozen sizes down to about 120 units wide,
   // and the player's own duration chip sits over the bottom-right corner.
-  { id: 'thumbnail', label: 'Video thumbnail', group: 'Social', width: 1280, height: 720, safeArea: evenInset(48) },
+  { id: 'thumbnail', label: 'Video thumbnail', group: 'Social', icon: 'video', width: 1280, height: 720, safeArea: evenInset(48) },
   // The link preview every chat app and social network renders from a page's
   // Open Graph tags. Cropped to 1.91:1 by some and to 2:1 by others, so the
   // inset is what survives the tighter of the two.
-  { id: 'og', label: 'Link preview', group: 'Social', width: 1200, height: 630, safeArea: { top: 40, right: 60, bottom: 40, left: 60 } },
+  { id: 'og', label: 'Link preview', group: 'Social', icon: 'link', width: 1200, height: 630, safeArea: { top: 40, right: 60, bottom: 40, left: 60 } },
   // A quarter-inch at 72dpi: the margin a desktop printer cannot reach, so
   // anything outside it is not printed however the file is prepared.
-  { id: 'a4', label: 'A4', group: 'Print', width: 595, height: 842, safeArea: evenInset(18) },
-  { id: 'letter', label: 'US Letter', group: 'Print', width: 612, height: 792, safeArea: evenInset(18) },
-  { id: 'a3', label: 'A3', group: 'Print', width: 842, height: 1191, safeArea: evenInset(18) },
-  { id: 'a5', label: 'A5', group: 'Print', width: 420, height: 595, safeArea: evenInset(18) },
+  { id: 'a4', label: 'A4', group: 'Print', icon: 'page', width: 595, height: 842, safeArea: evenInset(18) },
+  { id: 'a3', label: 'A3', group: 'Print', icon: 'page', width: 842, height: 1191, safeArea: evenInset(18) },
+  { id: 'letter', label: 'US Letter', group: 'Print', icon: 'page', width: 612, height: 792, safeArea: evenInset(18) },
+  { id: 'a5', label: 'A5', group: 'Print', icon: 'page', width: 420, height: 595, safeArea: evenInset(18) },
   // 3.5 x 2 inches at 72dpi. The inset is a full eighth of an inch, because a
   // card is guillotined rather than printed to its edge and the cut wanders.
-  { id: 'card', label: 'Business card', group: 'Print', width: 252, height: 144, safeArea: evenInset(9) },
+  { id: 'card', label: 'Business card', group: 'Print', icon: 'card', width: 252, height: 144, safeArea: evenInset(9) },
 ];
 
 /**
@@ -166,14 +185,17 @@ export function orientationOf(preset: Pick<FramePreset, 'width' | 'height'>): 'p
  * preset: it has been resized deliberately, and telling somebody their
  * 1439-wide frame is a Desktop would be worse than telling them nothing.
  */
-export function presetMatching(width: number, height: number): FramePreset | undefined {
-  return FRAME_PRESETS.find(
-    (p) =>
-      (p.width === width && p.height === height) || (p.height === width && p.width === height),
-  );
+export function presetMatching(width: number, height: number, hint?: string): FramePreset | undefined {
+  const fits = (p: FramePreset) =>
+    (p.width === width && p.height === height) || (p.height === width && p.width === height);
+  // Two presets can share a size (Desktop HD and Slide 16:9 are both
+  // 1920x1080); the one the frame was made from wins while it still fits.
+  const hinted = hint ? FRAME_PRESETS.find((p) => p.id === hint) : undefined;
+  if (hinted && fits(hinted)) return hinted;
+  return FRAME_PRESETS.find(fits);
 }
 
-export const FRAME_PRESET_GROUPS: FramePreset['group'][] = ['Screen', 'Social', 'Print'];
+export const FRAME_PRESET_GROUPS: FramePreset['group'][] = ['Screen', 'Slides', 'Social', 'Print'];
 
 export function framePreset(id: string | undefined): FramePreset | undefined {
   return FRAME_PRESETS.find((p) => p.id === id);
@@ -213,6 +235,50 @@ export function safeAreaBox(frame: {
   if (width <= 0 || height <= 0) return null;
 
   return { x: frame.x + left, y: frame.y + top, width, height };
+}
+
+// ---------------------------------------------------------------------------
+// Background themes
+// ---------------------------------------------------------------------------
+
+export interface FrameTheme {
+  id: string;
+  label: string;
+  /** Null is no background: the frame is an outline over the board. */
+  fill: string | null;
+}
+
+/**
+ * The backgrounds a frame is offered, as Notion offers page colours: white,
+ * a few quiet tints that keep any content legible, a dark page for slides,
+ * and none. A free colour is still one click away in the Fill section; these
+ * are the ones worth a swatch.
+ */
+export const FRAME_THEMES: readonly FrameTheme[] = [
+  { id: 'white', label: 'White', fill: '#FFFFFF' },
+  { id: 'paper', label: 'Paper', fill: '#FAF7F2' },
+  { id: 'grey', label: 'Grey', fill: '#F1F2F4' },
+  { id: 'blue', label: 'Blue', fill: '#EDF3FE' },
+  { id: 'green', label: 'Green', fill: '#ECF7EF' },
+  { id: 'yellow', label: 'Yellow', fill: '#FDF6E3' },
+  { id: 'rose', label: 'Rose', fill: '#FCEEF2' },
+  { id: 'violet', label: 'Violet', fill: '#F3F0FD' },
+  { id: 'night', label: 'Night', fill: '#1E2027' },
+  { id: 'none', label: 'None', fill: null },
+];
+
+/** The theme a frame's background matches, or undefined for any other fill. */
+export function frameThemeOf(fill: ReadonlyArray<{ type: string; color?: string; opacity?: number }> | undefined): FrameTheme | undefined {
+  const visible = (fill ?? []).filter((f) => f.type !== 'solid' || (f.opacity ?? 1) > 0);
+  if (visible.length === 0) return FRAME_THEMES.find((t) => t.fill === null);
+  if (visible.length !== 1 || visible[0].type !== 'solid') return undefined;
+  const color = (visible[0].color ?? '').toUpperCase();
+  return FRAME_THEMES.find((t) => t.fill?.toUpperCase() === color);
+}
+
+/** The `appearance.fill` a theme writes. */
+export function frameThemeFill(theme: FrameTheme): Array<{ type: 'solid'; color: string; opacity: number }> {
+  return theme.fill ? [{ type: 'solid', color: theme.fill, opacity: 1 }] : [];
 }
 
 /** Size of a frame drawn by a click rather than a drag, with no preset armed. */
@@ -498,14 +564,58 @@ export function hugBox(
 // ---------------------------------------------------------------------------
 
 /**
- * Frames in the order a presentation walks them: reading order.
+ * Frames in the order a presentation walks them.
  *
- * Frames whose vertical extents overlap by at least half the shorter one share
- * a row; rows run top to bottom and each row left to right. That is the order
- * people lay slides out in on a board, so nobody has to number them. Ties
- * break by id, so every client presents the same sequence.
+ * Reading order by default: frames whose vertical extents overlap by at least
+ * half the shorter one share a row; rows run top to bottom and each row left
+ * to right. That is the order people lay slides out in on a board, so nobody
+ * has to number them.
+ *
+ * Once somebody reorders the slides by hand, each frame carries a
+ * `slideOrder` and those frames come first in that order; a frame added
+ * afterwards has none and joins the end, in reading order, until it is placed.
+ * Ties break by reading position and then id, so every client presents the
+ * same sequence even when two people reorder at once.
  */
 export function presentationOrder<
+  T extends { id: string; x: number; y: number; width: number; height: number; slideOrder?: number },
+>(frames: readonly T[]): T[] {
+  const reading = readingOrder(frames);
+  if (!frames.some((f) => typeof f.slideOrder === 'number')) return reading;
+  const position = new Map(reading.map((f, i) => [f.id, i]));
+  const rank = (f: T) => (typeof f.slideOrder === 'number' && Number.isFinite(f.slideOrder) ? f.slideOrder : Infinity);
+  return [...frames].sort((a, b) => {
+    const ra = rank(a);
+    const rb = rank(b);
+    if (ra !== rb) return ra < rb ? -1 : 1;
+    return position.get(a.id)! - position.get(b.id)!;
+  });
+}
+
+/**
+ * The `slideOrder` writes that put `ids` in this order, numbering every slide
+ * so the sequence is fully stated and a later frame cannot slip in between.
+ * Frames already at their number are left out, so a move touches only what moved.
+ */
+export function slideOrderPatches(
+  ids: readonly string[],
+  current: ReadonlyMap<string, number | undefined>
+): Array<{ id: string; changes: { slideOrder: number } }> {
+  return ids
+    .map((id, i) => ({ id, changes: { slideOrder: i } }))
+    .filter(({ id, changes }) => current.get(id) !== changes.slideOrder);
+}
+
+/** `ids` with the item at `from` moved to `to`. */
+export function moveSlide<T>(ids: readonly T[], from: number, to: number): T[] {
+  const next = [...ids];
+  if (from < 0 || from >= next.length) return next;
+  const [item] = next.splice(from, 1);
+  next.splice(Math.max(0, Math.min(next.length, to)), 0, item);
+  return next;
+}
+
+function readingOrder<
   T extends { id: string; x: number; y: number; width: number; height: number },
 >(frames: readonly T[]): T[] {
   const byTop = [...frames].sort((a, b) => a.y - b.y || a.x - b.x || (a.id < b.id ? -1 : 1));

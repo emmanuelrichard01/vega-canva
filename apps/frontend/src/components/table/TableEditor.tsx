@@ -10,7 +10,10 @@ import { textEditing } from '../../engine/interaction/textEditing';
 import { undoManager } from '../../engine/document';
 import { canEditObjects, subscribeRoomRole } from '../../engine/model/permissions';
 import { collaboratorStore } from '../../engine/presence/collaboratorStore';
-import { createChartFromTableRange } from '../../engine/chart/chartFromTable';
+import type { TableRange } from '../../engine/chart/chartFromTable';
+import { ChartThisPreview } from '../data/ChartThisPreview';
+import { takeRangeSelection } from '../data/linkSignals';
+import '../data/data.css';
 import { layoutTable, rowAtY, safeHref, type TableCellBox } from '../../engine/table/tableLayout';
 import { checkboxHit, ratingHit } from '../../engine/table/tablePaint';
 import { paintMeasure, tableMeasure } from '../../engine/table/tableMeasure';
@@ -1115,18 +1118,33 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void; readOnly: boolean
     focusSink.current();
   };
 
-  /** A chart of the selection, beside the table, following it. */
+  /** The range a chart is being previewed for; the board adds nothing until it is confirmed. */
+  const [chartAsk, setChartAsk] = React.useState<TableRange | null>(null);
+
+  /** Ask about a chart of the selection: shown first, added beside the table once confirmed. */
   const chartSelection = (range: SheetRange) => {
     const s = liveSpec();
     const order = M.viewRows(s);
     const stored = span(range.r0, range.r1).map((vr) => order[vr]).filter((r) => r !== undefined);
+    if (stored.length === 0) return;
     let r0 = Math.min(...stored);
     const r1 = Math.max(...stored);
     // The header names the series, so it comes along even when only data was selected.
     if (s.header && r0 > 0) r0 = 0;
-    const id = createChartFromTableRange(node.id, { r0, c0: range.c0, r1: Math.max(r1, r0 + 1), c1: range.c1 });
-    say(id ? 'Chart added beside the table — it follows these cells' : 'Select cells with numbers to chart them');
+    setChartAsk({ r0, c0: range.c0, r1: Math.max(r1, r0 + 1), c1: range.c1 });
   };
+
+  // A range asked for from outside (a link line, the panel) is selected as the editor opens.
+  React.useEffect(() => {
+    const asked = takeRangeSelection(node.id);
+    if (!asked) return;
+    const order = M.viewRows(liveSpec());
+    const shown = (stored: number) => Math.max(0, order.indexOf(stored));
+    sheet.place({ r: shown(asked.r0), c: asked.c0 });
+    sheet.select({ r: shown(asked.r1), c: asked.c1 }, true);
+    // Once, on open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [node.id]);
 
   // ---- the grid's handlers, stable for the memoised cells --------------------
 
@@ -1978,6 +1996,28 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void; readOnly: boolean
               <span className="tbled-fxbar__doc">Enter commits · Esc cancels · another table: ='Title'!B2:B9</span>
             )}
           </div>
+        </div>
+      )}
+
+      {chartAsk && (
+        <div
+          className="tbled-chartask"
+          style={{
+            left: Math.max(8, Math.min(left, window.innerWidth - 320)),
+            top: Math.max(8, Math.min(top + 8, window.innerHeight - 460)),
+          }}
+          {...portal}
+        >
+          <ChartThisPreview
+            tableId={node.id}
+            table={liveSpec()}
+            range={chartAsk}
+            onDone={(id) => {
+              setChartAsk(null);
+              if (id) say('Chart added beside the table — it follows these cells');
+              focusSink.current();
+            }}
+          />
         </div>
       )}
 

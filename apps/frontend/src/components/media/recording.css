@@ -1,0 +1,114 @@
+/* ---------------------------------------------------------------------------
+   RECORDING HUD additions — components/media/RecordingHud.tsx
+
+   The panel itself is `.rec-hud-panel` (index.css). These are the parts the
+   timed, transcribing recorder adds: the cap beside the clock, a hairline
+   filling towards the cap along the panel's foot, the transcription toggle,
+   and the live caption above the panel.
+   --------------------------------------------------------------------------- */
+
+/* As wide as its contents, whatever room the board leaves beside its centre:
+   the panel clips its own pill, so it must never be narrower than its row. */
+.rec-hud--timed {
+  width: max-content;
+}
+
+/* The hairline is positioned against the panel and clipped by its pill. */
+.rec-hud-panel--timed {
+  position: relative;
+  overflow: hidden;
+}
+
+.rec-hud-cap {
+  font-weight: var(--weight-medium);
+  color: var(--text-tertiary);
+}
+
+/* Wide enough for "0:00 / 5:00" without jogging as digits change. */
+.rec-hud-panel--timed .rec-hud-elapsed {
+  min-width: 84px;
+}
+
+.rec-hud-progress {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 0;
+  height: 2px;
+  pointer-events: none;
+}
+
+.rec-hud-progress__fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 1px;
+  background: var(--text-tertiary);
+  opacity: 0.55;
+  transform-origin: left center;
+  transition: transform 200ms linear;
+}
+
+/* The last thirty seconds take the countdown's colour, so the line and the
+   words say the same thing. */
+.rec-hud-progress__fill[data-near] {
+  background: var(--status-danger);
+  opacity: 1;
+}
+
+.rec-hud-transcribe[aria-pressed='true'] {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.rec-hud-transcribe:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rec-hud-transcribe:disabled:hover {
+  background: transparent;
+  color: var(--text-tertiary);
+}
+
+/* The live caption: one line, the newest words, on the same surface as the
+   panel so it reads as part of the recorder rather than as a toast. */
+.rec-caption {
+  max-width: min(440px, calc(100vw - 32px));
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rec-caption__wait {
+  color: var(--text-tertiary);
+}
+
+.rec-caption--error {
+  color: var(--status-warning);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rec-hud-progress__fill {
+    transition: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .rec-hud-progress__fill {
+    opacity: 1;
+    background: var(--text-primary);
+  }
+  .rec-caption {
+    outline: 1px solid var(--border-strong);
+  }
+}

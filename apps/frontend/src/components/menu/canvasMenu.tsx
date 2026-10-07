@@ -26,6 +26,7 @@ import {
   FlipVertical2,
   Focus,
   Group,
+  History,
   ImageDown,
   ImageOff,
   ImagePlus,
@@ -37,6 +38,7 @@ import {
   UnfoldVertical,
   ExternalLink,
   Palette,
+  SunMoon,
   PencilLine,
   Play,
   RotateCw,
@@ -105,6 +107,7 @@ import { requestPresentation, resizeFramesToFit } from '../canvas/useContentShor
 import { applyOrganiseStickies } from '../../engine/tools/organiseStickies';
 import type { FrameNode } from '../../engine/model/schema';
 import { SHORTCUTS } from './shortcuts';
+import { requestObjectHistory } from '../../engine/history/objectHistory';
 
 /**
  * Every command the board offers on a selection, as one list.
@@ -253,21 +256,35 @@ function codeEntries(node: CodeNode, a: CanvasContextMenuActions): MenuEntry[] {
       label: 'Theme',
       icon: <Palette size={I} />,
       detail: CODE_THEMES[code.theme].label,
-      entries: CODE_THEME_IDS.map((id) => ({
-        kind: 'item' as const,
-        id: `theme-${id}`,
-        label: CODE_THEMES[id].label,
-        icon: (
-          <span
-            className="menu__swatch"
-            aria-hidden="true"
-            style={{ background: `linear-gradient(135deg, ${CODE_THEMES[id].background} 50%, ${CODE_THEMES[id].tokens.keyword} 50%)` }}
-          />
-        ),
-        checked: code.theme === id,
-        onSelect: () => updateCode(node, { theme: id }),
-      })),
+      entries: [
+        ...CODE_THEME_IDS.map((id) => ({
+          kind: 'item' as const,
+          id: `theme-${id}`,
+          label: CODE_THEMES[id].label,
+          icon: (
+            <span
+              className="menu__swatch"
+              aria-hidden="true"
+              style={{ background: `linear-gradient(135deg, ${CODE_THEMES[id].background} 50%, ${CODE_THEMES[id].tokens.keyword} 50%)` }}
+            />
+          ),
+          checked: code.theme === id && !code.followBoard,
+          onSelect: () => updateCode(node, { theme: id, followBoard: undefined }),
+        })),
+        { kind: 'separator' as const, id: 'theme-sep' },
+        {
+          kind: 'item' as const,
+          id: 'theme-match-board',
+          label: 'Match board',
+          icon: <SunMoon size={I} />,
+          detail: 'Light on a light board, dark on a dark one',
+          checked: Boolean(code.followBoard),
+          keepOpen: true,
+          onSelect: () => updateCode(node, { followBoard: code.followBoard ? undefined : true }),
+        },
+      ],
     },
+
     {
       kind: 'item',
       id: 'code-wrap',
@@ -713,6 +730,7 @@ export function selectionMenu(input: CanvasMenuInput): MenuEntry[] {
     },
     { kind: 'item', id: 'zoom-selection', label: 'Zoom to selection', icon: <Focus size={I} />, shortcut: SHORTCUTS.zoomSelection, onSelect: a.zoomToSelection },
     single && { kind: 'item', id: 'comment', label: 'Comment', icon: <MessageSquarePlus size={I} />, onSelect: a.comment },
+    single && { kind: 'item', id: 'history', label: 'Show history', icon: <History size={I} />, onSelect: () => requestObjectHistory(single.id) },
   ].filter(Boolean) as MenuEntry[];
 
   const out: MenuEntry[] = [

@@ -5,7 +5,12 @@ import { setBoardMetadata } from '../../../engine/document';
 import { isCssColor } from '../../../engine/text/cssColor';
 import { canEditObjects } from '../../../engine/model/permissions';
 import { BOARD_BACKGROUND_KEY, useBoardBackground } from '../../canvas/boardBackground';
-import { ColorChip, Note, Row, Section } from '../grammar';
+import { ColorChip, Note, Row, Section, SegmentedControl } from '../grammar';
+import { CleanLookGlyph, SketchLevelIcon } from '../sketchIcons';
+import { SKETCH_LEVELS } from '../../../engine/model/rough';
+import { setBoardSketch, useBoardSketch } from '../../../engine/model/roughBoard';
+import { SKETCH_LEVEL_LABELS, SKETCH_LOOK_LABELS } from '../../../engine/model/shadingLabels';
+import type { SketchLevel } from '../../../engine/model/schema';
 import { colorUses, textStyles, type ColorUse, type TextStyleUse } from '../selectionColors';
 import { shortFont } from '../panelHelpers';
 import type { AnyNode } from '../../../engine/model/schema';
@@ -63,6 +68,7 @@ function useBoardSummary(): { colours: ColorUse[]; styles: TextStyleUse[]; count
 export const BoardSection: React.FC = () => {
   const { colours, styles, count } = useBoardSummary();
   const background = useBoardBackground();
+  const boardSketch = useBoardSketch();
   const dark = useStore((s) => s.darkTheme);
   const canEdit = canEditObjects();
   const themeCanvas = dark ? THEME_CANVAS.dark : THEME_CANVAS.light;
@@ -93,6 +99,26 @@ export const BoardSection: React.FC = () => {
               <RotateCcw size={13} aria-hidden="true" />
             </button>
           )}
+        </Row>
+      </Section>
+
+      <Section id="board-sketch" title="Sketch" subject="board">
+        <Row label="Look" hint="How hand-drawn the board is. Objects follow it unless they are set apart.">
+          <SegmentedControl
+            ariaLabel="Board sketch"
+            fill
+            value={boardSketch ?? 'clean'}
+            disabledReason={canEdit ? undefined : 'Only editors can change the board'}
+            onChange={(v) => canEdit && setBoardSketch(v === 'clean' ? null : (v as SketchLevel))}
+            segments={[
+              { value: 'clean', label: SKETCH_LOOK_LABELS.clean, icon: <CleanLookGlyph /> },
+              ...SKETCH_LEVELS.map((id) => ({
+                value: id,
+                label: SKETCH_LEVEL_LABELS[id],
+                icon: <SketchLevelIcon level={id} />,
+              })),
+            ]}
+          />
         </Row>
       </Section>
 

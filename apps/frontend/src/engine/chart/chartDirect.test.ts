@@ -144,6 +144,15 @@ describe('drag to set a value', () => {
     expect(dragBlockedReason(defaultChartSpec('stackedBar100'))).not.toBeNull();
     expect(dragBlockedReason(spec)).toBeNull();
   });
+
+  it('offers a linked chart its handles only when the drop will write the table', () => {
+    const linked = { ...spec, link: { tableId: 't', r0: 0, c0: 0, r1: 1, c1: 1 } };
+    expect(valueHandles(layout, linked)).toEqual([]);
+    expect(valueHandles(layout, linked, true).length).toBe(spec.series[0].values.length);
+    expect(dragBlockedReason(linked, true)).toBeNull();
+    // Everything else that blocks a drag still does.
+    expect(dragBlockedReason({ ...linked, sort: 'valueDesc' }, true)).not.toBeNull();
+  });
 });
 
 describe('morph between kinds', () => {

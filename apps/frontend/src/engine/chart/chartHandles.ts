@@ -39,9 +39,15 @@ const DRAGGABLE: ReadonlySet<ChartKind> = new Set<ChartKind>([
   'funnel',
 ]);
 
-/** Whether this chart's values can be set by dragging, and if not, why. */
-export function dragBlockedReason(spec: ChartSpec): string | null {
-  if (spec.link) return 'Values come from the linked table';
+/**
+ * Whether this chart's values can be set by dragging, and if not, why.
+ *
+ * A linked chart's values belong to its table. Dragging one is offered only
+ * when `writeBack` says the drop will ask to write the cell (editors), so
+ * anyone else sees no handle at all.
+ */
+export function dragBlockedReason(spec: ChartSpec, writeBack = false): string | null {
+  if (spec.link && !writeBack) return 'Values come from the linked table';
   if (spec.dataSource?.url) return 'Values come from the connected source';
   if (!DRAGGABLE.has(spec.kind) || isPercentStacked(spec.kind) || isSampleKind(spec.kind)) return 'This kind is not set by dragging';
   if (spec.yScale === 'log') return 'Log axes are not set by dragging';
@@ -50,8 +56,8 @@ export function dragBlockedReason(spec: ChartSpec): string | null {
   return null;
 }
 
-export function valueHandles(layout: ChartLayout, spec: ChartSpec): ValueHandle[] {
-  if (dragBlockedReason(spec)) return [];
+export function valueHandles(layout: ChartLayout, spec: ChartSpec, writeBack = false): ValueHandle[] {
+  if (dragBlockedReason(spec, writeBack)) return [];
   const rightSeries = new Set(spec.series.map((s, i) => (s.axis === 'right' ? i : -1)).filter((i) => i >= 0));
   const domainOf = (si: number) => (rightSeries.has(si) && layout.rightDomain ? layout.rightDomain : layout.domain);
   const transposed = layout.categoryAxis === 'y';

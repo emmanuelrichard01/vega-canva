@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { drawSettings } from '../../engine/tools/drawSettings';
+import { AnimatePresence, motion } from 'framer-motion';
+import { drawSettings, HIGHLIGHT_SWATCHES, INK_SWATCHES } from '../../engine/tools/drawSettings';
 import type { Brush } from '../../engine/tools/brushes';
 import { shortcutFor } from '../../engine/tools/shortcuts';
 import type { PencilNib } from '../../engine/model/rough';
 import { THEMES } from '../../engine/model/stickyThemes';
 import { useStore } from '../../hooks/useStore';
-import { DrawTray } from '../tools/draw/DrawTray';
 import { EraserTray } from '../tools/draw/EraserTray';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { Slider } from '../ui/Slider';
@@ -21,11 +21,13 @@ import {
   StickyGlyph,
   VectorPenGlyph,
 } from './glyphs';
+import { trayLayout, trayVars } from './flyoutScale';
 import { TRAY_GLYPH_QUERY, useMediaQuery, useThemeInk } from './useDockEnv';
 import './dock.css';
 
 /**
- * The drawing tray: the Draw seat's tools as physical objects, and an ink well.
+ * The drawing tray: the Draw seat's tools as physical objects, an ink well,
+ * and the options for the tool in hand.
  *
  * It rises above the dock while the Draw seat is armed or its menu is open,
  * and nowhere else; every other surface keeps the crisp glyphs. The tools sit
@@ -37,11 +39,20 @@ import './dock.css';
  * Below 900px wide the art gives way to glyphs; under increased contrast the
  * art goes flat with solid edges (see `art/toolArt.css`).
  *
- * The ink well beside the rack belongs to the tool in hand:
- * - a brush, or nothing yet: `DrawTray`'s inks and shape snapping, the width,
- *   and the brush's settings;
- * - the eraser: `EraserTray`'s mode and the eraser's width;
+ * ## One width, whatever is in hand
+ *
+ * The tray is two rows inside a fixed width from the flyout scale (see
+ * `trayLayout`): the rack and the ink well on top, which never change, and
+ * below them a row of fixed height holding the options for the tool in hand.
+ * Switching tools cross-fades that row and moves no edge.
+ *
+ * - a brush, or nothing armed yet: its size, shape snapping, and the brush's
+ *   settings;
+ * - the eraser: its size and its mode;
  * - the vector pen: its stroke weight.
+ *
+ * The well shows the inks of the brush the seat picks up. Choosing one while
+ * the eraser or the vector pen is in hand picks that brush back up with it.
  */
 
 type RackId = TrayToolArt;
@@ -120,6 +131,65 @@ const WidthDots: React.FC<{
   );
 };
 
+/**
+ * The ink well: the theme's ink and five colours for the pen and marker, or
+ * five light hues for the highlighter. A row of fixed width whose swatches
+ * spread to its edges, so either set sits on the same two lines.
+ */
+const InkWell: React.FC<{
+  brush: Brush;
+  ink: string;
+  themeInk: string;
+  highlight: string;
+  onPick: (patch: { ink?: string | null; highlight?: string }) => void;
+}> = ({ brush, ink, themeInk, highlight, onPick }) => {
+  const highlighting = brush === 'highlighter';
+  const swatches = highlighting ? HIGHLIGHT_SWATCHES : [{ color: themeInk, name: 'Ink' }, ...INK_SWATCHES];
+  const current = (highlighting ? highlight : ink).toLowerCase();
+  const onKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button'));
+    const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    if (at < 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    buttons[(at + (e.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+  };
+  const anyChosen = swatches.some((s) => s.color.toLowerCase() === current);
+  return (
+    <div
+      className="dock-ink"
+      role="radiogroup"
+      aria-label={highlighting ? 'Highlighter colour' : 'Ink colour'}
+      onKeyDown={onKey}
+    >
+      {swatches.map((s, i) => {
+        const selected = s.color.toLowerCase() === current;
+        return (
+          <button
+            key={s.name}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            aria-label={s.name}
+            data-tooltip={s.name}
+            tabIndex={selected || (!anyChosen && i === 0) ? 0 : -1}
+            className="dock-ink__swatch"
+            onClick={() =>
+              onPick(highlighting ? { highlight: s.color } : { ink: s.color === themeInk ? null : s.color })
+            }
+          >
+            <span className="dock-ink__chip" style={{ background: s.color }} />
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
+/** What the options row is showing. */
+type OptionsMode = 'brush' | 'eraser' | 'vector';
+
 export interface DrawingTrayProps {
   activeToolId: string;
   /** Arm a tool, as the dock does. */
@@ -133,6 +203,7 @@ export interface DrawingTrayProps {
 export const DrawingTray: React.FC<DrawingTrayProps> = ({ activeToolId, onArm, onStickyPointerDown, stickyCarryEnded }) => {
   const themeInk = useThemeInk();
   const glyphs = useMediaQuery(TRAY_GLYPH_QUERY);
+  const layout = trayLayout(glyphs ? 'glyph' : 'art');
   const settings = useSyncExternalStore(drawSettings.subscribe, drawSettings.get, drawSettings.get);
   const stickyTheme = useStore((s) => s.stickyTheme);
   const penSize = useStore((s) => s.penSize);
@@ -156,11 +227,18 @@ export const DrawingTray: React.FC<DrawingTrayProps> = ({ activeToolId, onArm, o
     : activeToolId === 'eraser' ? 'eraser'
     : activeToolId === 'bezier-pen' ? 'vector'
     : null;
+  const mode: OptionsMode = armedId === 'eraser' ? 'eraser' : armedId === 'vector' ? 'vector' : 'brush';
 
   const arm = (tool: RackTool) => {
     if (tool.id === 'sticky' && stickyCarryEnded?.()) return;
     if (tool.brush) drawSettings.set({ brush: tool.brush });
     onArm(tool.toolId);
+  };
+
+  /** An ink is a request for the brush that draws it. */
+  const pickInk = (patch: { ink?: string | null; highlight?: string }) => {
+    drawSettings.set(patch);
+    if (activeToolId !== 'pen') onArm('pen');
   };
 
   // Left and Right walk the rack, the way they walk the dock.
@@ -204,30 +282,43 @@ export const DrawingTray: React.FC<DrawingTrayProps> = ({ activeToolId, onArm, o
     };
   }, [settingsOpen]);
   useEffect(() => {
-    if (armedId === 'eraser' || armedId === 'vector') setSettingsOpen(false);
-  }, [armedId]);
+    if (mode !== 'brush') setSettingsOpen(false);
+  }, [mode]);
 
-  let well: React.ReactNode;
-  if (armedId === 'eraser') {
-    well = (
+  const highlighting = settings.brush === 'highlighter';
+  let options: React.ReactNode;
+  if (mode === 'eraser') {
+    options = (
       <>
-        <EraserTray />
-        <span className="dock-rule" aria-hidden="true" />
         <WidthDots label="Eraser size" values={[10, 20, 40, 80]} dots={[4, 7, 10, 14]} value={eraserSize} onChange={setEraserSize} />
+        <span className="dock-rule" aria-hidden="true" />
+        <EraserTray />
       </>
     );
-  } else if (armedId === 'vector') {
-    well = (
-      <WidthDots label="Weight" values={[1, 2, 4, 8]} dots={[2, 4, 6, 9]} value={penStrokeWidth} onChange={setPenStrokeWidth} />
+  } else if (mode === 'vector') {
+    options = (
+      <>
+        <WidthDots label="Weight" values={[1, 2, 4, 8]} dots={[2, 4, 6, 9]} value={penStrokeWidth} onChange={setPenStrokeWidth} />
+        <span className="dock-rule" aria-hidden="true" />
+        <span className="dock-tray__hint">Click for corners, drag for curves</span>
+      </>
     );
   } else {
-    well = (
+    options = (
       <>
-        <div className="dock-tray__ink">
-          <DrawTray themeInk={themeInk} />
-        </div>
-        <span className="dock-rule" aria-hidden="true" />
         <WidthDots label="Size" values={[2, 6, 12, 24]} dots={[3, 5, 8, 12]} value={penSize} onChange={setPenSize} />
+        <span className="dock-rule" aria-hidden="true" />
+        <Switch
+          checked={settings.recognizeShapes && !highlighting}
+          onChange={(checked) => drawSettings.set({ recognizeShapes: checked })}
+          label="Snap to shapes"
+          disabled={highlighting}
+          tooltip={
+            highlighting
+              ? 'The highlighter always draws freehand'
+              : 'Hold still at the end of a stroke to turn it into a clean line, arrow, circle or box'
+          }
+        />
         <button
           ref={settingsBtnRef}
           type="button"
@@ -249,39 +340,67 @@ export const DrawingTray: React.FC<DrawingTrayProps> = ({ activeToolId, onArm, o
     <div
       className="dock-tray__inner"
       data-mode={glyphs ? 'glyph' : 'art'}
-      style={{ '--ink': ink, '--hl': settings.highlight, '--note': note } as React.CSSProperties}
+      data-size={layout.size}
+      style={{ ...trayVars(layout), '--ink': ink, '--hl': settings.highlight, '--note': note } as React.CSSProperties}
     >
-      <div className="dock-tray__rack" role="radiogroup" aria-label="Drawing tool" onKeyDown={onRackKey}>
-        {RACK.map((tool, i) => {
-          const armed = armedId === tool.id;
-          // `N` arms the pen tool with the brush held last, so its keycap sits
-          // on that brush; the others carry their own key.
-          const key = tool.brush ? (tool.brush === settings.brush ? shortcutFor('pen') : undefined) : shortcutFor(tool.toolId);
-          const Art = TOOL_ART[tool.id];
-          const focusable = armedId ? armed : i === 0;
-          return (
-            <button
-              key={tool.id}
-              type="button"
-              role="radio"
-              aria-checked={armed}
-              aria-label={`${tool.label}. ${tool.description}`}
-              data-tooltip={key ? `${tool.label} (${key})` : tool.label}
-              data-tooltip-desc={tool.description}
-              data-tool={tool.id}
-              tabIndex={focusable ? 0 : -1}
-              className={glyphs ? `btn-icon dock-tray__tool${armed ? ' active' : ''}` : 'dock-tray__tool'}
-              onClick={() => arm(tool)}
-              onPointerDown={tool.id === 'sticky' ? onStickyPointerDown : undefined}
-            >
-              {glyphs ? rackGlyph(tool.id, ink, settings.highlight) : <Art />}
-            </button>
-          );
-        })}
-        {!glyphs && <span className="dock-tray__lip" aria-hidden="true" />}
+      <div className="dock-tray__top">
+        <div className="dock-tray__rack" role="radiogroup" aria-label="Drawing tool" onKeyDown={onRackKey}>
+          {RACK.map((tool, i) => {
+            const armed = armedId === tool.id;
+            // `N` arms the pen tool with the brush held last, so its keycap sits
+            // on that brush; the others carry their own key.
+            const key = tool.brush ? (tool.brush === settings.brush ? shortcutFor('pen') : undefined) : shortcutFor(tool.toolId);
+            const Art = TOOL_ART[tool.id];
+            const focusable = armedId ? armed : i === 0;
+            return (
+              <button
+                key={tool.id}
+                type="button"
+                role="radio"
+                aria-checked={armed}
+                aria-label={`${tool.label}. ${tool.description}`}
+                data-tooltip={key ? `${tool.label} (${key})` : tool.label}
+                data-tooltip-desc={tool.description}
+                data-tool={tool.id}
+                tabIndex={focusable ? 0 : -1}
+                className={glyphs ? `btn-icon dock-tray__tool${armed ? ' active' : ''}` : 'dock-tray__tool'}
+                onClick={() => arm(tool)}
+                onPointerDown={tool.id === 'sticky' ? onStickyPointerDown : undefined}
+              >
+                {glyphs ? rackGlyph(tool.id, ink, settings.highlight) : <Art />}
+              </button>
+            );
+          })}
+          {!glyphs && <span className="dock-tray__lip" aria-hidden="true" />}
+        </div>
+        <span className="dock-rule dock-tray__rule" aria-hidden="true" />
+        <div className="dock-tray__well">
+          <InkWell
+            brush={settings.brush}
+            ink={ink}
+            themeInk={themeInk}
+            highlight={settings.highlight}
+            onPick={pickInk}
+          />
+        </div>
       </div>
-      <span className="dock-rule dock-tray__rule" aria-hidden="true" />
-      <div className="dock-tray__well">{well}</div>
+
+      {/* Fixed height; the options for each tool cross-fade in place. */}
+      <div className="dock-tray__options" role="group" aria-label={mode === 'eraser' ? 'Eraser size and mode' : mode === 'vector' ? 'Vector pen weight' : 'Brush size and snapping'}>
+        <AnimatePresence initial={false}>
+          <motion.div
+            key={mode}
+            className="dock-tray__options-set"
+            data-set={mode}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
+          >
+            {options}
+          </motion.div>
+        </AnimatePresence>
+      </div>
 
       {settingsOpen && (
         <div ref={settingsRef} className="panel-surface dock-tray__settings" role="dialog" aria-label="Brush settings" data-tooltip-surface="">

@@ -1,9 +1,13 @@
 import React, { useEffect, useState, useSyncExternalStore } from 'react';
-import { Radio, X } from 'lucide-react';
+import { Radio } from 'lucide-react';
 import { followMode } from '../engine/presence/followMode';
 import { presenceManager } from '../engine/presence/PresenceManager';
 import { useCollaborators } from '../engine/presence/useCollaborators';
-import { activeSpotlight, describeAudience, followersOf } from '../engine/presence/spotlight';
+import { activeSpotlight, describeAudience, followersOf, offerToShow } from '../engine/presence/spotlight';
+import { announceLocalPing, isPingGesture } from '../engine/presence/ping';
+import { useFollowLink } from '../engine/presence/useFollowLink';
+import { cameraSystem } from '../engine/CameraSystem';
+import { PingLayer } from './PingLayer';
 import { chipColorsFor } from '../engine/cursor/remoteCursor';
 import { provider } from '../engine/document';
 
@@ -47,8 +51,34 @@ export const PresenceStage: React.FC = () => {
   const [dismissed, setDismissed] = useState<number | null>(null);
 
   const followers = followersOf(collaborators, me);
-  const invite = activeSpotlight(collaborators, Date.now(), followingId);
-  const showInvite = invite && invite.spotlightAt !== dismissed ? invite : null;
+  const showInvite = offerToShow(activeSpotlight(collaborators, Date.now(), followingId), dismissed);
+
+  useFollowLink();
+
+  // Shift + Alt + click on the board pings that spot for everyone. It listens
+  // for the release and ignores a drag, so the marquee and the other
+  // Shift/Alt drags keep working exactly as they did.
+  useEffect(() => {
+    let down: { x: number; y: number; shift: boolean; alt: boolean; onBoard: boolean } | null = null;
+    const onDown = (e: PointerEvent) => {
+      const onBoard = e.target instanceof Element && Boolean(e.target.closest('.canvas-container'));
+      down = { x: e.clientX, y: e.clientY, shift: e.shiftKey, alt: e.altKey, onBoard };
+    };
+    const onUp = (e: PointerEvent) => {
+      const start = down;
+      down = null;
+      if (!start?.onBoard) return;
+      if (!isPingGesture(start, { x: e.clientX, y: e.clientY, shift: e.shiftKey, alt: e.altKey })) return;
+      const world = cameraSystem.screenToWorld(e.clientX, e.clientY);
+      if (presenceManager.ping(world.x, world.y)) announceLocalPing(world);
+    };
+    window.addEventListener('pointerdown', onDown, true);
+    window.addEventListener('pointerup', onUp, true);
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('pointerup', onUp, true);
+    };
+  }, []);
 
   // An offer with nobody left to hear it is not an offer. Someone who raises a
   // spotlight and is still "showing" after the last person has gone is being
@@ -59,6 +89,7 @@ export const PresenceStage: React.FC = () => {
 
   return (
     <>
+      <PingLayer />
       {/*
         * Your audience.
         *
@@ -121,10 +152,10 @@ export const PresenceStage: React.FC = () => {
         <div className="stage-invite panel-surface" role="status" style={{ ['--person' as string]: showInvite.color }}>
           <span className="stage-invite__pulse" aria-hidden />
           <span className="stage-invite__label">
-            <strong>{showInvite.name}</strong> is showing something
+            <strong>{showInvite.name}</strong> is presenting
           </span>
           <button type="button" className="stage-invite__go" onClick={() => followMode.start(showInvite.clientId)}>
-            Take a look
+            Follow
           </button>
           <button
             type="button"
@@ -132,7 +163,7 @@ export const PresenceStage: React.FC = () => {
             aria-label={`Dismiss. Stay where you are`}
             onClick={() => setDismissed(showInvite.spotlightAt)}
           >
-            <X size={14} aria-hidden />
+            Dismiss
           </button>
         </div>
       )}

@@ -6,6 +6,7 @@ import { finishCreation } from './toolModes';
 import { useStore } from '../../hooks/useStore';
 import { DEFAULT_FRAME, frameBoxFromDrag, framePreset, nextFrameName } from '../model/frames';
 import { captureExistingIntoFrame } from '../interaction/frameMembership';
+import { chromeToken } from '../interaction/chromeHalo';
 
 /**
  * Drawing a frame.
@@ -105,6 +106,8 @@ export class FrameTool implements Tool {
       // anything. A frame sized by hand gets none, which is right: there is no
       // interface known to be covering part of a rectangle you invented.
       safeArea: framePreset(this.presetId)?.safeArea,
+      // Which preset it was, so a size two presets share reads as the one chosen.
+      ...(framePreset(this.presetId) ? { preset: this.presetId } : null),
     });
 
     // Drawing a frame around existing objects means "these belong together" —
@@ -156,6 +159,9 @@ export class FrameTool implements Tool {
     // far more often than you size by eye — and without the readout the only
     // way to hit 1080 is to draw roughly and fix it in the panel afterwards.
     const label = `${Math.round(box.width)} × ${Math.round(box.height)}`;
+    // Ink, as the selection is: the preview is the frame-to-be, not an armed state.
+    const ink = chromeToken('--text-primary', '#111827');
+    const zoom = Math.max(0.01, _ctx.camera.zoom ?? 1);
 
     return (
       <Group listening={false}>
@@ -165,7 +171,7 @@ export class FrameTool implements Tool {
           width={box.width}
           height={box.height}
           fill="rgba(255,255,255,0.55)"
-          stroke="#3B82F6"
+          stroke={ink}
           strokeWidth={1.5}
           /* Unscaled, so the preview outline is a hairline at every zoom
              rather than a slab when you are zoomed out drawing a big frame. */
@@ -173,11 +179,11 @@ export class FrameTool implements Tool {
         />
         <Text
           x={box.x}
-          y={box.y - 18}
+          y={box.y - 18 / zoom}
           text={label}
-          fontSize={12}
+          fontSize={12 / zoom}
           fontFamily="Inter, sans-serif"
-          fill="#3B82F6"
+          fill={ink}
         />
       </Group>
     );

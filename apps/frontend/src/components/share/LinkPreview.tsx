@@ -8,6 +8,7 @@ import { useStore } from '../../hooks/useStore';
 import { previewsHidden, requestCardFlush, SHARE_PREVIEW_KEY } from '../../engine/share/shareCard';
 import { shareCardImageUrl } from '../../utils/endpoints';
 import type { RoomRole } from '../../engine/model/permissions';
+import './linkPreview.css';
 
 const ACCESS: Record<RoomRole, string> = {
   editor: 'Can edit',
@@ -25,9 +26,11 @@ const ACCESS: Record<RoomRole, string> = {
  * the link goes anywhere, and offers the one decision that belongs to it:
  * whether the name and picture travel with the link at all.
  *
- * Laid out the way chat apps lay an unfurl out (site, title, description,
- * labelled facts, picture) so it is recognisable as "the preview" at a glance,
- * without imitating any one app's chrome.
+ * Laid out as chat apps lay a rich link out — the picture first, then the
+ * site, the title and the description beneath it on one card — so it is
+ * recognisable as "the preview" at a glance without imitating any one app's
+ * chrome. The facts underneath are this dialog's addition: what is on the
+ * board, and what the link lets people do.
  */
 export const LinkPreview: React.FC<{ role: RoomRole }> = ({ role }) => {
   const { metadata } = useRoomState();
@@ -105,22 +108,11 @@ export const LinkPreview: React.FC<{ role: RoomRole }> = ({ role }) => {
         </label>
       </div>
 
-      <figure className="unfurl" aria-label={`How this link looks when shared: ${title}`}>
-        <div className="unfurl__site">
-          <img src="/favicon.svg" alt="" width={14} height={14} />
-          Vega Studio
-        </div>
-        <div className="unfurl__title">{title}</div>
-        <p className="unfurl__desc">{description}</p>
-        <dl className="unfurl__facts">
-          {facts.map((fact) => (
-            <div key={fact.label}>
-              <dt>{fact.label}</dt>
-              <dd>{fact.value}</dd>
-            </div>
-          ))}
-        </dl>
-        <div className={`unfurl__image${loaded ? ' is-loaded' : ''}`}>
+      <figure className="lp-card" aria-label={`How this link looks when shared: ${title}`}>
+        {/* The picture leads, as it does in every chat that unfurls a link:
+            it is what people recognise before they read anything. Held at
+            the card's own 1200 by 630 from the first frame so nothing jumps. */}
+        <div className={`lp-card__image${loaded ? ' is-loaded' : ''}`}>
           {image && (
             <img
               key={image}
@@ -133,6 +125,22 @@ export const LinkPreview: React.FC<{ role: RoomRole }> = ({ role }) => {
             />
           )}
         </div>
+        <figcaption className="lp-card__body">
+          <span className="lp-card__site">
+            <img src="/favicon.svg" alt="" width={14} height={14} />
+            Vega Studio
+          </span>
+          <span className="lp-card__title">{title}</span>
+          <span className="lp-card__desc">{description}</span>
+          <dl className="lp-card__facts">
+            {facts.map((fact) => (
+              <div key={fact.label} className="lp-card__fact">
+                <dt>{fact.label}</dt>
+                <dd>{fact.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </figcaption>
       </figure>
 
       <p className="share__hint">

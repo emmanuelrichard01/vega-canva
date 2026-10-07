@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Rect } from 'react-konva';
 import { Html } from 'react-konva-utils';
-import { Download, Pause, Play, TriangleAlert } from 'lucide-react';
+import { Captions, Download, Pause, Play, TriangleAlert } from 'lucide-react';
 import type { AudioNode } from '../../../engine/model/schema';
-import { updateNode } from '../../../engine/document';
+import { applyNodePatches, DERIVED_ORIGIN } from '../../../engine/document';
+import { isElectedWriter } from '../../../engine/document/election';
+import '../../media/voiceNote.css';
 import { localMediaType, useResolvedSrc } from '../../../utils/pendingMedia';
 import {
   barCountFor,
@@ -90,6 +92,8 @@ export const AudioRenderer: React.FC<Props> = React.memo(({ node }) => {
   scrubbingRef.current = scrubbing;
   const [hoverFraction, setHoverFraction] = useState<number | null>(null);
   const [speedIndex, setSpeedIndex] = useState(0);
+  const [showTranscript, setShowTranscript] = useState(false);
+  const transcript = node.transcript?.trim() ?? '';
 
   const speed = SPEEDS[speedIndex];
   const speedRef = useRef(speed);
@@ -194,7 +198,12 @@ export const AudioRenderer: React.FC<Props> = React.memo(({ node }) => {
   useEffect(() => {
     if (node.durationMs > 0) return;
     if (!Number.isFinite(elementSeconds) || !((elementSeconds as number) > 0)) return;
-    updateNode(node.id, { durationMs: Math.round((elementSeconds as number) * 1000) });
+    // A fact about the recording, not an edit: one editor's tab writes it,
+    // outside undo, and a viewer never tries.
+    if (!isElectedWriter()) return;
+    applyNodePatches([{ id: node.id, changes: { durationMs: Math.round((elementSeconds as number) * 1000) } }], {
+      origin: DERIVED_ORIGIN,
+    });
   }, [elementSeconds, node.durationMs, node.id]);
 
   /**
@@ -446,6 +455,20 @@ export const AudioRenderer: React.FC<Props> = React.memo(({ node }) => {
             <Download size={13} />
           </button>
 
+          {/* The words, when the recorder chose to have them transcribed. */}
+          {transcript && (
+            <button
+              type="button"
+              className="vn-save vn-transcript-toggle"
+              onClick={() => setShowTranscript((v) => !v)}
+              aria-expanded={showTranscript}
+              aria-label={showTranscript ? 'Hide transcript' : 'Show transcript'}
+              data-tooltip={showTranscript ? 'Hide transcript' : 'Transcript'}
+            >
+              <Captions size={14} />
+            </button>
+          )}
+
           <button
             type="button"
             className="vn-speed"
@@ -457,6 +480,12 @@ export const AudioRenderer: React.FC<Props> = React.memo(({ node }) => {
             {speed}×
           </button>
         </div>
+        {transcript && showTranscript && (
+          <div className="vn-transcript" style={{ width: node.width }} role="region" aria-label="Transcript">
+            <p className="vn-transcript__text">{transcript}</p>
+            <span className="vn-transcript__note">Transcribed by the recorder’s browser. It may contain mistakes.</span>
+          </div>
+        )}
       </Html>
     </>
   );

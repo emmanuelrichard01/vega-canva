@@ -18,6 +18,7 @@ import {
   LayoutTemplate,
   Copy,
   RotateCcw,
+  ChevronDown,
 } from 'lucide-react';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useDebouncedValue } from '../hooks/useDeferredValue';
@@ -25,6 +26,7 @@ import {
   parseMermaidLenient,
   formatMermaid,
   DIAGRAM_THEMES,
+  themeForBoard,
   type DiagramThemeId,
   type FlowDirection,
   type MermaidNode,
@@ -49,6 +51,27 @@ import {
 } from '../engine/diagram/pie';
 import { diagramNodeSizes } from '../engine/diagram/build';
 import { MERMAID_TEMPLATES as TEMPLATES } from '../engine/diagram/mermaidTemplates';
+import { highlightMermaid } from '../engine/diagram/mermaidHighlight';
+import { ThemeService } from '../engine/ThemeService';
+import { MermaidTemplateGallery } from './MermaidTemplateGallery';
+import './mermaidEditor.css';
+
+const THEME_PREF_KEY = 'vega:diagram-theme';
+
+/**
+ * The palette a diagram opens with: the last one this person chose, or the one
+ * that matches the board they are on. Remembered per device; a diagram's
+ * colours are content, so the choice is the author's, made once.
+ */
+function initialTheme(): DiagramThemeId {
+  try {
+    const saved = localStorage.getItem(THEME_PREF_KEY) as DiagramThemeId | null;
+    if (saved && saved in DIAGRAM_THEMES) return saved;
+  } catch {
+    /* storage blocked: fall through to the board's theme */
+  }
+  return themeForBoard(ThemeService.isDarkMode());
+}
 
 
 interface Props {
@@ -129,12 +152,23 @@ export const MermaidModal: React.FC<Props> = ({
 }) => {
   const [source, setSource] = useState(initialSource || TEMPLATES[0].source);
   const [activeTemplate, setActiveTemplate] = useState<string | null>(null);
-  const [themeId, setThemeId] = useState<DiagramThemeId>('indigo');
+  const [themeId, setThemeIdState] = useState<DiagramThemeId>(initialTheme);
+  const setThemeId = (id: DiagramThemeId) => {
+    setThemeIdState(id);
+    try {
+      localStorage.setItem(THEME_PREF_KEY, id);
+    } catch {
+      /* remembered for this dialog only */
+    }
+  };
+  const [galleryOpen, setGalleryOpen] = useState(false);
   const [renderStyle, setRenderStyle] = useState<'crisp' | 'sketch'>('crisp');
 
   const textRef = useRef<HTMLTextAreaElement>(null);
   const gutterRef = useRef<HTMLDivElement | null>(null);
-  const panelRef = useFocusTrap(open, onClose);
+  const highlightRef = useRef<HTMLPreElement | null>(null);
+  // Escape closes the gallery first, and the dialog only once it is shut.
+  const panelRef = useFocusTrap(open, galleryOpen ? () => setGalleryOpen(false) : onClose);
 
   // The source is what this dialog is for, so it takes focus on open. Declared after
   // the trap, whose effect would otherwise land on the first control, Close, where the next
@@ -171,6 +205,10 @@ export const MermaidModal: React.FC<Props> = ({
   const handleEditorScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
     if (gutterRef.current) {
       gutterRef.current.scrollTop = e.currentTarget.scrollTop;
+    }
+    if (highlightRef.current) {
+      highlightRef.current.scrollTop = e.currentTarget.scrollTop;
+      highlightRef.current.scrollLeft = e.currentTarget.scrollLeft;
     }
   };
 
@@ -214,6 +252,7 @@ export const MermaidModal: React.FC<Props> = ({
       setActiveTemplate(initialSource ? null : 'flowchart');
       setScale(1);
       setPan({ x: 0, y: 0 });
+      setGalleryOpen(false);
     }
   }, [open, initialSource]);
 
@@ -644,44 +683,31 @@ export const MermaidModal: React.FC<Props> = ({
                   engines properly — better than the hairline the strip needed
                   to say the same thing — and keyboard and type-ahead come free.
                 */}
-                <span className="mm-template-picker">
-                  <LayoutTemplate size={12} aria-hidden />
-                  <select
-                    className="mm-template-picker__select"
-                    value={activeTemplate ?? ''}
-                    aria-label="Start from a template"
-                    onChange={(e) => {
-                      const chosen = TEMPLATES.find((t) => t.id === e.target.value);
-                      if (!chosen) return;
-                      setSource(chosen.source);
-                      setActiveTemplate(chosen.id);
-                    }}
+                <span className="mm-gallery-anchor">
+                  <button
+                    type="button"
+                    className="mm-btn mm-gallery-trigger"
+                    aria-haspopup="dialog"
+                    aria-expanded={galleryOpen}
+                    onClick={() => setGalleryOpen((v) => !v)}
                   >
-                    {/* Present only until one is picked: it is the empty state,
-                        not a way back to it — there is nothing to return to. */}
-                    {!activeTemplate && <option value="">Template</option>}
-                    <optgroup label="Flowcharts">
-                      {TEMPLATES.filter((t) => t.kind === 'flow').map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Sequence diagrams">
-                      {TEMPLATES.filter((t) => t.kind === 'sequence').map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Pie charts">
-                      {TEMPLATES.filter((t) => t.kind === 'pie').map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  </select>
+                    <LayoutTemplate size={12} aria-hidden />
+                    {TEMPLATES.find((t) => t.id === activeTemplate)?.name ?? 'Templates'}
+                    <ChevronDown size={12} aria-hidden />
+                  </button>
+                  {galleryOpen && (
+                    <MermaidTemplateGallery
+                      templates={TEMPLATES}
+                      activeId={activeTemplate}
+                      onPick={(chosen) => {
+                        setSource(chosen.source);
+                        setActiveTemplate(chosen.id);
+                        setGalleryOpen(false);
+                        textRef.current?.focus({ preventScroll: true });
+                      }}
+                      onClose={() => setGalleryOpen(false)}
+                    />
+                  )}
                 </span>
                 <button
                   type="button"
@@ -728,10 +754,32 @@ export const MermaidModal: React.FC<Props> = ({
                   );
                 })}
               </div>
+              <div className="mm-code">
+              {/* The colours, drawn under a transparent textarea: the browser
+                  keeps selection, IME and undo, and every run lands under the
+                  character that typed it. The line that fails to parse is
+                  tinted and underlined where it is, not only in the footer. */}
+              <pre className="mm-code__hl" ref={highlightRef} aria-hidden="true">
+                {highlightMermaid(source).map((tokens, idx) => {
+                  const lineNum = idx + 1;
+                  const cls = errorLine === lineNum ? ' is-error' : skippedLines.includes(lineNum) ? ' is-warn' : '';
+                  return (
+                    <span key={idx} className={`mm-hl-line${cls}`}>
+                      {tokens.length === 0
+                        ? ' '
+                        : tokens.map((t, k) => (
+                            <span key={k} className={`mm-tok mm-tok--${t.kind}`}>
+                              {t.text}
+                            </span>
+                          ))}
+                    </span>
+                  );
+                })}
+              </pre>
               <textarea
                 id="mermaid-source"
                 ref={textRef}
-                className="mermaid-modal__code"
+                className="mermaid-modal__code mm-code__input"
                 value={source}
                 spellCheck={false}
                 onScroll={handleEditorScroll}
@@ -740,7 +788,10 @@ export const MermaidModal: React.FC<Props> = ({
                   setActiveTemplate(null);
                 }}
                 onKeyDown={handleEditorKeyDown}
+                aria-invalid={Boolean(error) || undefined}
+                aria-describedby="mermaid-status"
               />
+              </div>
             </div>
           </div>
 
@@ -1427,7 +1478,7 @@ export const MermaidModal: React.FC<Props> = ({
         </div>
 
         <footer className="mermaid-modal__foot">
-          <span className={`mermaid-modal__status${error ? ' is-error' : ''}`}>
+          <span id="mermaid-status" className={`mermaid-modal__status${error ? ' is-error' : ''}`} aria-live="polite">
             {error ? (
               <>
                 <AlertTriangle size={14} aria-hidden />

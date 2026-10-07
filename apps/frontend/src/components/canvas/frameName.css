@@ -1,17 +1,77 @@
-/* The in-place frame name field, laid over the label it edits. */
-.frame-name-input {
+/* The in-place frame header editor, laid over the header it edits. */
+.frame-header-editor {
   position: fixed;
   z-index: var(--z-popover, 9200);
-  height: 24px;
-  padding: 0 6px;
-  border: 1px solid var(--focus-field-color);
-  border-radius: var(--radius-sm, 4px);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-sizing: border-box;
+  padding: 4px;
+  border-radius: var(--radius-lg);
   background: var(--surface-elevated);
-  color: var(--text-primary);
-  font: 500 var(--text-base, 13px) / 1 var(--font-sans);
-  outline: none;
+  box-shadow: var(--shadow-float);
+  transform: translateY(-100%);
+  font-family: var(--font-sans);
 }
 
-[data-contrast='more'] .frame-name-input {
-  border-color: var(--text-primary);
+.frame-header-editor__row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.frame-header-editor__icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.frame-header-editor__icon:hover,
+.frame-header-editor__icon[aria-expanded='true'] {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.frame-header-editor__icon:focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color);
+  outline-offset: 0;
+}
+
+.frame-header-editor__name,
+.frame-header-editor__desc {
+  box-sizing: border-box;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  outline: none;
+  font-family: inherit;
+}
+.frame-header-editor__name {
+  flex: 1;
+  height: 28px;
+  padding: 0 6px;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+.frame-header-editor__desc {
+  width: 100%;
+  height: 26px;
+  padding: 0 6px 0 36px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.frame-header-editor__desc::placeholder {
+  color: var(--text-tertiary);
+}
+.frame-header-editor__name:focus,
+.frame-header-editor__desc:focus {
+  border-color: var(--focus-field-color);
 }

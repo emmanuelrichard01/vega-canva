@@ -68,6 +68,8 @@ export interface DeckSnapshot {
   playing: boolean;
   position: number;
   duration: number;
+  /** Seconds of the track that can play without waiting: all of a decoded track, the loaded range of a stream. */
+  buffered: number;
   buffering: boolean;
 }
 
@@ -138,13 +140,14 @@ export class LibraryPlayer {
 
   snapshot(): DeckSnapshot {
     const v = this.current;
-    if (!v) return { trackId: null, playing: this.wantPlaying, position: 0, duration: 0, buffering: false };
+    if (!v) return { trackId: null, playing: this.wantPlaying, position: 0, duration: 0, buffered: 0, buffering: false };
     const duration = this.lengthOf(v);
     return {
       trackId: v.track.id,
       playing: this.wantPlaying,
       position: Math.min(duration, Math.max(0, this.positionOf(v))),
       duration,
+      buffered: this.bufferedOf(v, duration),
       buffering: this.wantPlaying && (!v.audible || (v.el !== null && v.el.readyState < 3 && !v.el.paused)),
     };
   }
@@ -642,6 +645,17 @@ export class LibraryPlayer {
     if (v.el) return v.el.currentTime || v.offset;
     const now = this.ctx?.currentTime ?? 0;
     return v.offset + Math.max(0, now - v.startAt);
+  }
+
+  private bufferedOf(v: Voice, duration: number): number {
+    if (v.decoded || !v.el) return duration;
+    const ranges = v.el.buffered;
+    const at = v.el.currentTime;
+    if (!ranges) return Math.min(duration, at);
+    for (let i = 0; i < ranges.length; i++) {
+      if (at >= ranges.start(i) - 0.25 && at <= ranges.end(i)) return Math.min(duration, ranges.end(i));
+    }
+    return Math.min(duration, at);
   }
 
   private lengthOf(v: Voice): number {

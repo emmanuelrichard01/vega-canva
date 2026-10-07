@@ -4,6 +4,7 @@ import { Html } from 'react-konva-utils';
 import { nanoid } from 'nanoid';
 import type Konva from 'konva';
 import { sketchedCap, sketchedRun } from '../../../engine/model/connectorSketch';
+import { useSketchLevel } from '../../../engine/model/roughBoard';
 import {
   publishConnectorLabel,
   retractConnectorLabel,
@@ -124,6 +125,8 @@ function useEasedCurve(flat: number[], curved: boolean): number[] {
  */
 export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
   const route = useConnectorRoute(node.id);
+  // Resolved against the board's sketch mode; a hook, so above the early return.
+  const sketchLevel = useSketchLevel(node.appearance);
   const target = route?.flat ?? [];
   const world = useEasedCurve(target, Boolean(route?.curved));
   const zoom = useCameraZoom();
@@ -248,7 +251,6 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
 
   const trimmed = trimRunForCaps(points, route.curved ? [] : route.hops, startCap?.inset ?? 0, endCap?.inset ?? 0);
 
-  const sketchLevel = node.appearance?.sketch;
   const sketch = sketchLevel
     ? { id: node.id, sketchSeed: node.appearance?.sketchSeed, level: sketchLevel, width, curved: route.curved, dashed }
     : null;

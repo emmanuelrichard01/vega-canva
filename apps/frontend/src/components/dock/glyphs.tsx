@@ -62,10 +62,24 @@ export const DirectSelectGlyph: React.FC<Sized> = ({ size }) => (
   </Glyph>
 );
 
-/** The open hand, the same drawing the pan cursor uses. */
+/**
+ * The cursor's drawing runs 20 units tall from y 2.7, past the grid's bottom
+ * margin and off-centre; on the dock it is centred and brought to the 19 a
+ * rounded glyph reaches for. The stroke is divided by the same factor so it
+ * lands at the set's 1.75.
+ */
+const HAND_FIT = 0.95;
+const HAND_CENTRE = { x: 11.66, y: 12.7 };
+
+/** The open hand, the same drawing the pan cursor uses, fitted to the grid. */
 export const HandGlyph: React.FC<Sized> = ({ size }) => (
   <Glyph size={size}>
-    <path d={HAND_OPEN} />
+    <g
+      transform={`translate(12 12) scale(${HAND_FIT}) translate(${-HAND_CENTRE.x} ${-HAND_CENTRE.y})`}
+      strokeWidth={GLYPH_STROKE / HAND_FIT}
+    >
+      <path d={HAND_OPEN} />
+    </g>
   </Glyph>
 );
 

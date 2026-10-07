@@ -333,6 +333,41 @@ export interface ChartTableLink {
   c1: number;
   /** Absent: each column after the first is a series. `rows` reads across. */
   seriesIn?: 'columns' | 'rows';
+  /**
+   * The table's row and column ids at the range's corners. The range is read
+   * between them in the table's current order, so a row inserted inside it is
+   * inside it and a moved corner takes the range along. Absent, or a corner
+   * deleted, and the indices above are read instead.
+   */
+  ids?: { r0: string; r1: string; c0: string; c1: string };
+  /** Take rows filled in directly under the range, the way a Sheets table grows. */
+  grow?: boolean;
+  /** What the range is called on this board. Charts sharing a table and a name share the range. */
+  name?: string;
+  /** Whether the first line names the series. Absent: detected. */
+  header?: boolean;
+  /** The line holding the categories, by row or column id. Absent: the first. */
+  categoryLine?: string;
+  /** The lines drawn as series, by id, in order. Absent: every line after the categories. */
+  seriesLines?: string[];
+  /** Readings that share a category are combined into one. */
+  aggregate?: LinkAggregate;
+  /** Readings kept only when every filter passes. */
+  filters?: LinkFilter[];
+}
+
+export type LinkAggregate = 'sum' | 'avg' | 'count' | 'min' | 'max';
+export const LINK_AGGREGATES: readonly LinkAggregate[] = ['sum', 'avg', 'count', 'min', 'max'];
+
+export type LinkFilterOp = 'eq' | 'ne' | 'gt' | 'lt' | 'contains' | 'filled';
+export const LINK_FILTER_OPS: readonly LinkFilterOp[] = ['eq', 'ne', 'gt', 'lt', 'contains', 'filled'];
+
+/** One condition on a reading: the value it holds in one line of the range. */
+export interface LinkFilter {
+  /** The row or column id the value is read from. */
+  line: string;
+  op: LinkFilterOp;
+  value: string;
 }
 
 /**

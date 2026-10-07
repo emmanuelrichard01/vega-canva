@@ -13,6 +13,7 @@ import { endPoint } from '../model/connectorTargets';
 import { bindingAt } from '../model/connectorBinding';
 import { nodeBounds } from '../SceneGraph';
 import { connectorDefaults } from './connectorDefaults';
+import { claimCursor, claimable } from '../cursor';
 
 /** Below this the two ends are the same place, and there is no connector. */
 const MIN_DRAG = 6;
@@ -272,6 +273,7 @@ export class ConnectorTool implements Tool {
     this.pending = false;
     this.pressScreen = null;
     this.from = null;
+    claimCursor('connector-port', null);
     ctx.setOverlayState?.(null);
   }
 
@@ -348,6 +350,10 @@ export class ConnectorTool implements Tool {
       target.nodeId && target.port === 'auto' && targetNode
         ? bodyOutlinePoints(targetNode)
         : null;
+
+    // Over a port it will snap to, the pointer says so: the magnet.
+    const onPort = Boolean(target.nodeId && target.port && target.port !== 'auto');
+    claimCursor('connector-port', onPort ? claimable.port() : null);
 
     ctx.setOverlayState?.({
       type: 'connector',

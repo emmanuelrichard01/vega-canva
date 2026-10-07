@@ -1,19 +1,17 @@
 import React, { useEffect, useRef } from 'react';
-import { RefreshCw, Repeat, Repeat1, Shuffle, X } from 'lucide-react';
+import { RefreshCw, X } from 'lucide-react';
 import {
-  cycleLibraryRepeat,
   dismissLibraryError,
   loadLibrary,
   playTrack,
   reloadLibrary,
-  toggleLibraryShuffle,
   tracksIn,
   useLibrary,
 } from '../../engine/music/library/libraryStore';
 import { categoryBlurb, categoryLabel, formatDuration } from '../../engine/music/library/manifest';
 import { creditFor } from '../../engine/music/library/credits';
 import { selectStation, stationIds, useMusic } from '../../engine/music/musicStore';
-import { TrackArt } from './NowPlaying';
+import { TrackArt } from './TrackArt';
 import { CategoryCover } from './CategoryCover';
 import { VinylGlyph } from './VinylGlyph';
 
@@ -61,8 +59,6 @@ export const StationsPane: React.FC = () => {
 
   const station = music.station;
   const visible = tracksIn(lib, station);
-  const RepeatIcon = lib.repeat === 'one' ? Repeat1 : Repeat;
-  const repeatLabel = lib.repeat === 'all' ? 'Repeat all' : lib.repeat === 'one' ? 'Repeat this track' : 'Repeat off';
 
   return (
     <div className="music-libpane">
@@ -80,28 +76,6 @@ export const StationsPane: React.FC = () => {
           <div className="music-listhead">
             <span className="music-listhead__count">
               {categoryLabel(station)} · {visible.length} {visible.length === 1 ? 'track' : 'tracks'}
-            </span>
-            <span className="music-listhead__tools">
-              <button
-                type="button"
-                className="btn-icon btn-icon--sm music-toggle"
-                aria-pressed={lib.shuffle}
-                aria-label="Shuffle"
-                data-tooltip={lib.shuffle ? 'Shuffle on' : 'Shuffle off'}
-                onClick={toggleLibraryShuffle}
-              >
-                <Shuffle size={14} strokeWidth={1.75} aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                className="btn-icon btn-icon--sm music-toggle"
-                aria-pressed={lib.repeat !== 'off'}
-                aria-label={repeatLabel}
-                data-tooltip={repeatLabel}
-                onClick={cycleLibraryRepeat}
-              >
-                <RepeatIcon size={14} strokeWidth={1.75} aria-hidden="true" />
-              </button>
             </span>
           </div>
 

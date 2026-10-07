@@ -110,7 +110,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
       { id: 'contrast', label: isContrastEnhanced() ? 'Use standard contrast' : 'Increase contrast', detail: 'Stronger text, borders and focus rings', keywords: 'accessibility', group: 'View', icon: <Contrast size={16} />, perform: toggleContrast },
       { id: 'reset-view', label: 'Reset view to origin', group: 'View', icon: <LayersIcon size={16} />, shortcut: '0', perform: run('reset-view') },
 
-      { id: 'timetravel', label: 'Replay session', detail: 'Scrub the room’s authoring history', group: 'Session', icon: <Clock size={16} />, perform: run('timetravel') },
+      { id: 'timetravel', label: 'Version history', detail: 'Scrub the board’s history and restore a version', group: 'Session', icon: <Clock size={16} />, perform: run('timetravel') },
       { id: 'play', label: 'Toggle physics play mode', group: 'Session', icon: <Play size={16} />, perform: run('play') },
       { id: 'share', label: 'Share workspace link', group: 'Session', icon: <Share2 size={16} />, perform: run('share') },
       /**

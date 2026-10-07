@@ -1,3 +1,5 @@
+import { FORCE_IDS } from '../physics/forces';
+
 /**
  * Which cursor a tool wears.
  *
@@ -73,8 +75,12 @@ export const CURSOR_MODES = [
   'pointer', 'pan', 'grab', 'draw', 'text', 'erase', 'note', 'comment', 'place', 'aim',
 ] as const satisfies readonly CursorMode[];
 
-/** Tool ids that aim a force field. Mirrors `FORCE_IDS` in `engine/physics/forces.ts`. */
-const FORCE_TOOLS = new Set(['magnet', 'repel', 'wind', 'shockwave', 'gravity']);
+/**
+ * Tool ids that aim a force field, read from the physics module so a force
+ * added there cannot fall through to the select arrow (swirl did, while this
+ * was a hand-copied set of five).
+ */
+const FORCE_TOOLS: ReadonlySet<string> = new Set(FORCE_IDS);
 
 /**
  * Five tools were missing from this table and fell through to `pointer`.

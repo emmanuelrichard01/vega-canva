@@ -36,6 +36,7 @@ import {
 } from '../dock/glyphs';
 import { DrawingTray } from '../dock/DrawingTray';
 import { ToolLibrary, type ToolEntry } from '../dock/ToolLibrary';
+import { MENU_FLYOUT_SIZE, sheetWidth, type DockMenuId } from '../dock/flyoutScale';
 import { EraserTray } from '../tools/draw/EraserTray';
 import { drawSettings } from '../../engine/tools/drawSettings';
 import { useThemeInk } from '../dock/useDockEnv';
@@ -46,6 +47,7 @@ import { LineProfileIcon } from '../panel/lineProfileIcons';
 import { LineSpecimen } from '../panel/lineSpecimen';
 import { isForceTool } from '../../engine/physics/forces';
 import { FRAME_PRESETS, FRAME_PRESET_GROUPS } from '../../engine/model/frames';
+import { FramePresetIcon } from '../panel/sections/framePresetIcons';
 import { ShapeIcon } from './shapeIcons';
 import {
   LINE_PRESETS,
@@ -67,7 +69,7 @@ import { THEMES } from '../../engine/model/stickyThemes';
 import { STICKY_THEMES, type StickyTheme } from '../../engine/model/schema';
 import { cameraSystem } from '../../engine/CameraSystem';
 import { editor } from '../../engine/api/EditorAPI';
-import { canUseTool } from '../../engine/model/permissions';
+import { canEditObjects, canUseTool } from '../../engine/model/permissions';
 import { FeatureBoundary } from '../ui/FeatureBoundary';
 import { ColorPickerPopover } from '../ui/ColorPickerPopover';
 import { EndCapIcon, RouteIcon } from '../panel/connectorIcons';
@@ -158,6 +160,7 @@ const DockButton = React.forwardRef<
       style?: React.CSSProperties;
       hidden?: boolean;
       'data-seat'?: string;
+      'data-tour'?: string;
       /** Its place in the arrangement, read back by a drag -- see `dropIndexAt`. */
       'data-dock-index'?: number;
     };
@@ -392,21 +395,25 @@ DockButton.displayName = 'DockButton';
  * with no heading makes you infer what you are choosing from the options
  * themselves. The gap below it is padding rather than margin so the pointer can
  * travel from button to menu without crossing dead space and closing it.
+ *
+ * Its width is a step on the flyout scale, from the menu it shows (see
+ * `flyoutScale.ts`), and does not change with what the menu is showing.
  */
 const Flyout: React.FC<{
   title: string;
+  /** Which menu this is, for its step on the width scale. */
+  menu: DockMenuId;
   children: React.ReactNode;
-  wide?: boolean;
   /** No title row: the seat menus, whose row says what they are. The title stays the accessible name. */
   bare?: boolean;
 }> = ({
   title,
+  menu,
   children,
-  wide,
   bare,
 }) => (
   <div role="menu" className="dock-flyout" aria-label={title} onKeyDown={onFlyoutKey}>
-    <div className={`panel-surface dock-flyout__panel ${wide ? 'dock-flyout__panel--wide' : ''}`}>
+    <div className="panel-surface dock-flyout__panel" data-size={MENU_FLYOUT_SIZE[menu]}>
       {!bare && <div className="dock-flyout__title" role="presentation">{title}</div>}
       {children}
     </div>
@@ -580,7 +587,7 @@ const SEAT_LABEL: Record<DockSeat, string> = {
   draw: 'Draw', eraser: 'Eraser',
   type: 'Text', shape: 'Shape', line: 'Line and arrow',
   frame: 'Frame', grid: 'Layout grid', connector: 'Connector', sticky: 'Sticky note',
-  image: 'Image', audio: 'Voice note', media: 'Insert', comment: 'Comment', forces: 'Forces',
+  image: 'Image', audio: 'Voice note', media: 'Insert', comment: 'Comment', forces: 'Physics',
 };
 
 /** The three tools the Data seat carries, in the order its switch shows them. */
@@ -1050,7 +1057,7 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
         <DockSheet
           variant="card"
           columns={3}
-          width={318}
+          width={sheetWidth(MENU_FLYOUT_SIZE.grid)}
           sections={gridSections}
           value={gridKind}
           onPick={pickGrid}
@@ -1072,7 +1079,7 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
         <DockSheet
           variant="card"
           columns={4}
-          width={344}
+          width={sheetWidth(MENU_FLYOUT_SIZE.chart)}
           height={320}
           searchPlaceholder="Search charts"
           sections={chartSections}
@@ -1098,7 +1105,7 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
         <DockSheet
           variant="card"
           columns={3}
-          width={360}
+          width={sheetWidth(MENU_FLYOUT_SIZE.table)}
           height={340}
           searchPlaceholder="Tables, or a column like “owner”"
           sections={tableSections}
@@ -1231,6 +1238,19 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
       keywords: ['photo', 'picture', 'upload', 'png', 'jpg'], active: activeToolId === 'image',
       run: runEntry(() => setTool('image')),
     },
+    // A document write, so editors only. Opens the link field in its picture form.
+    ...(canEditObjects()
+      ? [{
+          id: 'image-url', group: 'Pictures and sound', icon: <LinkGlyph />, label: 'Image from URL…',
+          description: 'Place a picture from its web address',
+          keywords: ['picture', 'photo', 'web', 'link', 'address', 'download'],
+          run: runEntry(() => {
+            const client = { x: window.innerWidth / 2, y: window.innerHeight / 2 - 60 };
+            const world = cameraSystem.screenToWorld(client.x, client.y);
+            useStore.getState().setLinkComposer({ clientX: client.x, clientY: client.y, x: world.x, y: world.y, as: 'image' });
+          }),
+        } satisfies ToolEntry]
+      : []),
     {
       id: 'audio', group: 'Pictures and sound', icon: <MicGlyph />, label: 'Voice note', shortcut: shortcutFor('audio'),
       description: 'Record a spoken note on the board',
@@ -1311,7 +1331,7 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
 
     { id: 'comment', group: 'Collaborate', icon: <CommentGlyph />, label: 'Comment', shortcut: shortcutFor('comment'), description: 'Pin a note to a point or an object', keywords: ['feedback', 'review'], active: activeToolId === 'comment', run: runEntry(() => setTool('comment')), pin: pinFor('comment') },
 
-    { id: 'forces', group: 'Playful', icon: <ForcesGlyph />, label: 'Forces', description: 'Physics: push, pull and drop objects', keywords: ['physics', 'gravity', 'magnet', 'push', 'pull'], active: isForceTool(activeToolId), run: runEntry(() => pick(lastForce)), pin: pinFor('forces') },
+    { id: 'forces', group: 'Playful', icon: <ForcesGlyph />, label: 'Physics', shortcut: 'Shift+P', description: 'Push, pull and drop objects with forces', keywords: ['forces', 'gravity', 'magnet', 'push', 'pull', 'throw'], active: isForceTool(activeToolId), run: runEntry(() => pick(lastForce)), pin: pinFor('forces') },
   ];
 
   /** A data tool is the Data seat's to show only when that tool has no seat of its own. */
@@ -1467,6 +1487,8 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
       style: { order: index ?? DOCK_SEATS.length },
       hidden: hiddenSeats.has(id),
       'data-seat': id,
+      // The tour points at the Insert seat by this name.
+      ...(id === 'media' ? { 'data-tour': 'insert' } : null),
       // Stated on the element so a drag reads it back rather than looking it up
       // in a map captured at render time -- see `dropIndexAt`.
       ...(index === undefined ? null : { 'data-dock-index': index }),
@@ -2188,7 +2210,7 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
             onCaret={carried('directSelect') ? () => toggleMenu('select') : undefined}
           >
             {openMenu === 'select' && (
-              <Flyout title="Select">
+              <Flyout title="Select" menu="select">
                 <FlyoutItem
                   icon={<SelectGlyph size={16} />} label="Select" toolId="select"
                   description="whole objects" active={activeToolId === 'select'}
@@ -2269,7 +2291,7 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
             onCaret={() => toggleMenu('block')}
           >
             {openMenu === 'block' && (
-              <Flyout title="Text" wide>
+              <Flyout title="Text" menu="block">
                 <div className="dock-flyout__group" role="presentation">Draw a box</div>
                 <FlyoutItem
                   icon={<TypeGlyph size={16} />}
@@ -2315,7 +2337,7 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
             onCaret={() => toggleMenu('shape')}
           >
             {openMenu === 'shape' && (
-              <Flyout title="Shapes" bare>
+              <Flyout title="Shapes" menu="shape" bare>
                 <SeatMenu
                   noun="shapes"
                   quick={QUICK_SHAPES.map(shapeTile)}
@@ -2392,7 +2414,7 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
             onCaret={() => toggleMenu('frame')}
           >
             {openMenu === 'frame' && (
-              <Flyout title="Frame size" bare>
+              <Flyout title="Frame size" menu="frame" bare>
                 <SeatMenu
                   noun="sizes"
                   quick={QUICK_FRAMES.map(frameTile)}
@@ -2414,7 +2436,9 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
                               onClick={() => pickFrame(`frame-${preset.id}`)}
                               aria-label={`${preset.label}, ${preset.width} by ${preset.height}`}
                             >
-                              <AspectGlyph width={preset.width} height={preset.height} />
+                              <span className="frame-chip__glyph" aria-hidden="true">
+                                <FramePresetIcon icon={preset.icon} />
+                              </span>
                               <span className="frame-chip__text">
                                 <span className="frame-chip__label">{preset.label}</span>
                                 <span className="frame-chip__size">
@@ -2446,7 +2470,7 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
             onCaret={() => toggleMenu('grid')}
           >
             {openMenu === 'grid' && (
-              <Flyout title="Grid system" bare>
+              <Flyout title="Grid system" menu="grid" bare>
                 {gridSeatMenu()}
               </Flyout>
             )}
@@ -2464,7 +2488,7 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
             onCaret={() => toggleMenu('chart')}
           >
             {openMenu === 'chart' && (
-              <Flyout title="Chart type" bare>
+              <Flyout title="Chart type" menu="chart" bare>
                 {chartSeatMenu()}
               </Flyout>
             )}
@@ -2482,7 +2506,7 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
             onCaret={() => toggleMenu('table')}
           >
             {openMenu === 'table' && (
-              <Flyout title="Table" bare>
+              <Flyout title="Table" menu="table" bare>
                 {tableSeatMenu()}
               </Flyout>
             )}
@@ -2507,7 +2531,7 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
             onCaret={() => toggleMenu('data')}
           >
             {openMenu === 'data' && (
-              <Flyout title="Data" bare>
+              <Flyout title="Data" menu="data" bare>
                 {dataTab === 'table' ? tableSeatMenu(dataSwitch)
                   : dataTab === 'chart' ? chartSeatMenu(dataSwitch)
                   : gridSeatMenu(dataSwitch)}
@@ -2555,8 +2579,8 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
         />
         <DockButton
           {...seatProps('forces')}
-          icon={<ForcesGlyph />} label="Forces"
-          description="physics: push, pull and drop objects"
+          icon={<ForcesGlyph />} label="Physics"
+          description="push, pull and drop objects (Shift+P)"
           active={isForceTool(activeToolId)}
           onClick={() => pick(lastForce)}
         />
@@ -2578,7 +2602,7 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
             onOpenMenu={() => openSeatMenu('media')}
           >
             {openMenu === 'media' && (
-              <Flyout title="Insert" bare>
+              <Flyout title="Insert" menu="media" bare>
                 <ToolLibrary label="Insert" entries={insertEntries} searchPlaceholder="Search what to insert" />
               </Flyout>
             )}
@@ -2602,6 +2626,7 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
         <div
           {...menuProps()}
           className="dock-slot-wrap"
+          data-tour="all-tools"
           style={{ order: layout.order.length + 1 }}
         >
           <DockButton
@@ -2617,7 +2642,7 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
             onOpenMenu={() => openSeatMenu('more')}
           >
             {openMenu === 'more' && !editing && (
-              <Flyout title="All tools" bare>
+              <Flyout title="All tools" menu="more" bare>
                 <ToolLibrary
                   label="All tools"
                   entries={allEntries}
@@ -2657,7 +2682,7 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
               </Flyout>
             )}
             {openMenu === 'more' && editing && (
-              <Flyout title="Editing the dock" wide>
+              <Flyout title="Editing the dock" menu="editing">
                 {layout.hidden.length > 0 && (
                   <>
                     <div className="dock-flyout__group" role="presentation">Not on the dock</div>

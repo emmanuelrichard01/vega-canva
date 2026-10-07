@@ -1,6 +1,7 @@
 import Matter from 'matter-js';
 import { resolveMaterial } from '../../utils/behaviorSystem';
 import { FORCE_SPECS, falloffAt, type FalloffId, type ForceId } from './forces';
+import { convexOutline } from './outlines';
 
 /**
  * The physics simulation, with nothing else attached to it.
@@ -53,6 +54,29 @@ const MAX_STEPS_PER_FRAME = 5;
 const STEP_EPSILON = 1e-9;
 
 /**
+ * How many bodies may be in motion at once.
+ *
+ * Resting bodies cost nothing, so this bounds the work per frame rather than
+ * the size of the board. Past it, the bodies nearest the force win and the
+ * rest stay where they are; `takeBudgetHit` lets the caller say so once.
+ */
+export const BODY_BUDGET = 300;
+
+/**
+ * Anti-tunnelling.
+ *
+ * Matter has no continuous collision detection, so a body that travels further
+ * in one step than the thinnest thing on the board is thick can skip straight
+ * through it. Two defences: a step is split into sub-steps when the fastest
+ * body would cover more than half the thinnest body's thickness, and speed is
+ * clamped to what `MAX_SUBSTEPS` can still resolve.
+ */
+export const MAX_SUBSTEPS = 4;
+const MIN_THICKNESS = 24;
+/** Hard ceiling on distance per step, in world units. */
+const MAX_STEP_DISTANCE = 120;
+
+/**
  * Types that are never simulated.
  *
  * Comments are anchored annotations — a pin drifting away from what it
@@ -84,7 +108,11 @@ export interface SimNode {
    * balances there, which is why the Pachinko board jammed instead of
    * cascading.
    */
-  geometry?: { kind?: string };
+  geometry?: { kind?: string; points?: number };
+  /** The frame it sits in. Such objects are left alone unless frames are included. */
+  frameId?: string;
+  /** Pinned in place. Collided against, never moved. */
+  pinned?: boolean;
   /**
    * Immovable. Still collided against, never set in motion.
    *
@@ -131,6 +159,10 @@ export interface StepResult {
 }
 
 interface ActiveEntry {
+  /** Pose at the start of the latest fixed step, for interpolation. */
+  prevX: number;
+  prevY: number;
+  prevAngle: number;
   framesSettled: number;
   startedAt: number;
   width: number;
@@ -238,6 +270,47 @@ export class PhysicsSimulation {
    */
   private scoped = false;
 
+  /** Whether objects inside frames may be moved. Off by default. */
+  private includeFrames = false;
+  /** Thinnest body on the board, which sets how far one step may travel. */
+  private minThickness = Infinity;
+  private budgetHit = false;
+  private thicknessDirty = false;
+
+  setIncludeFrames(on: boolean): void {
+    this.includeFrames = on;
+  }
+
+  /**
+   * Whether a force wanted to move more bodies than the budget allows since
+   * the last call. Reading clears it, so the caller can notify exactly once.
+   */
+  takeBudgetHit(): boolean {
+    const hit = this.budgetHit;
+    this.budgetHit = false;
+    return hit;
+  }
+
+  /**
+   * A polygon body centred on `(cx, cy)`.
+   *
+   * `fromVertices` positions by centre of mass; the outlines offered are
+   * point-symmetric, so that is the box centre. The position is set explicitly
+   * anyway so a rounding difference cannot leak into the commit.
+   */
+  private outlineBody(
+    cx: number,
+    cy: number,
+    outline: { x: number; y: number }[],
+    options: Matter.IBodyDefinition
+  ): Matter.Body {
+    const { angle, ...rest } = options;
+    const body = Matter.Bodies.fromVertices(0, 0, [outline], rest);
+    Matter.Body.setPosition(body, { x: cx, y: cy });
+    if (angle) Matter.Body.setAngle(body, angle);
+    return body;
+  }
+
   private handleCollision = (event: { pairs: { bodyA: Matter.Body; bodyB: Matter.Body }[] }) => {
     event.pairs.forEach(({ bodyA, bodyB }) => {
       // Exactly one side moving: the other is the one that needs waking. Two
@@ -308,6 +381,14 @@ export class PhysicsSimulation {
        */
       const isRound =
         node.geometry?.kind === 'ellipse' && Math.abs(w - h) <= Math.max(w, h) * 0.2;
+      // Convex outlines for shapes that are neither round nor boxy. The key
+      // is what a body is rebuilt on, since the shape is fixed at creation.
+      const outline = isRound ? null : convexOutline(node.geometry?.kind, node.geometry?.points, w, h);
+      const shapeKey = isRound
+        ? 'circle'
+        : outline
+          ? `outline:${node.geometry?.kind}:${node.geometry?.points ?? ''}`
+          : 'rect';
 
       let body = this.bodies.get(id);
 
@@ -321,7 +402,7 @@ export class PhysicsSimulation {
         const materialChanged = body.plugin?.materialId !== material.id;
         // Shape is baked in at creation exactly like size and material, so
         // switching a rectangle to an ellipse has to rebuild too.
-        const shapeChanged = (body.plugin?.round ?? false) !== isRound;
+        const shapeChanged = (body.plugin?.shapeKey ?? 'rect') !== shapeKey;
         if (sizeChanged || materialChanged || shapeChanged) {
           this.remove(id);
           body = undefined;
@@ -342,7 +423,9 @@ export class PhysicsSimulation {
         };
         body = isRound
           ? Matter.Bodies.circle(cx, cy, (w + h) / 4, shapeOptions)
-          : Matter.Bodies.rectangle(cx, cy, w, h, shapeOptions);
+          : outline
+            ? this.outlineBody(cx, cy, outline, shapeOptions)
+            : Matter.Bodies.rectangle(cx, cy, w, h, shapeOptions);
         const massProps: MassProps = {
           mass: body.mass,
           inverseMass: body.inverseMass,
@@ -354,9 +437,12 @@ export class PhysicsSimulation {
         body.plugin = {
           width: w, height: h, type: node.type, id, massProps,
           materialId: material.id,
-          locked: node.locked === true || (node as any).pinned === true,
+          locked: node.locked === true || node.pinned === true,
+          inFrame: typeof node.frameId === 'string' && node.frameId.length > 0,
           round: isRound,
+          shapeKey,
         };
+        this.minThickness = Math.min(this.minThickness, Math.max(MIN_THICKNESS, Math.min(w, h)));
         Matter.Composite.add(this.engine.world, body);
         this.bodies.set(id, body);
         continue;
@@ -369,7 +455,10 @@ export class PhysicsSimulation {
        * so it must not force a rebuild — but it does have to be current, or
        * locking something mid-cascade would not take effect until reload.
        */
-      if (body.plugin) body.plugin.locked = node.locked === true || (node as any).pinned === true;
+      if (body.plugin) {
+        body.plugin.locked = node.locked === true || node.pinned === true;
+        body.plugin.inFrame = typeof node.frameId === 'string' && node.frameId.length > 0;
+      }
 
       // A resting body tracks the document; a moving one owns its own position.
       if (body.isStatic && finite(cx) && finite(cy)) {
@@ -386,6 +475,7 @@ export class PhysicsSimulation {
     this.bodies.delete(id);
     this.active.delete(id);
     this.settledInGesture.delete(id);
+    this.thicknessDirty = true;
   }
 
   private activate(id: string, body: Matter.Body): boolean {
@@ -409,8 +499,20 @@ export class PhysicsSimulation {
      */
     if (body.plugin?.locked === true) return false;
 
+    // Objects inside a frame belong to that frame's layout. They still block
+    // and deflect whatever hits them; they are never set moving.
+    if (body.plugin?.inFrame === true && !this.includeFrames) return false;
+
+    if (this.active.size >= BODY_BUDGET) {
+      this.budgetHit = true;
+      return false;
+    }
+
     wakeBody(body);
     this.active.set(id, {
+      prevX: body.position.x,
+      prevY: body.position.y,
+      prevAngle: body.angle,
       framesSettled: 0,
       startedAt: this.clock,
       width: body.plugin?.width ?? 100,
@@ -454,6 +556,11 @@ export class PhysicsSimulation {
        * is a new gesture and may always re-wake what the last one settled.
        */
       gesture?: number;
+      /**
+       * Direction of Drop, in degrees: 0 is right, 90 is down. Defaults to
+       * down, which is what "tipping the table" means to most people.
+       */
+      angle?: number;
     } = {}
   ): string[] {
     const spec = FORCE_SPECS[mode];
@@ -487,31 +594,36 @@ export class PhysicsSimulation {
      */
     this.applyScope(only);
 
+    // Candidates first, so that when more bodies are in reach than the budget
+    // allows, the ones nearest the force are the ones that move.
+    const candidates: { id: string; body: Matter.Body; dx: number; dy: number; dist: number }[] = [];
     this.bodies.forEach((body, id) => {
       if (skip?.has(id)) return;
       if (only && !only.has(id)) return;
       // Already came to rest during this same press: leave it alone.
       if (this.settledInGesture.get(id) === this.currentGesture) return;
-
       const dx = body.position.x - x;
       const dy = body.position.y - y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      // Out of range: untouched, and — unlike an earlier version — unclaimed.
+      // Out of range: untouched, and unclaimed.
       if (dist > radius) return;
+      candidates.push({ id, body, dx, dy, dist });
+    });
+    if (candidates.length > BODY_BUDGET - this.active.size) {
+      candidates.sort((p, q) => p.dist - q.dist);
+    }
 
+    const heading = ((options.angle ?? 90) * Math.PI) / 180;
+
+    for (const { id, body, dx, dy, dist } of candidates) {
       // Never scale by a non-finite mass; that is what produced NaN positions.
       const mass = finite(body.mass) ? body.mass : (body.plugin?.massProps?.mass ?? 1);
 
-      /**
-       * Directional fields fade with distance too.
-       *
-       * Wind and Drop used to apply their full strength anywhere inside the
-       * radius, whatever the falloff, so both had a hard rim you could feel:
-       * an object just inside the ring got the full push and one a pixel
-       * outside got none. They are fields like the others and behave like them.
-       */
+      // Directional fields fade with distance too, so there is no hard rim
+      // you can feel: an object just inside the ring and one just outside
+      // behave alike.
       const fade = falloffAt(curve, dist, radius);
-      if (fade <= 0) return;
+      if (fade <= 0) continue;
 
       if (mode === 'wind') {
         if (this.activate(id, body)) woken.push(id);
@@ -520,38 +632,34 @@ export class PhysicsSimulation {
           x: (options.dx ?? 0) * force,
           y: (options.dy ?? 0) * force,
         });
-        return;
+        continue;
       }
 
       if (mode === 'gravity') {
         if (this.activate(id, body)) woken.push(id);
+        const pull = fade * spec.strength * scale * mass;
         Matter.Body.applyForce(body, body.position, {
-          x: 0,
-          y: fade * spec.strength * scale * mass,
+          x: Math.cos(heading) * pull,
+          y: Math.sin(heading) * pull,
         });
-        return;
+        continue;
       }
 
       // A body directly under the cursor has no direction to travel in, and
       // dividing by that distance is another route to NaN.
-      if (dist <= 10) return;
+      if (dist <= 10) continue;
 
       if (this.activate(id, body)) woken.push(id);
       const force = fade * spec.strength * scale * mass;
 
       if (mode === 'swirl') {
-        /**
-         * The radial direction turned through 90°: `(-dy, dx)` normalised.
-         *
-         * Purely tangential, with no inward component at all, so objects orbit
-         * rather than spiral in. Matter's own drag is what eventually settles
-         * them; adding a pull here as well would make Swirl a slower Pull.
-         */
+        // The radial direction turned through 90 degrees: purely tangential,
+        // so objects orbit rather than spiral in.
         Matter.Body.applyForce(body, body.position, {
           x: (-dy / dist) * force,
           y: (dx / dist) * force,
         });
-        return;
+        continue;
       }
 
       const sign = mode === 'magnet' ? -1 : 1;
@@ -559,7 +667,7 @@ export class PhysicsSimulation {
         x: sign * (dx / dist) * force,
         y: sign * (dy / dist) * force,
       });
-    });
+    }
 
     return woken;
   }
@@ -605,6 +713,7 @@ export class PhysicsSimulation {
   launch(id: string, x: number, y: number, vx: number, vy: number): boolean {
     const body = this.bodies.get(id);
     if (!body || !finite(x) || !finite(y)) return false;
+    if (body.plugin?.locked === true) return false;
 
     wakeBody(body);
     // The body only tracks the document while static, so after a drag it still
@@ -616,6 +725,9 @@ export class PhysicsSimulation {
     // activate() no-ops once the body is already dynamic, so make sure the
     // entry exists with a fresh start time for the settle timeout.
     this.active.set(id, {
+      prevX: x,
+      prevY: y,
+      prevAngle: body.angle,
       framesSettled: 0,
       startedAt: this.clock,
       width: body.plugin?.width ?? 100,
@@ -644,20 +756,96 @@ export class PhysicsSimulation {
     return frozen;
   }
 
-  private toTransform(id: string, body: Matter.Body, entry: ActiveEntry): SimTransform | null {
+  /**
+   * The pose to draw, or to commit.
+   *
+   * With `alpha` the pose is interpolated between the start of the latest
+   * fixed step and its end, so a 120Hz display shows 120 distinct positions
+   * rather than the same one twice. Without it the pose is exact, which is
+   * what a commit needs.
+   */
+  private toTransform(id: string, body: Matter.Body, entry: ActiveEntry, alpha?: number): SimTransform | null {
     // Matter positions bodies by their centre of mass, which is exactly what a
     // Konva group wants; the document wants the top-left corner. Both are
     // returned so neither consumer has to remember to convert.
-    const centerX = body.position.x;
-    const centerY = body.position.y;
+    const t = alpha === undefined ? 1 : alpha;
+    const centerX = entry.prevX + (body.position.x - entry.prevX) * t;
+    const centerY = entry.prevY + (body.position.y - entry.prevY) * t;
+    const angle = entry.prevAngle + (body.angle - entry.prevAngle) * t;
     const x = centerX - entry.width / 2;
     const y = centerY - entry.height / 2;
-    const rotation = body.angle * (180 / Math.PI);
+    const rotation = angle * (180 / Math.PI);
     // A degenerate step must never escape the simulation. Downstream this
-    // would reach the document, and Y.Map stores NaN happily — `toJSON()`
-    // turns it into null, so the node loses its coordinates permanently.
+    // would reach the document, and Y.Map stores NaN happily, so the node
+    // would lose its coordinates permanently.
     if (!finite(x) || !finite(y) || !finite(rotation)) return null;
     return { id, x, y, centerX, centerY, rotation };
+  }
+
+  /** The most distance one fixed step may cover, and how many sub-steps it takes. */
+  private stepPlan(): { maxDistance: number; substeps: number } {
+    if (this.thicknessDirty) {
+      let min = Infinity;
+      this.bodies.forEach((b) => {
+        const t = Math.max(MIN_THICKNESS, Math.min(b.plugin?.width ?? Infinity, b.plugin?.height ?? Infinity));
+        if (t < min) min = t;
+      });
+      this.minThickness = min;
+      this.thicknessDirty = false;
+    }
+    const safe = this.minThickness * 0.5;
+    if (!finite(safe)) return { maxDistance: MAX_STEP_DISTANCE, substeps: 1 };
+    const maxDistance = Math.min(MAX_STEP_DISTANCE, safe * MAX_SUBSTEPS);
+    let fastest = 0;
+    this.active.forEach((_, id) => {
+      const body = this.bodies.get(id);
+      if (!body) return;
+      const speed = Matter.Body.getSpeed(body);
+      if (finite(speed) && speed > fastest) fastest = speed;
+    });
+    const substeps = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(Math.min(fastest, maxDistance) / safe)));
+    return { maxDistance, substeps };
+  }
+
+  /** One fixed step, split into sub-steps when something is fast enough to skip a body. */
+  private fixedStep(): void {
+    const { maxDistance, substeps } = this.stepPlan();
+
+    this.active.forEach((entry, id) => {
+      const body = this.bodies.get(id);
+      if (!body) return;
+      entry.prevX = body.position.x;
+      entry.prevY = body.position.y;
+      entry.prevAngle = body.angle;
+      const speed = Matter.Body.getSpeed(body);
+      if (finite(speed) && speed > maxDistance) {
+        const k = maxDistance / speed;
+        Matter.Body.setVelocity(body, { x: body.velocity.x * k, y: body.velocity.y * k });
+      }
+    });
+
+    if (substeps === 1) {
+      Matter.Engine.update(this.engine, FIXED_DT);
+      return;
+    }
+
+    // Matter clears applied force after every update. A force is a field held
+    // over the whole step, so each sub-step re-applies the same one.
+    const held = new Map<Matter.Body, { x: number; y: number; torque: number }>();
+    this.active.forEach((_, id) => {
+      const body = this.bodies.get(id);
+      if (body) held.set(body, { x: body.force.x, y: body.force.y, torque: body.torque });
+    });
+    for (let i = 0; i < substeps; i++) {
+      if (i > 0) {
+        held.forEach((f, body) => {
+          body.force.x = f.x;
+          body.force.y = f.y;
+          body.torque = f.torque;
+        });
+      }
+      Matter.Engine.update(this.engine, FIXED_DT / substeps);
+    }
   }
 
   /**
@@ -677,7 +865,7 @@ export class PhysicsSimulation {
 
     this.accumulator = Math.min(this.accumulator + Math.max(deltaMs, 0), FIXED_DT * MAX_STEPS_PER_FRAME);
     while (this.accumulator >= FIXED_DT - STEP_EPSILON) {
-      Matter.Engine.update(this.engine, FIXED_DT);
+      this.fixedStep();
       this.accumulator = Math.max(0, this.accumulator - FIXED_DT);
       this.clock += FIXED_DT;
 
@@ -703,11 +891,13 @@ export class PhysicsSimulation {
       this.collectSettled(settled);
     }
 
-    // Whatever is still active is still in flight.
+    // Whatever is still active is still in flight, drawn at the fraction of
+    // the next step the leftover time represents.
+    const alpha = Math.min(1, Math.max(0, this.accumulator / FIXED_DT));
     this.active.forEach((entry, id) => {
       const body = this.bodies.get(id);
       if (!body) return;
-      const transform = this.toTransform(id, body, entry);
+      const transform = this.toTransform(id, body, entry, alpha);
       if (transform) moving.push(transform);
     });
 

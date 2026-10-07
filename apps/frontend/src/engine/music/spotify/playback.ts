@@ -33,12 +33,16 @@ export function planPlayback(opts: {
 interface SpotifyPlayerLike {
   connect(): Promise<boolean>;
   disconnect(): void;
-  addListener(event: string, cb: (arg: { device_id?: string; message?: string }) => void): void;
+  addListener(event: string, cb: (arg: { device_id?: string; message?: string } & Record<string, unknown>) => void): void;
   setVolume(v: number): Promise<void>;
   togglePlay(): Promise<void>;
   pause(): Promise<void>;
   resume(): Promise<void>;
   activateElement?(): Promise<void>;
+  seek(ms: number): Promise<void>;
+  nextTrack(): Promise<void>;
+  previousTrack(): Promise<void>;
+  removeListener?(event: string): void;
 }
 
 declare global {
@@ -110,6 +114,7 @@ export async function ensureSdkDevice(volume: number): Promise<SdkResult> {
       p.addListener('account_error', () => resolve({ deviceId: null, failure: 'account' }));
       setTimeout(() => resolve(unavailable), 8000);
     });
+    p.addListener('player_state_changed', (s) => stateListener?.(s));
     // Chrome requires activation inside the click that started playback.
     await p.activateElement?.();
     const ok = await p.connect();
@@ -124,6 +129,34 @@ export async function ensureSdkDevice(volume: number): Promise<SdkResult> {
     return result;
   } catch {
     return unavailable;
+  }
+}
+
+type StateListener = (state: unknown) => void;
+let stateListener: StateListener | null = null;
+
+/** Receives every state change of the in-tab player (track, position, pause, shuffle, repeat). One listener at a time. */
+export function onSdkState(fn: StateListener | null): void {
+  stateListener = fn;
+}
+
+export async function seekSdk(ms: number): Promise<boolean> {
+  if (!player) return false;
+  try {
+    await player.seek(Math.max(0, Math.round(ms)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function skipSdk(direction: 1 | -1): Promise<boolean> {
+  if (!player) return false;
+  try {
+    await (direction === 1 ? player.nextTrack() : player.previousTrack());
+    return true;
+  } catch {
+    return false;
   }
 }
 

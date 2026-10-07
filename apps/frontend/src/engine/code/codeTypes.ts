@@ -27,6 +27,19 @@ export interface CodeSpec {
   /** Where it came from — `api/users.ts`. Drawn in the header when set. */
   filename?: string;
   theme: CodeThemeId;
+  /**
+   * Show the light or dark partner of `theme` to match the viewer's board:
+   * Midnight with Daylight, Dusk with Paper. A block on a shared board then
+   * reads as part of whichever theme each person is in, while its colours stay
+   * a deliberate pair rather than an inversion.
+   */
+  followBoard?: boolean;
+  /**
+   * Read the block as a change: lines starting `+` are added, `-` removed and
+   * `@@` a hunk header, drawn as tinted rows with the marker in the margin.
+   * The rest of each line is still highlighted in `language`.
+   */
+  diff?: boolean;
   lineNumbers: boolean;
   wrap: boolean;
   /** World units, like every other size on the board. */
@@ -88,6 +101,8 @@ export function normalizeCodeSpec(raw: unknown): CodeSpec {
     detected: src.detected === true ? true : undefined,
     filename: typeof src.filename === 'string' && src.filename.trim() ? src.filename.slice(0, 120) : undefined,
     theme,
+    followBoard: src.followBoard === true ? true : undefined,
+    diff: src.diff === true ? true : undefined,
     lineNumbers: src.lineNumbers !== false,
     wrap: src.wrap !== false,
     fontSize,

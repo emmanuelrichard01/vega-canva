@@ -1,8 +1,7 @@
-import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ExternalLink, Heart, MoreHorizontal, RefreshCw, X } from 'lucide-react';
 import { spotifyConfigured } from '../../engine/music/spotify/auth';
 import {
-  chooseDevice,
   connectSpotify,
   dismissSpotifyError,
   loadLibrary,
@@ -13,6 +12,7 @@ import {
 } from '../../engine/music/spotify/spotifyStore';
 import { openInSpotifyUrl, type SpotifyPlaylist, type SpotifyProfile } from '../../engine/music/spotify/api';
 import { DEV_MODE_MESSAGE } from '../../engine/music/spotify/messages';
+import { useDismiss } from './hooks';
 
 /** Show the search field once a library is long enough to need it. */
 const SEARCH_FROM = 6;
@@ -96,25 +96,8 @@ const Account: React.FC<{ profile: SpotifyProfile | null }> = ({ profile }) => {
   const root = useRef<HTMLDivElement>(null);
   const menuId = useId();
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => {
-      if (!root.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        setOpen(false);
-        root.current?.querySelector<HTMLButtonElement>('[aria-haspopup]')?.focus();
-      }
-    };
-    document.addEventListener('pointerdown', onDown, true);
-    document.addEventListener('keydown', onKey, true);
-    return () => {
-      document.removeEventListener('pointerdown', onDown, true);
-      document.removeEventListener('keydown', onKey, true);
-    };
-  }, [open]);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(open, root, close);
 
   const name = profile?.name ?? 'Spotify';
   return (
@@ -169,15 +152,12 @@ const Library: React.FC<{ volume: number }> = ({ volume }) => {
   const spotify = useSpotify();
   const [query, setQuery] = useState('');
   const searchId = useId();
-  const premium = spotify.profile?.product === 'premium';
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
     return q ? spotify.playlists.filter((p) => p.name.toLowerCase().includes(q)) : spotify.playlists;
   }, [spotify.playlists, query]);
 
-  const route = spotify.route;
-  const deviceId = route?.kind === 'device' ? route.deviceId : '';
 
   return (
     <>
@@ -207,27 +187,6 @@ const Library: React.FC<{ volume: number }> = ({ volume }) => {
             </a>
           )}
         </div>
-      )}
-
-      {premium && spotify.current && spotify.devices.length > 0 && (
-        <label className="music-device">
-          <span>Play on</span>
-          <select
-            className="music-select"
-            value={deviceId}
-            onChange={(e) => {
-              const device = spotify.devices.find((d) => d.id === e.target.value);
-              if (device) void chooseDevice(device, volume);
-            }}
-          >
-            {deviceId === '' && <option value="">This board</option>}
-            {spotify.devices.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
-        </label>
       )}
 
       {spotify.error && (

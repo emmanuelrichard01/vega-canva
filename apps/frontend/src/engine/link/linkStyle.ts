@@ -14,5 +14,8 @@ export const LINK_CARD = {
   faint: '#98A2B3',
   mediaGround: '#F2F4F7',
   skeleton: '#EAECF0',
+  /** The broken-link pill: red ink on a pale red ground, 6.3:1. */
+  failGround: '#FEF3F2',
+  failInk: '#B42318',
   font: 'Inter, system-ui, -apple-system, sans-serif',
 } as const;

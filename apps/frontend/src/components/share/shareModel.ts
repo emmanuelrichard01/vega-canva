@@ -1,4 +1,5 @@
 import type { RoomRole } from '../../engine/model/permissions';
+import { withFollowParam } from '../../engine/presence/followLink';
 
 /**
  * The Share dialog's decisions, apart from its drawing, so they can be tested:
@@ -62,12 +63,13 @@ export function mintRecovery(state: MintState): string | null {
 /**
  * The link to show for `role`, or `null` while there is none.
  *
- * An edit link is the board's own address. A restricted role never falls back
+ * An edit link is the board's own address unless the server requires signed
+ * links (`signed`). A signed link never falls back
  * to that address, even while its signed link is on its way or has failed:
  * showing it would hand out edit rights in a field labelled "view".
  */
-export function linkToShow(role: RoomRole, fullAccessLink: string, mint: MintState): string | null {
-  if (role === 'editor') return fullAccessLink;
+export function linkToShow(role: RoomRole, fullAccessLink: string, mint: MintState, signed = role !== 'editor'): string | null {
+  if (!signed) return fullAccessLink;
   return mint.kind === 'ready' && mint.role === role ? mint.url : null;
 }
 
@@ -90,4 +92,68 @@ export function expiryDate(seconds: number, now = Date.now()): string | null {
     month: 'long',
     year: sameYear ? undefined : 'numeric',
   });
+}
+
+/**
+ * Whether this server only lets people in with a signed link.
+ *
+ * It matters more than any other fact in the dialog, because it decides what
+ * a link can honestly be called. The server does not announce it directly; its
+ * board-status route answers `restricted` exactly when the setting is on, so
+ * that answer is what is read here.
+ */
+export type Enforcement = 'unknown' | 'on' | 'off';
+
+export function readEnforcement(status: number, body: unknown): Enforcement {
+  if (status < 200 || status >= 300) return 'unknown';
+  const restricted = (body as { restricted?: unknown } | null)?.restricted;
+  if (restricted === true) return 'on';
+  if (restricted === false) return 'off';
+  return 'unknown';
+}
+
+/**
+ * Whether the link for `role` must be signed.
+ *
+ * Restricted roles always are. An edit link is the board's own address, until
+ * the server stops accepting bare addresses, when it too has to be signed.
+ */
+export function linkNeedsToken(role: RoomRole, enforcement: Enforcement): boolean {
+  return role !== 'editor' || enforcement === 'on';
+}
+
+/** What a role lets someone do, said only as strongly as the server will back up. */
+export function roleBlurb(role: RoomRole, enforcement: Enforcement): string {
+  if (role === 'editor') return 'Draw, move and delete anything, and share the board onward.';
+  const held = enforcement === 'on';
+  if (role === 'commenter') return held ? 'Read the board and leave comments. The server refuses edits.' : 'Read the board and leave comments. Drawing tools stay hidden.';
+  return held ? 'Look around and export. The server refuses edits.' : 'Look around and export. Editing is switched off.';
+}
+
+/**
+ * The plain statement under the link about what it does and does not protect.
+ *
+ * Never stronger than the facts: with enforcement off, a board's bare address
+ * still opens it with full access, so a view or comment link is a way to hand
+ * someone a narrower door, not a lock on the others.
+ */
+export function securityNote(role: RoomRole, enforcement: Enforcement, signingAvailable: boolean): string {
+  if (!signingAvailable) {
+    return 'Comment and view links have to be signed by the server, and this one has no signing key. Only edit links can be shared until SHARE_SECRET is set.';
+  }
+  if (enforcement === 'on') {
+    return role === 'editor'
+      ? 'This server only opens boards with a signed link. Anyone with this one can edit, and a link that is out cannot be taken back.'
+      : 'This server only opens boards with a signed link, so this one is held to its access. Expiry is checked by the server.';
+  }
+  if (role === 'editor') {
+    return 'There are no accounts on this board, so the link is the key. Anyone who has it, or the board address, can edit, and a link that is out cannot be taken back.';
+  }
+  return 'Signed so it cannot be edited into an edit link. The board address still opens with full access on this server, so this narrows what you hand over, not who else can get in.';
+}
+
+/** The link with follow mode switched on, when there is someone to follow. */
+export function presentLink(link: string | null, authorId: string | undefined, on: boolean): string | null {
+  if (!link || !on || !authorId) return link;
+  return withFollowParam(link, authorId);
 }

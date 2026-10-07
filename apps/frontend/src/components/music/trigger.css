@@ -23,6 +23,29 @@
   outline-offset: 1px;
 }
 
+/* The compact player: the title beside the record, trimmed, and only where there is room. */
+.btn-icon.music-trigger--line {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  gap: 6px;
+  padding: 0 var(--space-2) 0 7px;
+  border-radius: var(--radius-pill);
+}
+.music-trigger--line.is-playing::after { inset: 2px; }
+.music-trigger__line {
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+@media (max-width: 760px) {
+  .music-trigger__line { display: none; }
+  .btn-icon.music-trigger--line { display: grid; width: var(--btn-size, var(--control-h-md)); padding: 0; }
+}
+
 .vinyl-glyph { display: block; flex: none; }
 /* Cut from the surface colour, so the record reads in every theme. A context may override either. */
 .vinyl-glyph__groove { stroke: var(--vinyl-groove, color-mix(in srgb, var(--surface-elevated) 78%, transparent)); }
@@ -50,6 +73,7 @@
   z-index: var(--z-popover);
   box-sizing: border-box;
   width: 340px;
+  max-width: calc(100vw - 16px);
   padding: var(--space-4);
   overflow-y: auto;
   overscroll-behavior: contain;

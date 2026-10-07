@@ -1,5 +1,6 @@
 import type { CursorMode } from './toolCursor';
 import { contrastRatio } from './remoteCursor';
+import { FORCE_IDS, type ForceId } from '../physics/forces';
 
 /**
  * What the pointer looks like, as a value.
@@ -225,6 +226,10 @@ const GLYPHS: Record<string, string> = {
    */
   table: '<path d="M4 5h16v14H4zM4 10h16M10 10v9"/>',
   frame:'<path d="M4 8h16M4 16h16M8 4v16M16 4v16"/>',
+  // Two links of a chain: a rounded bracket each, offset along the diagonal.
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  // Angle brackets: two strokes, no small features.
+  code: '<path d="M8.5 7 3.5 12l5 5M15.5 7l5 5-5 5"/>',
   image: '<path d="M3.5 5h17v14h-17zM3.5 16l5-5 4 4 3-3 5 5"/>',
   audio: '<path d="M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5.5 11a6.5 6.5 0 0 0 13 0"/>',
   'direct-select': '<path d="M5 18C6 10 11 8 19 5"/><circle cx="5" cy="18" r="2.6"/><circle cx="19" cy="5" r="2.6"/>',
@@ -524,9 +529,14 @@ export function zoomVisual(direction: 'in' | 'out', dark = cursorTheme.dark): Cu
 }
 
 /** Badge glyphs for pointer states rather than tools. */
+/** The record colour: 4.9:1 on the light disc, 3.4:1 on the dark one. */
+export const RECORD_RED = '#D92D20';
+
 const STATE_GLYPHS = {
   'not-allowed': '<circle cx="12" cy="12" r="7.6"/><path d="M6.8 17.2 17.2 6.8"/>',
   busy: '<path d="M6 12h.01M12 12h.01M18 12h.01"/>',
+  // The one filled badge: a stroked ring would read as not-allowed at this size.
+  recording: `<circle cx="12" cy="12" r="5.6" fill="${RECORD_RED}" stroke="none"/>`,
 } as const;
 
 export type PointerState = keyof typeof STATE_GLYPHS;
@@ -618,6 +628,8 @@ export interface CursorOptions {
   ink?: string;
   /** The eraser's width in screen px. */
   eraserSize?: number;
+  /** Brush erases what the ring touches; lasso erases what a loop encloses. */
+  eraserMode?: 'brush' | 'lasso';
 }
 
 /**
@@ -639,7 +651,12 @@ export function cursorVisual(
   if (tool === 'pen' && mode === 'draw') {
     return drawVisual(options.brush ?? 'pen', options.ink ?? (dark ? PAPER : INK), dark);
   }
-  if (mode === 'erase') return eraserVisual(options.eraserSize ?? 20, dark);
+  if (mode === 'erase') {
+    return options.eraserMode === 'lasso'
+      ? lassoVisual(dark)
+      : eraserVisual(options.eraserSize ?? 20, dark);
+  }
+  if (mode === 'aim' && tool && isForceId(tool)) return forceVisual(tool, accent, dark);
   if (mode === 'comment') return commentVisual(dark);
   if (tool === 'bezier-pen') return penVisual('place', dark);
 
@@ -1206,5 +1223,115 @@ export function moveVisual(dark = cursorTheme.dark): CursorVisual {
     ),
     offsetX: -c,
     offsetY: -c,
+  };
+}
+
+
+/* ------------------------------------------------------------- forces */
+
+const isForceId = (tool: string): tool is ForceId => (FORCE_IDS as readonly string[]).includes(tool);
+
+/** One mark in the set's house style: a wide halo under a 1.5px line. */
+function mark(d: string, p: CursorPalette, width = 1.5, extra = ''): string {
+  return (
+    `<path d="${d}" stroke="${p.body}" stroke-width="${esc(width + 2.1)}"${extra}/>` +
+    `<path d="${d}" stroke="${p.edge}" stroke-width="${width}"${extra}/>`
+  );
+}
+
+/** The field ring: the reach, drawn thin so the direction marks inside it lead. */
+const FIELD_RING = 'M2.2 14a11.8 11.8 0 1 0 23.6 0a11.8 11.8 0 1 0-23.6 0';
+const RING_WIDTH = 1.1;
+const CHEVRON_IN = 'M11.5 6.6 14 9.4l2.5-2.8';
+const CHEVRON_OUT = 'M11.5 9.2 14 6.4l2.5 2.8';
+
+/** A chevron on each of the four axes, so the direction reads from any side. */
+const onAxes = (d: string, p: CursorPalette) =>
+  [0, 90, 180, 270].map((a) => `<g transform="rotate(${a} 14 14)">${mark(d, p)}</g>`).join('');
+
+/**
+ * The force pointers: radius and direction, on the pointer itself.
+ *
+ * Each draws a dashed ring (the field's reach at a size a pointer can carry;
+ * the true radius is drawn on the board) with a direction mark inside it:
+ * chevrons in for attract and out for repel, a streak for wind, a drop for
+ * gravity, a turn for swirl and nested rings for shockwave. The accent dot at
+ * the centre is the point the press lands on.
+ */
+export function forceVisual(force: ForceId, accent: string, dark = cursorTheme.dark): CursorVisual {
+  const p = paletteFor(dark);
+  const dot = `<circle cx="14" cy="14" r="1.7" fill="${accent}" stroke="${p.body}" stroke-width="1.1"/>`;
+  const ring = mark(FIELD_RING, p, RING_WIDTH);
+  let art: string;
+  switch (force) {
+    case 'magnet':
+      art = ring + onAxes(CHEVRON_IN, p);
+      break;
+    case 'repel':
+      art = ring + onAxes(CHEVRON_OUT, p);
+      break;
+    case 'wind':
+      art = ring + mark('M6.5 14h12M15.6 10.8l3.4 3.2-3.4 3.2M8 9.6h6M10 18.4h5', p);
+      break;
+    case 'gravity':
+      art = ring + mark('M14 6.4v13M10.2 15.8 14 19.6l3.8-3.8', p);
+      break;
+    case 'swirl':
+      art = ring + mark('M20.5 14A6.5 6.5 0 1 1 14 7.5M12.2 5.3l2.9 2.2-2.9 2.2', p);
+      break;
+    case 'shockwave':
+    default:
+      art =
+        mark('M10 14a4 4 0 1 0 8 0a4 4 0 1 0-8 0', p) +
+        mark('M6 14a8 8 0 1 0 16 0a8 8 0 1 0-16 0', p) +
+        mark(FIELD_RING, p, RING_WIDTH);
+  }
+  return {
+    id: tagged(`force:${force}:${accent}:${dark ? 'd' : 'l'}`),
+    svg: svgWrap(art + dot),
+    offsetX: -CENTRE.x,
+    offsetY: -CENTRE.y,
+  };
+}
+
+/* ------------------------------------------------- connector, lasso */
+
+/**
+ * The connector pointer over a port it will snap to.
+ *
+ * A ring closing round the exact point with four ticks and the accent dot
+ * inside: the same "this is the point" mark the force pointers use, tightened,
+ * so it reads as the pointer having been caught by the port.
+ */
+export function portVisual(accent: string, dark = cursorTheme.dark): CursorVisual {
+  const p = paletteFor(dark);
+  return {
+    id: tagged(`port:${accent}:${dark ? 'd' : 'l'}`),
+    svg: svgWrap(
+      mark('M7.6 14a6.4 6.4 0 1 0 12.8 0a6.4 6.4 0 1 0-12.8 0', p, 1.7) +
+        mark('M14 2.8v3.4M14 21.8v3.4M2.8 14h3.4M21.8 14h3.4', p) +
+        `<circle cx="14" cy="14" r="2.1" fill="${accent}" stroke="${p.body}" stroke-width="1.1"/>`
+    ),
+    offsetX: -CENTRE.x,
+    offsetY: -CENTRE.y,
+  };
+}
+
+/** Where the lasso's tail ends: the point the loop starts from. */
+export const LASSO_TIP: Hotspot = { x: 4, y: 24 };
+
+/** The lasso eraser: a dashed loop on a tail, hot at the tail's end. */
+export function lassoVisual(dark = cursorTheme.dark): CursorVisual {
+  const p = paletteFor(dark);
+  const loop = 'M14 3.2c5.3 0 9.6 2.7 9.6 6.2s-4.3 6.2-9.6 6.2S4.4 12.9 4.4 9.4 8.7 3.2 14 3.2z';
+  return {
+    id: tagged(`lasso:${dark ? 'd' : 'l'}`),
+    svg: svgWrap(
+      mark(loop, p, 1.5, ' stroke-dasharray="3 2.6"') +
+        mark('M7.6 14.8 5.4 19.6 4 24', p) +
+        `<circle cx="${LASSO_TIP.x}" cy="${LASSO_TIP.y}" r="1.5" fill="${p.edge}" stroke="${p.body}" stroke-width="1.1"/>`
+    ),
+    offsetX: -LASSO_TIP.x,
+    offsetY: -LASSO_TIP.y,
   };
 }

@@ -1,647 +1,669 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import * as Y from 'yjs';
-import { Play, Pause, SkipBack, SkipForward, X, History, Loader2, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, AlertTriangle } from 'lucide-react';
-import { roomHistoryUrl, roomRequestHeaders } from '../utils/endpoints';
+import { AlertTriangle, ChevronUp, History, Loader2, RotateCw, X } from 'lucide-react';
 import { cameraSystem } from '../engine/CameraSystem';
 import { fitPose, type FitBounds } from '../engine/cameraFit';
+import { doc, groupsMap, localAuthor, normalizeNode, objectsMap, undoManager } from '../engine/document';
+import { getRoomRole, subscribeRoomRole } from '../engine/model/permissions';
+import { nodeLabel } from '../engine/model/nodeLabel';
+import { writeClipboard } from '../engine/clipboard/clipboard';
+import { notify, notifyUndoable } from '../engine/ui/notices';
+import type { AnyNode } from '../engine/model/schema';
+import { changedBetween, type Frame, type FrameState, type ObjectJson } from '../engine/history/frames';
+import { diffFrames, type FrameDiff } from '../engine/history/diff';
+import { restoreVersion } from '../engine/history/restore';
+import { planSize } from '../engine/history/restorePlan';
+import { watchLiveChanges } from '../engine/history/liveChanges';
+import { OBJECT_HISTORY_EVENT, takeObjectHistoryRequest } from '../engine/history/objectHistory';
+import type { Moment } from '../engine/history/sessionTimeline';
+import type { VersionMeta } from '../engine/history/historyApi';
 import {
-  activityBuckets,
-  buildTimeline,
-  decodeBase64Update,
-  materialiseAt,
-  type Moment,
-  type RawUpdate,
-  type SessionTimeline,
-} from '../engine/history/sessionTimeline';
+  clockLabel,
+  clockRange,
+  dayLabel,
+  groupSessions,
+  momentsTouching,
+  sessionOf,
+  stepSession,
+} from '../engine/history/sessions';
+import { layoutTrack } from '../engine/history/trackLayout';
+import { ChangesOverlay } from './replay/ChangesOverlay';
+import { ReplayBanner } from './replay/ReplayBanner';
+import { ReplayTimeline, type Speed } from './replay/ReplayTimeline';
+import { VersionsPanel } from './replay/VersionsPanel';
+import { useReplayHistory } from './replay/useReplayHistory';
+import { useVersions } from './replay/useVersions';
+import type { FilterOption } from './replay/ObjectFilter';
+import type { TrackMarker } from './replay/ReplayTrack';
+import './replay/replay.css';
 
 interface TimeTravelBarProps {
   roomId: string;
   onClose: () => void;
   /**
-   * @param changedIds Exactly which nodes differ from the previous frame, or
-   *   `null` when that is not knowable (a rewind rebuilds the document).
+   * Show a frame on the canvas, or `null` to hand it back to the live
+   * document.
+   * @param changedIds Ids that differ from the previous frame.
    */
-  onApplySnapshot: (objects: Record<string, any> | null, changedIds?: string[] | null) => void;
-}
-
-const SPEEDS = [1, 2, 4, 8];
-
-/**
- * The most transactions this will replay, matching the server's own retention
- * cap. Building a timeline is synchronous, so this is the bound on how long
- * opening Time Travel can block the tab.
- */
-const MAX_REPLAY_UPDATES = 400;
-
-/**
- * Room left below the framed session for the bar itself.
- *
- * The instrument sits along the bottom edge and is opaque, so fitting to the
- * bare viewport would tuck the lowest objects underneath it — and on a replay
- * the whole point is that nothing is hidden. Generous rather than exact,
- * because the bar's height changes with its content (the trimmed-history
- * notice adds a line) and a fit that has to be recomputed when a notice
- * appears is a camera that moves for no reason a viewer can see.
- */
-const REPLAY_BOTTOM_CLEARANCE = 190;
-
-/**
- * Put the whole session on screen before anything plays.
- *
- * On an infinite canvas the camera is wherever it was left, and the history
- * being replayed is very often somewhere else entirely — so playback ran with
- * most of it outside the viewport, which reads as objects simply never
- * appearing. Framing once on entry, against the union of everywhere the
- * session ever reached, means nothing is clipped at any point along it.
- *
- * Done once rather than per moment on purpose: a camera that re-fits on every
- * step chases the content around and is far harder to follow than a fixed
- * frame you can watch things move within.
- */
-function frameSession(bounds: FitBounds | null) {
-  if (!bounds) return;
-  const pose = fitPose(
-    bounds,
-    cameraSystem.width,
-    Math.max(cameraSystem.height - REPLAY_BOTTOM_CLEARANCE, 200),
-    { ...cameraSystem.zoomLimits }
-  );
-  if (!pose) return;
   /**
-   * No further correction: shortening the viewport is the whole adjustment.
-   *
-   * `fitPose` centres within whatever height it is handed, and it was handed
-   * the height *above* the bar — so the content already lands in the middle of
-   * the clear strip, measured from the top of the screen. Shifting again would
-   * move it up by another half-clearance, out of the space it was just fitted
-   * into.
+   * The frame for the canvas, the ids that changed since the last one, and the
+   * frame without the removed-object ghosts, for lists such as Layers that
+   * should show only what existed at that moment.
    */
-  cameraSystem.setPose(pose.x, pose.y, pose.zoom);
+  onApplySnapshot: (
+    objects: Record<string, any> | null,
+    changedIds?: string[] | null,
+    listed?: Record<string, any> | null
+  ) => void;
 }
 
-/** Columns in the activity strip. Enough to show rhythm, few enough to read. */
-const ACTIVITY_COLUMNS = 64;
+type Cursor = { kind: 'moment'; index: number } | { kind: 'version'; id: number };
+
+interface Shown {
+  state: FrameState;
+  base: FrameState | null;
+}
+
+const EMPTY_MOMENTS: Moment[] = [];
+
+/** Space kept clear of the banner and the timeline when framing the session. */
+const TOP_CLEARANCE = 72;
+const BOTTOM_CLEARANCE = 210;
+const PANEL_CLEARANCE = 332;
+
+function readPref(key: string, fallback: boolean): boolean {
+  try {
+    const v = window.localStorage.getItem(key);
+    return v === null ? fallback : v === '1';
+  } catch {
+    return fallback;
+  }
+}
+
+function usePref(key: string, fallback: boolean): [boolean, (v: boolean) => void] {
+  const [value, setValue] = useState(() => readPref(key, fallback));
+  const set = useCallback(
+    (v: boolean) => {
+      setValue(v);
+      try {
+        window.localStorage.setItem(key, v ? '1' : '0');
+      } catch {
+        /* a preference that cannot be stored is still applied for this visit */
+      }
+    },
+    [key]
+  );
+  return [value, set];
+}
+
+function useRoomRole() {
+  const [role, setRole] = useState(getRoomRole);
+  useEffect(() => subscribeRoomRole(setRole), []);
+  return role;
+}
+
+/** Frame the session once, in the space the replay chrome leaves clear. */
+function frameSession(bounds: FitBounds | null, panelOpen: boolean) {
+  if (!bounds) return;
+  const width = cameraSystem.width - (panelOpen ? PANEL_CLEARANCE : 0);
+  const height = Math.max(cameraSystem.height - TOP_CLEARANCE - BOTTOM_CLEARANCE, 200);
+  const pose = fitPose(bounds, Math.max(width, 240), height, { ...cameraSystem.zoomLimits });
+  if (pose) cameraSystem.setPose(pose.x, pose.y + TOP_CLEARANCE, pose.zoom);
+}
+
+/** Removed objects, drawn faded so the board shows what was taken away. */
+const ghosts = new WeakMap<ObjectJson, ObjectJson>();
+function ghostOf(json: ObjectJson): ObjectJson {
+  let ghost = ghosts.get(json);
+  if (!ghost) {
+    const opacity = typeof json.opacity === 'number' ? json.opacity : 1;
+    ghost = { ...json, opacity: opacity * 0.28, locked: true };
+    ghosts.set(json, ghost);
+  }
+  return ghost;
+}
+
+/** Index of the moment closest in time to `at`. */
+function momentNear(moments: readonly Moment[], at: number): number {
+  let lo = 0;
+  let hi = moments.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (moments[mid].at < at) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo > 0 && Math.abs(moments[lo - 1].at - at) <= Math.abs(moments[lo].at - at)) return lo - 1;
+  return lo;
+}
+
+const timeWithSeconds = (at: number) =>
+  new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+const versionTitle = (v: VersionMeta) =>
+  v.kind === 'named' && v.name
+    ? v.name
+    : `Autosave, ${dayLabel(Date.parse(v.endedAt))}, ${clockRange(Date.parse(v.startedAt), Date.parse(v.endedAt))}`;
 
 /**
- * Time Travel — replays the room's authoring history as a sequence of moments.
+ * Version history: the board as it stood at any change in the log, at any
+ * autosave, or at any named version, read-only, with what changed outlined.
  *
- * ## What the redesign fixed
- *
- * The previous bar looked busy and behaved worse, for three reasons that were
- * all invisible in the source until you tried to use it:
- *
- *  1. **The moment ticks could not be clicked.** They were absolutely
- *     positioned `<button>`s, and a transparent `<input type="range">` was laid
- *     over the whole track at `z-index: 2` to do the scrubbing. The input ate
- *     every press, so the buttons' tooltips never appeared and clicking a
- *     specific moment quietly did whatever the slider decided instead. Two
- *     interactive layers over the same pixels, one of them a decoy.
- *  2. **The ticks claimed to show something they did not.** They sat at
- *     `i / (count - 1)` — evenly spaced *by index* — under a comment saying
- *     they showed "where the session was busy instead of spacing steps
- *     evenly". Index spacing is precisely what cannot show that: a frantic
- *     minute and a slow afternoon draw the same row of dots.
- *  3. **On a long session they piled into a smear.** One 9px dot per moment
- *     with no lower bound on spacing, so a few hundred moments overlapped into
- *     a grey band — the "messy" part.
- *
- * ## The shape it takes now
- *
- * Two axes, each used for the thing it is good at:
- *
- *  - The **activity strip** is wall-clock time. It answers "when was this
- *     session busy, and who was working", which is the question the old
- *     comment was reaching for, and it stays legible at any number of moments
- *     because it is a fixed number of columns rather than one mark per edit.
- *  - The **scrub track** is index. Every moment is equally reachable however
- *     long the pause before it was, which is what you want when navigating
- *     rather than surveying.
- *
- * One interactive element per row, so nothing is layered over anything else.
- *
- * ## Why play/pause is K and not Space
- *
- * Space is held to pan the canvas, and that binding lives in `Canvas` on the
- * same `window`. Both fired: pressing Space during replay toggled playback
- * *and* armed the hand tool. Panning around the board to look at the replayed
- * state is a thing you genuinely want here, so Space stays with the canvas and
- * transport takes `K` — which is what every video editor uses anyway.
+ * Owns the replay session from open to close. The canvas is driven through
+ * `onApplySnapshot`, which sets the store's `isReplaying` so tools, derived
+ * writers and live observers all stand down; leaving hands the canvas back to
+ * the live document. Restore leaves first and then writes, so the restore is
+ * an ordinary edit that everything downstream sees.
  */
 export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, onApplySnapshot }) => {
-  const [updates, setUpdates] = useState<RawUpdate[]>([]);
-  const [timeline, setTimeline] = useState<SessionTimeline | null>(null);
-  const [momentIndex, setMomentIndex] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [speed, setSpeed] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  /** Updates retention has discarded, as reported by the server. */
-  const [trimmedCount, setTrimmedCount] = useState(0);
+  const history = useReplayHistory(roomId);
+  const versions = useVersions(roomId);
+  const role = useRoomRole();
+  const canEdit = role === 'editor';
 
-  /**
-   * Hidden, but still replaying.
-   *
-   * The same affordance the forces panel has, for the same reason: the
-   * instrument sits over the bottom of the board, and the moment you want to
-   * *look* at what you have scrubbed to is the moment it is in the way. The
-   * preference is remembered, because someone who works this way works this
-   * way every time.
-   */
-  const [collapsed, setCollapsed] = useState(
-    () => window.localStorage.getItem('vega_timetravel_collapsed') === '1'
+  const moments = history.timeline?.moments ?? EMPTY_MOMENTS;
+  const sessions = useMemo(() => groupSessions(moments), [moments]);
+  const layout = useMemo(() => layoutTrack(moments, sessions), [moments, sessions]);
+
+  const [cursor, setCursor] = useState<Cursor | null>(null);
+  const [filterId, setFilterId] = useState<string | null>(() => takeObjectHistoryRequest());
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState<Speed>(1);
+  const [showChanges, setShowChanges] = usePref('vega_replay_changes', true);
+  const [versionsOpen, setVersionsOpen] = usePref(
+    'vega_replay_versions',
+    typeof window !== 'undefined' && window.innerWidth >= 1100
   );
-  const setCollapsedPref = (val: boolean) => {
-    window.localStorage.setItem('vega_timetravel_collapsed', val ? '1' : '0');
-    setCollapsed(val);
-  };
+  const [collapsed, setCollapsed] = usePref('vega_timetravel_collapsed', false);
+  const [liveChanges, setLiveChanges] = useState(0);
+  const [shown, setShown] = useState<Shown | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  /** The state the retained log builds on. See `BuildOptions.baseline`. */
-  const baselineRef = useRef<Uint8Array | null>(null);
-  const playbackTimerRef = useRef<any>(null);
-  const replayRef = useRef<{ doc: Y.Doc; appliedThrough: number } | null>(null);
-
-  /**
-   * Latest `onApplySnapshot`, for the unmount cleanup that restores live state.
-   *
-   * `Room` passes this as an inline arrow, so its identity changes on every one
-   * of `Room`'s renders. Naming it as a dependency of the fetch effect would
-   * re-run that effect constantly — refetching the log, resetting the playhead
-   * and destroying the replay doc mid playback.
-   */
-  const onApplySnapshotRef = useRef(onApplySnapshot);
+  const onApplyRef = useRef(onApplySnapshot);
   useEffect(() => {
-    onApplySnapshotRef.current = onApplySnapshot;
+    onApplyRef.current = onApplySnapshot;
   }, [onApplySnapshot]);
+  const emitted = useRef<Frame>({});
+  /** Set once the canvas has been handed back, so it is not handed back twice. */
+  const released = useRef(false);
 
+  // Hand the canvas back to the live document however this closes.
+  useEffect(
+    () => () => {
+      if (!released.current) onApplyRef.current(null);
+    },
+    []
+  );
+
+  useEffect(() => watchLiveChanges(doc, [objectsMap, groupsMap], setLiveChanges), []);
+
+  // Another "Show history" while open re-targets the filter.
   useEffect(() => {
-    let cancelled = false;
-    async function fetchHistory() {
-      try {
-        const res = await fetch(roomHistoryUrl(roomId), { headers: roomRequestHeaders() });
-        if (!res.ok) throw new Error(`Server responded ${res.status}`);
-        const data = await res.json();
-        if (cancelled) return;
-        const all: RawUpdate[] = data.updates ?? [];
-        /**
-         * A ceiling on what this will attempt, independent of the server.
-         *
-         * The endpoint bounds its own response now, but it did not always, and
-         * a client that trusts a server to hand it a reasonable amount of work
-         * has no defence when it does not: building a timeline is synchronous
-         * main-thread work, so an oversized log froze the tab outright rather
-         * than loading slowly. Keeping the most recent window means an old or
-         * misconfigured server degrades to "history starts later than it might"
-         * instead of to an unresponsive page.
-         */
-        const rows = all.length > MAX_REPLAY_UPDATES ? all.slice(-MAX_REPLAY_UPDATES) : all;
-        const withheld = all.length - rows.length;
-        setTrimmedCount(
-          (data.trimmed ? Number(data.trimmedCount ?? 0) : 0) + withheld
-        );
-        if (rows.length > 0) {
-          const baseline = typeof data.baseline === 'string' ? decodeBase64Update(data.baseline) : null;
-          baselineRef.current = baseline;
-          const built = buildTimeline(rows, { baseline });
-          setUpdates(rows);
-          setTimeline(built);
-          setMomentIndex(Math.max(0, built.moments.length - 1));
-          frameSession(built.bounds);
-        }
-      } catch (err: any) {
-        if (!cancelled) setError(err?.message || 'Could not load session history');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    fetchHistory();
+    const onRequest = (e: Event) => {
+      const id = (e as CustomEvent<{ id?: string }>).detail?.id;
+      takeObjectHistoryRequest();
+      if (typeof id === 'string') setFilterId(id);
+    };
+    window.addEventListener(OBJECT_HISTORY_EVENT, onRequest);
+    return () => window.removeEventListener(OBJECT_HISTORY_EVENT, onRequest);
+  }, []);
 
+  const only = useMemo(() => (filterId ? momentsTouching(moments, filterId) : null), [filterId, moments]);
+  const onlySet = useMemo(() => (filterId ? new Set([filterId]) : null), [filterId]);
+
+  // Land on the latest change once the log is built, and frame the session.
+  const landed = useRef(false);
+  useEffect(() => {
+    if (history.status !== 'ready' || landed.current) return;
+    landed.current = true;
+    frameSession(history.timeline?.bounds ?? null, versionsOpen);
+    if (moments.length === 0) return;
+    const target = only && only.length > 0 ? only[only.length - 1] : moments.length - 1;
+    setCursor({ kind: 'moment', index: target });
+  }, [history.status, history.timeline, moments, only, versionsOpen]);
+
+  // A new filter lands on that object's latest change.
+  const lastFilter = useRef(filterId);
+  useEffect(() => {
+    if (lastFilter.current === filterId) return;
+    lastFilter.current = filterId;
+    if (only && only.length > 0) setCursor({ kind: 'moment', index: only[only.length - 1] });
+  }, [filterId, only]);
+
+  const sessionIndex = cursor?.kind === 'moment' ? sessionOf(sessions, cursor.index) : -1;
+
+  // Materialise a moment from the log.
+  useEffect(() => {
+    const engine = history.engine;
+    if (!engine || cursor?.kind !== 'moment') return;
+    const moment = moments[cursor.index];
+    if (!moment) return;
+    const { state } = engine.seek(moment.index);
+    let base: FrameState | null = null;
+    if (showChanges && sessionIndex >= 0) {
+      base = engine.peek(moments[sessions[sessionIndex].first].firstIndex - 1);
+    }
+    setShown({ state, base });
+  }, [history.engine, cursor, moments, sessions, sessionIndex, showChanges]);
+
+  // Load a saved version, and the one before it for the comparison.
+  const versionList = versions.versions;
+  const { stateOf } = versions;
+  useEffect(() => {
+    if (cursor?.kind !== 'version') return;
+    let cancelled = false;
+    const at = versionList.findIndex((v) => v.id === cursor.id);
+    const older = at >= 0 ? versionList[at + 1] : undefined;
+    (async () => {
+      const state = await stateOf(cursor.id);
+      const base = showChanges && older ? await stateOf(older.id) : null;
+      if (!cancelled) setShown({ state, base });
+    })().catch((err: unknown) => {
+      if (cancelled) return;
+      notify({ message: err instanceof Error ? err.message : 'That version could not be opened.', tone: 'error' });
+    });
     return () => {
       cancelled = true;
-      onApplySnapshotRef.current(null); // hand the canvas back to the live document
-      replayRef.current?.doc.destroy();
-      replayRef.current = null;
     };
-  }, [roomId]);
+  }, [cursor, versionList, stateOf, showChanges]);
 
-  /**
-   * Stable across renders while the timeline itself is unchanged.
-   *
-   * `timeline?.moments ?? []` built a fresh array every render, so anything
-   * downstream keyed on it — the activity buckets in particular — recomputed on
-   * every keystroke and every playback tick, memo or no memo.
-   */
-  const moments = useMemo(() => timeline?.moments ?? [], [timeline]);
-  const current: Moment | undefined = moments[momentIndex];
+  const diff: FrameDiff | null = useMemo(
+    () => (shown && shown.base ? diffFrames(shown.base.objects, shown.state.objects, onlySet) : null),
+    [shown, onlySet]
+  );
 
-  /**
-   * Ids the replay document changed since the last frame we published.
-   *
-   * Collected by an observer on the replay doc rather than by diffing two
-   * snapshots: applying an update already tells Yjs exactly which entries
-   * moved, so this costs nothing on top of the seek itself.
-   */
-  const changedRef = useRef<Set<string>>(new Set());
-
-  /** Watch a replay document so forward steps can report a precise change set. */
-  const observeReplayDoc = useCallback((doc: Y.Doc) => {
-    doc.getMap<Y.Map<any>>('objects').observeDeep((events) => {
-      events.forEach((event) => {
-        const path = event.path as (string | number)[];
-        if (path.length === 0) {
-          event.keys.forEach((_change, id) => changedRef.current.add(String(id)));
-        } else {
-          changedRef.current.add(String(path[0]));
-        }
-      });
-    });
-  }, []);
-
-  /**
-   * Publish the document at the playhead.
-   *
-   * `changedIds` is `null` after a rewind, because that builds a brand new
-   * document and there is nothing to have observed. Rewinds are one user
-   * action; forward steps are the ones that happen up to eight times a second,
-   * and those carry an exact set.
-   */
-  const emit = useCallback((doc: Y.Doc, changedIds: string[] | null) => {
-    const objectsMap = doc.getMap<Y.Map<any>>('objects');
-    const snapshot: Record<string, any> = {};
-    objectsMap.forEach((objMap, id) => {
-      snapshot[id] = objMap.toJSON();
-    });
-    onApplySnapshotRef.current(snapshot, changedIds);
-  }, []);
-
-  // Materialise whatever moment the playhead is on.
+  // Put the frame on the canvas, with removed objects ghosted.
   useEffect(() => {
-    if (!timeline || moments.length === 0 || !current) return;
-
-    const before = replayRef.current?.doc;
-    changedRef.current.clear();
-    const next = materialiseAt(
-      updates,
-      current.index,
-      timeline.keyframes,
-      replayRef.current,
-      baselineRef.current
-    );
-
-    // materialiseAt returns a fresh doc when it had to rewind; drop the old one.
-    const rebuilt = next.doc !== before;
-    if (before && rebuilt) before.destroy();
-    if (rebuilt) observeReplayDoc(next.doc);
-
-    replayRef.current = next;
-    emit(next.doc, rebuilt ? null : Array.from(changedRef.current));
-  }, [momentIndex, timeline, updates, current, moments.length, emit, observeReplayDoc]);
-
-  useEffect(() => {
-    if (isPlaying && moments.length > 0) {
-      playbackTimerRef.current = setInterval(() => {
-        setMomentIndex(prev => {
-          if (prev >= moments.length - 1) {
-            setIsPlaying(false);
-            return prev;
-          }
-          return prev + 1;
-        });
-      }, 900 / speed);
-    } else {
-      clearInterval(playbackTimerRef.current);
+    if (!shown) return;
+    let out: Frame = shown.state.objects;
+    if (showChanges && diff && shown.base && diff.removed.length > 0) {
+      const withGhosts: Record<string, ObjectJson> = { ...out };
+      for (const id of diff.removed.slice(0, 400)) withGhosts[id] = ghostOf(shown.base.objects[id]);
+      out = withGhosts;
     }
-    return () => clearInterval(playbackTimerRef.current);
-  }, [isPlaying, speed, moments.length]);
+    const changed = changedBetween(emitted.current, out);
+    emitted.current = out;
+    onApplyRef.current(out as Record<string, any>, changed, shown.state.objects as Record<string, any>);
+  }, [shown, diff, showChanges]);
 
-  /**
-   * Keyboard transport.
-   *
-   * Arrows step, Home/End jump to the ends, `K` toggles playback. Space is
-   * deliberately absent — see the note on the component.
-   */
+  // Playback, paced by the authoring itself: the pause between two changes,
+  // capped so a coffee break does not stall it, divided by the speed.
   useEffect(() => {
-    if (moments.length === 0) return;
-    const onKey = (e: KeyboardEvent) => {
-      const el = document.activeElement?.tagName;
-      if (el === 'INPUT' || el === 'TEXTAREA') return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!playing || cursor?.kind !== 'moment') return;
+    const seq = only;
+    const next = seq ? seq[seq.indexOf(cursor.index) + 1] : cursor.index + 1;
+    if (next === undefined || next >= moments.length) {
+      setPlaying(false);
+      return;
+    }
+    const gap = moments[next].at - moments[cursor.index].at;
+    const timer = window.setTimeout(
+      () => setCursor({ kind: 'moment', index: next }),
+      Math.min(1200, Math.max(70, gap)) / speed
+    );
+    return () => window.clearTimeout(timer);
+  }, [playing, cursor, only, moments, speed]);
 
-      if (e.key === 'ArrowLeft') {
+  const seek = useCallback((index: number) => setCursor({ kind: 'moment', index }), []);
+
+  const step = useCallback(
+    (direction: -1 | 1, bySession = false) => {
+      setPlaying(false);
+      setCursor((c) => {
+        if (moments.length === 0) return c;
+        const from = c?.kind === 'moment' ? c.index : moments.length - 1;
+        if (bySession && !only) return { kind: 'moment', index: stepSession(sessions, from, direction) };
+        if (only) {
+          if (only.length === 0) return c;
+          const at = only.indexOf(from);
+          const k = at === -1 ? (direction > 0 ? 0 : only.length - 1) : Math.min(only.length - 1, Math.max(0, at + direction));
+          return { kind: 'moment', index: only[k] };
+        }
+        return { kind: 'moment', index: Math.min(moments.length - 1, Math.max(0, from + direction)) };
+      });
+    },
+    [moments, sessions, only]
+  );
+
+  const edge = useCallback(
+    (which: 'first' | 'last') => {
+      setPlaying(false);
+      const seq = only ?? null;
+      if (seq && seq.length === 0) return;
+      if (!seq && moments.length === 0) return;
+      const index = which === 'first' ? (seq ? seq[0] : 0) : seq ? seq[seq.length - 1] : moments.length - 1;
+      setCursor({ kind: 'moment', index });
+    },
+    [moments, only]
+  );
+
+  const togglePlay = useCallback(() => {
+    if (moments.length === 0) return;
+    if (!playing) {
+      const seq = only ?? null;
+      const last = seq ? seq[seq.length - 1] : moments.length - 1;
+      if (cursor?.kind !== 'moment' || cursor.index === last) {
+        setCursor({ kind: 'moment', index: seq ? seq[0] : 0 });
+      }
+    }
+    setPlaying((p) => !p);
+  }, [moments, playing, only, cursor]);
+
+  const atLatest = cursor?.kind === 'moment' && cursor.index === moments.length - 1;
+  const isCurrent = atLatest && liveChanges === 0;
+  const viewedVersion = cursor?.kind === 'version' ? versionList.find((v) => v.id === cursor.id) ?? null : null;
+  const moment = cursor?.kind === 'moment' ? moments[cursor.index] : undefined;
+  const filterLabel = useMemo(() => {
+    if (!filterId) return null;
+    const json = shown?.state.objects[filterId] ?? shown?.base?.objects[filterId];
+    const node = json ? normalizeNode(json as Record<string, unknown>, filterId) : null;
+    return node ? nodeLabel(node) : 'a removed object';
+  }, [filterId, shown]);
+
+  const title = viewedVersion
+    ? versionTitle(viewedVersion)
+    : moment
+      ? `${dayLabel(moment.at)}, ${timeWithSeconds(moment.at)}`
+      : '';
+
+  const restore = useCallback(() => {
+    if (!shown || !canEdit || busy) return;
+    setBusy(true);
+    setPlaying(false);
+    const target = shown.state;
+    // Leave replay first: the restore is a live edit, and derived writers
+    // stand down while `isReplaying` is set.
+    onApplyRef.current(null);
+    released.current = true;
+    emitted.current = {};
+    const plan = restoreVersion(target, onlySet);
+    if (!plan) {
+      notify({ message: 'Only editors can restore versions.', tone: 'error' });
+    } else if (planSize(plan) === 0 && plan.groups.length === 0) {
+      notify({ message: 'The board already matches this version.', tone: 'info' });
+    } else {
+      notifyUndoable(filterLabel ? `Restored ${filterLabel} from ${title}` : `Restored the board to ${title}`, () =>
+        undoManager.undo()
+      );
+    }
+    onClose();
+  }, [shown, canEdit, busy, onlySet, filterLabel, title, onClose]);
+
+  const copy = useCallback(async () => {
+    if (!shown) return;
+    const ids = filterId ? [filterId] : Object.keys(shown.state.objects);
+    const nodes: AnyNode[] = [];
+    for (const id of ids) {
+      const json = shown.state.objects[id];
+      const node = json ? normalizeNode(json as Record<string, unknown>, id) : null;
+      if (node) nodes.push(node);
+    }
+    const payload = writeClipboard(nodes);
+    if (!payload) {
+      notify({ message: 'There is nothing to copy in this version.', tone: 'info' });
+      return;
+    }
+    const n = payload.nodes.length;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload));
+      notify({
+        message: `Copied ${n.toLocaleString()} object${n === 1 ? '' : 's'} from this version. Exit and paste to bring ${n === 1 ? 'it' : 'them'} back.`,
+        tone: 'success',
+      });
+    } catch {
+      notify({ message: 'The clipboard refused the copy. Allow clipboard access for this site and try again.', tone: 'warning' });
+    }
+  }, [shown, filterId]);
+
+  const saveTarget = viewedVersion
+    ? 'this version'
+    : atLatest || !moment
+      ? 'the board as it is now'
+      : `the board as it was at ${timeWithSeconds(moment.at)}`;
+
+  const saveVersion = useCallback(
+    async (name: string, description: string) => {
+      if (viewedVersion) {
+        await versions.rename(viewedVersion.id, { name, description });
+        return;
+      }
+      const created = await versions.save({
+        name,
+        description,
+        atUpdateId: !atLatest && moment?.rowId ? moment.rowId : null,
+        createdByName: localAuthor().name,
+      });
+      notify({ message: `Saved “${created.name}” to version history.`, tone: 'success' });
+    },
+    [viewedVersion, versions, atLatest, moment]
+  );
+
+  const filterOptions = useCallback((): FilterOption[] => {
+    const counts = new Map<string, number>();
+    for (const m of moments) for (const id of m.ids) counts.set(id, (counts.get(id) ?? 0) + 1);
+    const latest = history.engine?.peek(moments.length > 0 ? moments[moments.length - 1].index : -1).objects ?? {};
+    const out: FilterOption[] = [];
+    counts.forEach((changes, id) => {
+      const json = latest[id] ?? shown?.state.objects[id];
+      const node = json ? normalizeNode(json as Record<string, unknown>, id) : null;
+      if (node?.type === 'comment') return;
+      out.push({ id, label: node ? nodeLabel(node) : 'Removed object', changes });
+    });
+    return out.sort((a, b) => b.changes - a.changes);
+  }, [moments, history.engine, shown]);
+
+  const markers: TrackMarker[] = useMemo(() => {
+    if (moments.length === 0) return [];
+    const first = moments[0].firstAt;
+    const last = moments[moments.length - 1].at;
+    return versionList
+      .filter((v) => v.kind === 'named')
+      .map((v) => ({ v, at: Date.parse(v.endedAt) }))
+      .filter(({ at }) => at >= first && at <= last + 1000)
+      .map(({ v, at }) => ({ key: String(v.id), x: layout.xs[momentNear(moments, at)], label: v.name ?? 'Named version' }));
+  }, [versionList, moments, layout]);
+
+  // Keyboard: arrows step a change, Shift+arrows a session, Home/End jump,
+  // K plays, Escape leaves. Space is left to the canvas, where it pans.
+  //
+  // Taken in the capture phase and stopped there: the room's own shortcuts
+  // are not replay-aware, and K is also the chart tool, so letting the key
+  // through would arm a tool behind the replay that is still armed on exit.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.closest?.(
+          'input, textarea, select, [contenteditable="true"], .popover, [role="radiogroup"], [role="listbox"], [role="menu"]'
+        )
+      ) {
+        return;
+      }
+      let handled = true;
+      switch (e.key) {
+        case 'ArrowLeft':
+        case 'ArrowRight':
+          step(e.key === 'ArrowLeft' ? -1 : 1, e.shiftKey);
+          break;
+        case 'Home':
+        case 'End':
+          edge(e.key === 'Home' ? 'first' : 'last');
+          break;
+        case 'k':
+        case 'K':
+          if (!e.repeat) togglePlay();
+          break;
+        case 'Escape':
+          // An open popover closes first; the next Escape leaves.
+          if (document.querySelector('.popover.is-open')) handled = false;
+          else onClose();
+          break;
+        default:
+          handled = false;
+      }
+      if (handled) {
         e.preventDefault();
-        setIsPlaying(false);
-        setMomentIndex(i => Math.max(0, i - 1));
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        setIsPlaying(false);
-        setMomentIndex(i => Math.min(moments.length - 1, i + 1));
-      } else if (e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        setIsPlaying(p => !p);
-      } else if (e.key === 'Home') {
-        e.preventDefault();
-        setIsPlaying(false);
-        setMomentIndex(0);
-      } else if (e.key === 'End') {
-        e.preventDefault();
-        setIsPlaying(false);
-        setMomentIndex(moments.length - 1);
+        e.stopPropagation();
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [moments.length]);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [step, edge, togglePlay, onClose]);
 
-  const buckets = useMemo(() => activityBuckets(moments, ACTIVITY_COLUMNS), [moments]);
+  const position = (() => {
+    if (viewedVersion) return viewedVersion.kind === 'named' ? 'Named version' : 'Autosave';
+    if (!moment || cursor?.kind !== 'moment') return '';
+    if (only && only.length === 0) return 'No changes to this object in the log';
+    if (only) return `Change ${(only.indexOf(cursor.index) + 1).toLocaleString()} of ${only.length.toLocaleString()}`;
+    return `Change ${(cursor.index + 1).toLocaleString()} of ${moments.length.toLocaleString()} · Session ${sessionIndex + 1} of ${sessions.length}`;
+  })();
 
-  if (loading) {
-    return (
-      <div className="timetravel timetravel--message panel-surface">
-        <Loader2 size={16} className="timetravel__spinner" />
-        Reading this room’s history…
-      </div>
-    );
-  }
+  const heading = viewedVersion
+    ? {
+        label: versionTitle(viewedVersion),
+        time: viewedVersion.kind === 'named' ? `${dayLabel(Date.parse(viewedVersion.endedAt))}, ${clockLabel(Date.parse(viewedVersion.endedAt))}` : '',
+        author: null,
+      }
+    : moment
+      ? { label: moment.label, time: timeWithSeconds(moment.at), author: { name: moment.authorName, color: moment.authorColor } }
+      : { label: 'No changes yet', time: '', author: null };
 
-  if (error || moments.length === 0) {
-    return (
-      <div className="timetravel timetravel--message panel-surface">
-        <History size={16} className="timetravel__muted-icon" />
-        <span className="timetravel__muted">
-          {error
-            ? `Time Travel cannot reach the history log. ${error}`
-            : 'Nothing to replay yet. Once people start building here, their edits appear on this timeline.'}
+  const panel = versionsOpen && (
+    <VersionsPanel
+      sessions={sessions}
+      versions={versions}
+      currentSession={sessionIndex}
+      currentVersion={viewedVersion?.id ?? null}
+      atLatest={atLatest}
+      canEdit={canEdit}
+      saveTarget={saveTarget}
+      onSave={saveVersion}
+      onSelectLatest={() => edge('last')}
+      onSelectSession={(i) => {
+        setPlaying(false);
+        setCursor({ kind: 'moment', index: sessions[i].last });
+      }}
+      onSelectVersion={(v) => {
+        setPlaying(false);
+        setCursor({ kind: 'version', id: v.id });
+      }}
+      onClose={() => setVersionsOpen(false)}
+    />
+  );
+
+  let dock: React.ReactNode;
+  if (history.status === 'loading') {
+    const { processed, total } = history.progress;
+    const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
+    dock = (
+      <div className="replay-dock replay-dock--message panel-surface" role="status">
+        <Loader2 size={16} className="replay-spin" aria-hidden="true" />
+        <span className="replay-dock__message">
+          Reading history{total > 0 ? ` · ${processed.toLocaleString()} of ${total.toLocaleString()} changes` : '…'}
         </span>
-        <button type="button" className="timetravel__icon-btn" onClick={onClose} aria-label="Close Time Travel">
+        <span className="replay-progress" aria-hidden="true">
+          <span className="replay-progress__bar" style={{ transform: `scaleX(${pct / 100})` }} />
+        </span>
+        <button type="button" className="btn-icon btn-icon--sm" onClick={onClose} aria-label="Exit version history">
           <X size={16} />
         </button>
       </div>
     );
-  }
-
-  const atStart = momentIndex === 0;
-  const atEnd = momentIndex === moments.length - 1;
-  const progressPct = moments.length > 1 ? (momentIndex / (moments.length - 1)) * 100 : 100;
-  const stamp = current ? new Date(current.at) : null;
-  const timeLabel = stamp
-    ? stamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    : '';
-
-  // Reported by the server rather than guessed from the row count. Inferring it
-  // was wrong both ways: an untrimmed room sitting exactly at the cap read as
-  // partial, and a trimmed room that had since fallen below it read as complete.
-  const isTrimmed = trimmedCount > 0;
-
-  /**
-   * Where the playhead sits on the *time* axis, so the strip can mark it.
-   *
-   * Separate from `progressPct`, which is the index axis. Conflating the two is
-   * what the old bar did, and it is why nothing on it could show elapsed time.
-   */
-  const first = moments[0].at;
-  const last = moments[moments.length - 1].at;
-  const span = last - first;
-  const timePct = current && span > 0 ? ((current.at - first) / span) * 100 : progressPct;
-
-  const elapsed = span > 0 ? Math.round(span / 60000) : 0;
-
-  /**
-   * The collapsed instrument.
-   *
-   * Not a bare chevron. The question the panel's absence creates is *where in
-   * the session am I* — so the handle answers that, and reopening is the side
-   * effect. It keeps playing while hidden, so it also has to say whether it is
-   * moving; a still handle over a moving board would read as a bug.
-   */
-  if (collapsed) {
-    return (
+  } else if (history.status === 'error') {
+    dock = (
+      <div className="replay-dock replay-dock--message panel-surface" role="alert">
+        <AlertTriangle size={16} className="replay-dock__warn" aria-hidden="true" />
+        <span className="replay-dock__message">{history.error}</span>
+        <button type="button" className="btn-icon btn-icon--sm" onClick={history.retry} aria-label="Try again" data-tooltip="Try again">
+          <RotateCw size={15} />
+        </button>
+        <button type="button" className="btn-icon btn-icon--sm" onClick={onClose} aria-label="Exit version history">
+          <X size={16} />
+        </button>
+      </div>
+    );
+  } else if (moments.length === 0) {
+    dock = (
+      <div className="replay-dock replay-dock--message panel-surface" role="status">
+        <History size={16} aria-hidden="true" className="replay-dock__muted" />
+        <span className="replay-dock__message">
+          No changes in the log yet. Edits appear on this timeline as people work, and saved versions are listed in version history.
+        </span>
+        <button type="button" className="btn-icon btn-icon--sm" onClick={onClose} aria-label="Exit version history">
+          <X size={16} />
+        </button>
+      </div>
+    );
+  } else if (collapsed) {
+    dock = (
       <button
         type="button"
-        className="panel-surface timetravel-handle"
-        onClick={() => setCollapsedPref(false)}
-        data-tooltip="Show the replay controls. Escape leaves Time Travel"
-        aria-label={`Replaying, moment ${momentIndex + 1} of ${moments.length}. Show the replay controls`}
+        className="replay-handle panel-surface"
+        onClick={() => setCollapsed(false)}
+        aria-label={`Viewing ${title}. Show the timeline`}
+        data-tooltip="Show the timeline"
       >
-        <span
-          className="timetravel-handle__dot"
-          style={{ background: current?.authorColor ?? 'var(--history-accent)' }}
-          aria-hidden="true"
-        />
-        <span className="timetravel-handle__count">
-          {momentIndex + 1}
-          <span className="timetravel__count-of"> / {moments.length}</span>
-        </span>
-        {isPlaying && <Loader2 size={12} className="timetravel-handle__spin" aria-hidden="true" />}
+        <History size={14} aria-hidden="true" />
+        <span className="replay-handle__text">{title}</span>
+        {playing && <span className="replay-handle__live" aria-hidden="true" />}
         <ChevronUp size={14} aria-hidden="true" />
       </button>
+    );
+  } else {
+    dock = (
+      <ReplayTimeline
+        moments={moments}
+        sessions={sessions}
+        layout={layout}
+        current={cursor?.kind === 'moment' ? cursor.index : -1}
+        only={only}
+        markers={markers}
+        heading={heading}
+        position={position}
+        playing={playing}
+        speed={speed}
+        filter={filterLabel ? { label: filterLabel } : null}
+        filterOptions={filterOptions}
+        legend={showChanges && diff ? diff : null}
+        trimmedCount={history.trimmedCount}
+        versionsOpen={versionsOpen}
+        onSeek={(i) => {
+          setPlaying(false);
+          seek(i);
+        }}
+        onScrub={(active) => active && setPlaying(false)}
+        onStep={(d) => step(d)}
+        onEdge={edge}
+        onTogglePlay={togglePlay}
+        onSpeed={setSpeed}
+        onPickFilter={setFilterId}
+        onClearFilter={() => setFilterId(null)}
+        onToggleVersions={() => setVersionsOpen(!versionsOpen)}
+        onCollapse={() => setCollapsed(true)}
+      />
     );
   }
 
   return (
-    <div className="timetravel panel-surface" role="group" aria-label="Time Travel session replay">
-      {/* Row 1: what you are looking at. The description leads, because it is
-          the thing a person is actually navigating by. */}
-      <div className="timetravel__head">
-        <span className="timetravel__eyebrow">
-          <History size={13} /> History
-        </span>
-
-        {current && (
-          <span
-            className="timetravel__author-dot"
-            style={{ background: current.authorColor }}
-            title={current.authorName}
-            aria-hidden
-          />
-        )}
-        <span className="timetravel__label">{current?.label ?? 'Start of session'}</span>
-        {current && current.updateCount > 1 && (
-          <span className="timetravel__sub">{current.updateCount} edits</span>
-        )}
-
-        <span className="timetravel__time">{timeLabel}</span>
-        <button
-          type="button"
-          className="timetravel__icon-btn"
-          onClick={() => setCollapsedPref(true)}
-          aria-label="Hide the replay controls"
-          data-tooltip="Hide these controls and keep replaying"
-        >
-          <ChevronDown size={16} />
-        </button>
-        <button type="button" className="timetravel__icon-btn" onClick={onClose} aria-label="Exit Time Travel" data-tooltip="Exit Time Travel">
-          <X size={16} />
-        </button>
-      </div>
-
-      {/* Row 2: the session at a glance, on the wall-clock axis. Purely a
-          readout — every interactive thing lives on the track below, so there
-          are never two controls stacked over the same pixels.
-
-          It is *captioned* now. Sixty-four bars of varying height, unlabelled,
-          are not self-evident — they were read as blocks that must do
-          something, and the only clue to what they were was a `title`
-          attribute that requires already suspecting there is something to
-          learn. The caption names the axis and the ends give it a scale, which
-          together is the difference between a chart and decoration. */}
-      {span > 0 && (
-        <div className="timetravel__strip">
-          <div className="timetravel__strip-head" aria-hidden="true">
-            <span className="timetravel__strip-title">Activity over the session</span>
-            <span className="timetravel__strip-scale">
-              {moments.length} moments · {elapsed || '<1'} min
-            </span>
-          </div>
-        <div
-          className="timetravel__activity"
-          role="img"
-          aria-label={`Activity across the session: ${moments.length} moments over ${elapsed || 'less than a'} minute${elapsed === 1 ? '' : 's'}. Taller marks are busier stretches.`}
-          title="Taller marks are busier stretches. Colour is who was working."
-        >
-          {buckets.map((bucket, i) => (
-            <span
-              key={i}
-              className="timetravel__bar"
-              style={{
-                // A visible floor for empty slices, so the strip reads as one
-                // continuous session with quiet stretches rather than breaking
-                // into islands that look like missing data.
-                //
-                // Scaled rather than sized: the bar is full height in CSS and
-                // this squashes it from the baseline, so sixty-four columns
-                // settling into place is one composited frame instead of
-                // sixty-four layouts inside a flex row.
-                transform: `scaleY(${bucket.count === 0 ? 0.08 : 0.2 + bucket.weight * 0.8})`,
-                background: bucket.color ?? 'var(--history-track)',
-                opacity: bucket.count === 0 ? 1 : 0.4 + bucket.weight * 0.6,
-              }}
-            />
-          ))}
-          <span className="timetravel__activity-playhead" style={{ left: `${timePct}%` }} />
-        </div>
-          {/* The scale, which is what turns a row of bars into an axis. Two
-              clock times at the ends say "this is time, running left to right"
-              in less space than any label could. */}
-          <div className="timetravel__strip-axis" aria-hidden="true">
-            <span>{new Date(first).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-            <span>{new Date(last).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Row 3: the track. One control — the range input *is* the scrubber,
-          rather than a transparent decoy laid over buttons that could never be
-          reached. The marks behind it are decoration and say so. */}
-      <div className="timetravel__track">
-        <div className="timetravel__rail" />
-        {/* Full width in CSS, scaled from the left — see the note on the rule. */}
-        <div className="timetravel__elapsed" style={{ transform: `scaleX(${progressPct / 100})` }} />
-
-        {/* Drawn only while they can be told apart. Past that the activity
-            strip above is carrying this information properly, and one mark per
-            moment is the smear the redesign exists to remove. */}
-        {moments.length <= 60 && moments.map((moment, i) => (
-          <span
-            key={`${moment.index}-${i}`}
-            className="timetravel__tick"
-            style={{
-              left: `${moments.length > 1 ? (i / (moments.length - 1)) * 100 : 0}%`,
-              background: i <= momentIndex ? moment.authorColor : 'var(--history-tick)',
-              opacity: i === momentIndex ? 1 : 0.55,
-            }}
-          />
-        ))}
-
-        <input
-          type="range"
-          className="timetravel__range"
-          min={0}
-          max={moments.length - 1}
-          value={momentIndex}
-          aria-label="Scrub through session history"
-          aria-valuetext={current ? `${current.label}, ${timeLabel}` : undefined}
-          onChange={e => { setIsPlaying(false); setMomentIndex(Number(e.target.value)); }}
+    <div className="replay-root" data-versions={versionsOpen ? 'open' : undefined}>
+      {shown && showChanges && diff && <ChangesOverlay diff={diff} frame={shown.state.objects} base={shown.base!.objects} />}
+      {shown && (
+        <ReplayBanner
+          title={title}
+          isCurrent={isCurrent && !viewedVersion}
+          liveChanges={liveChanges}
+          showChanges={showChanges}
+          onShowChanges={setShowChanges}
+          canRestore={canEdit}
+          restoreLabel={filterId ? 'Restore this object' : 'Restore this version'}
+          copyLabel={filterId ? 'Copy object' : 'Copy objects'}
+          busy={busy}
+          onRestore={restore}
+          onCopy={copy}
+          onExit={onClose}
         />
-      </div>
-
-      {/* Row 4: transport + context. */}
-      <div className="timetravel__foot">
-        <button
-          type="button" className="timetravel__icon-btn"
-          onClick={() => { setMomentIndex(0); setIsPlaying(false); }}
-          disabled={atStart} data-tooltip="First moment (Home)" aria-label="First moment"
-        >
-          <SkipBack size={15} />
-        </button>
-        <button
-          type="button" className="timetravel__icon-btn"
-          onClick={() => { setIsPlaying(false); setMomentIndex(i => Math.max(0, i - 1)); }}
-          disabled={atStart} data-tooltip="Previous moment (←)" aria-label="Previous moment"
-        >
-          <ChevronLeft size={17} />
-        </button>
-
-        <button
-          type="button"
-          className="timetravel__play"
-          onClick={() => {
-            // Replaying from the end has nowhere to go; rewind first so the
-            // button always does what it says.
-            if (atEnd) setMomentIndex(0);
-            setIsPlaying(p => !p);
-          }}
-          data-tooltip={isPlaying ? 'Pause (K)' : 'Play session (K)'}
-          aria-label={isPlaying ? 'Pause replay' : 'Play replay'}
-        >
-          {isPlaying ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" className="timetravel__play-glyph" />}
-        </button>
-
-        <button
-          type="button" className="timetravel__icon-btn"
-          onClick={() => { setIsPlaying(false); setMomentIndex(i => Math.min(moments.length - 1, i + 1)); }}
-          disabled={atEnd} data-tooltip="Next moment (→)" aria-label="Next moment"
-        >
-          <ChevronRight size={17} />
-        </button>
-        <button
-          type="button" className="timetravel__icon-btn"
-          onClick={() => { setIsPlaying(false); setMomentIndex(moments.length - 1); }}
-          disabled={atEnd} data-tooltip="Latest moment (End)" aria-label="Latest moment"
-        >
-          <SkipForward size={15} />
-        </button>
-
-        <span className="timetravel__count">
-          {momentIndex + 1} <span className="timetravel__count-of">of</span> {moments.length}
-        </span>
-
-        {timeline && timeline.authors.length > 1 && (
-          <span className="timetravel__authors" title={timeline.authors.map(a => a.name).join(', ')}>
-            {timeline.authors.slice(0, 5).map(author => (
-              <span key={author.id} className="timetravel__author-chip" style={{ background: author.color }} />
-            ))}
-            <span className="timetravel__sub">{timeline.authors.length} people</span>
-          </span>
-        )}
-
-        {isTrimmed && (
-          <span
-            className="timetravel__trimmed"
-            title={`Retention has discarded the ${trimmedCount.toLocaleString()} oldest changes in this room, so the replay starts partway through the session.`}
-          >
-            <AlertTriangle size={12} /> Starts partway
-          </span>
-        )}
-
-        <button
-          type="button"
-          className="timetravel__speed"
-          onClick={() => setSpeed(s => SPEEDS[(SPEEDS.indexOf(s) + 1) % SPEEDS.length])}
-          data-tooltip="Playback speed"
-          aria-label={`Playback speed ${speed}×`}
-        >
-          {speed}×
-        </button>
-      </div>
+      )}
+      {dock}
+      {panel}
     </div>
   );
 };

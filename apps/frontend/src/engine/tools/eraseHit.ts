@@ -1,4 +1,7 @@
 import type { AnyNode } from '../model/schema';
+import type { SketchLevel } from '../model/rough';
+import { boardSketchFor, resolveSketch } from '../model/roughMode';
+import { readBoardSketch } from '../model/roughBoard';
 
 /**
  * What the eraser is allowed to touch.
@@ -96,10 +99,12 @@ function distanceToRectEdge(
  */
 export function hasInterior(node: AnyNode): boolean {
   if (node.type !== 'shape' && node.type !== 'path') return true;
-  const appearance = (node as { appearance?: { fill?: unknown[]; fillStyle?: string; sketch?: string } })
+  const appearance = (node as { appearance?: { fill?: unknown[]; fillStyle?: string; sketch?: SketchLevel; sketchClean?: boolean } })
     .appearance;
   if (!appearance) return false;
-  if (appearance.sketch && appearance.fillStyle && appearance.fillStyle !== 'solid') return true;
+  // The level the object is drawn at, so a shape following a sketched board counts.
+  const level = resolveSketch(appearance, boardSketchFor(node.type, readBoardSketch()));
+  if (level && appearance.fillStyle && appearance.fillStyle !== 'solid') return true;
   const fill = appearance.fill;
   return Array.isArray(fill) && fill.length > 0;
 }

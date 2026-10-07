@@ -1,279 +1,285 @@
-import React, { useCallback, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, ArrowRight, X } from 'lucide-react';
 import { tourState } from '../../engine/learn/tourState';
-import { nextVisibleStep, placeCard, TOUR, type Box, type Placement } from '../../engine/learn/tour';
-import { pointerPath, ringBox, ringPath } from '../../engine/learn/tourSketch';
-import { roughEllipse, roughPolyline, seedFrom } from '../../engine/model/rough';
+import {
+  nextVisibleStep,
+  placeCard,
+  resolveAnchor,
+  stepAllowed,
+  stepBody,
+  stepsFor,
+  TOUR,
+  type Box,
+  type Placement,
+  type TourStep,
+} from '../../engine/learn/tour';
+import { outlinePath } from '../../engine/learn/tourSketch';
+import { useRoomPermissions } from '../../hooks/useRoomPermissions';
+import { OnboardingLayer } from '../onboarding/OnboardingLayer';
+import '../onboarding/onboarding.css';
 
 /**
- * The walk round the screen.
+ * The tour: one card that travels, a spotlight cut to the element's own shape,
+ * and a pen line drawn round that shape.
  *
- * ## Why one card that travels rather than a popover per step
- *
- * A tour built as "hide this bubble, show that one" gives the eye nothing to
- * follow: something goes out over there, something comes on over here, and the
- * reader has to find the new one every time. Six steps of that is six small
- * searches.
- *
- * One card, moving, is a single continuous event. The eye is carried to the
- * next thing rather than sent looking for it, and the movement itself says the
- * two things are related -- which is exactly what a tour is claiming. The help
- * panel's rail marker makes the same argument at a smaller scale, and it is the
- * same technique: measure, then move one element.
- *
- * The spotlight moves with it, so the pair reads as one object turning its
- * attention. They share a duration and a curve, and changing one means changing
- * the other.
- *
- * ## Why it is drawn by hand
- *
- * A tour is annotation rather than interface, and the register should say so.
- * Everything on this screen is a rectangle with a shadow; a popover with a beak
- * is one more of those, competing with the controls it is pointing at, where a
- * pen mark cannot be mistaken for something to press.
- *
- * It is ours rather than borrowed because the product already draws this way:
- * the ring and the pointer come out of `rough.ts`, the same generator the
- * canvas renders hand-drawn shapes with, at the same profiles. See
- * `tourSketch.ts` for where the hand stops, which is at the pointing.
- *
- * ## Why the spotlight is a box-shadow
- *
- * A hole in a dim field is usually four rectangles round the gap, which cannot
- * have a rounded corner and needs four things kept in step while it moves. One
- * element with an enormous spread shadow is the whole surround in a single
- * node, it takes a border radius, and there is one thing to animate.
- *
- * It is lighter than it was, because the ring is what does the pointing now and
- * the scrim only has to quiet what is around it. It costs layout work per
- * frame, because size cannot be transitioned on the compositor: one element for
- * four hundred milliseconds, six times, on a screen where nothing else is
- * moving.
- *
- * ## Why a missing anchor is skipped rather than pointed at
- *
- * Every anchor here exists in the source -- `tour.test.ts` fails otherwise --
- * but existing in the source is not being on screen. A rail is only rendered
- * while its panel is collapsed, the radar goes when it is opened, and focus
- * mode takes the lot. A spotlight on the top-left corner of an empty screen is
- * worse than one step fewer, so a step whose element is absent is passed over
- * in whichever direction the reader was already going.
+ * - **One card, moving.** The eye is carried to the next thing rather than
+ *   sent looking for it. The spotlight shares its duration and curve.
+ * - **Accurate cut-out.** The hole is the element's box plus a halo, with the
+ *   element's own corner radius grown by the same halo, so a pill gets a pill
+ *   and a panel gets its 12px corner.
+ * - **Never blocks.** The scrim takes no pointer events; only the card does.
+ *   Collaboration, the board and every control stay live underneath.
+ * - **Keyboard.** Arrows move, Home and End jump, Escape puts it away and the
+ *   next start resumes there. Keys typed into a field are left alone.
+ * - **Focus.** The card takes focus when the tour starts and gives it back to
+ *   whatever had it when the tour ends. Each step is announced.
+ * - **Roles.** Viewers and commenters walk their own subset with their own
+ *   words (`tour.ts`). A step whose element is not on screen is passed over.
  */
 
 /** The card's width. Fixed, so moving it is a translate and never a reflow. */
-const CARD_W = 312;
-/**
- * A first guess at the height, used for one frame and then replaced.
- *
- * The real one is measured, because the steps are not the same height: two
- * lines of body or three, and a title that wraps on a narrow card. Assuming a
- * constant was the first version and it is wrong in the direction that matters
- * -- a card taller than the guess overlaps the spotlight it is pointing at,
- * which is the one thing the placement exists to avoid.
- */
-const CARD_H = 180;
+const CARD_W = 320;
+/** A first guess at the height, replaced by the measured one after a frame. */
+const CARD_H = 172;
+/** How far the cut-out reaches outside the element. */
+const HALO = 6;
 
-/** How far the spotlight is cut outside the element it is showing. */
-const HALO = 8;
+const isEditable = (el: Element | null) =>
+  !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || (el as HTMLElement).isContentEditable);
 
-const boxOf = (el: Element): Box => {
-  const r = el.getBoundingClientRect();
-  return { x: r.left, y: r.top, width: r.width, height: r.height };
-};
+interface Probe {
+  el: HTMLElement;
+  box(): Box;
+}
+
+const queryProbes = (selector: string): Probe[] =>
+  Array.from(document.querySelectorAll<HTMLElement>(selector)).map((el) => ({
+    el,
+    box: () => {
+      const r = el.getBoundingClientRect();
+      return { x: r.left, y: r.top, width: r.width, height: r.height };
+    },
+  }));
+
+/** The element's own corner radius in pixels, capped to half its short side. */
+function cornerOf(el: HTMLElement, box: Box): number {
+  const raw = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0;
+  return Math.min(raw, Math.min(box.width, box.height) / 2);
+}
 
 export const TourGuide: React.FC = () => {
-  const { step } = useSyncExternalStore(
-    tourState.subscribe,
-    tourState.getSnapshot,
-    tourState.getSnapshot
-  );
+  const { step } = useSyncExternalStore(tourState.subscribe, tourState.getSnapshot, tourState.getSnapshot);
+  const { role } = useRoomPermissions();
 
-  const [anchor, setAnchor] = useState<Box | null>(null);
+  const [anchor, setAnchor] = useState<{ box: Box; radius: number } | null>(null);
   const [place, setPlace] = useState<Placement | null>(null);
-  const cardRef = React.useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const nextRef = useRef<HTMLButtonElement>(null);
+  /** Which way the reader was going, so a missing step is passed in that direction. */
+  const heading = useRef<1 | -1>(1);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const titleId = useId();
+  const bodyId = useId();
 
-  /**
-   * Find the current step's element, and pass over the step if it is not there.
-   *
-   * The direction matters. Somebody pressing Back through a step whose element
-   * has gone should keep going back, not be bounced forward past the thing they
-   * were trying to return to.
-   */
-  const [heading, setHeading] = useState<1 | -1>(1);
+  const present = useCallback(
+    (s: TourStep) => stepAllowed(s, role) && resolveAnchor(s, queryProbes) !== null,
+    [role]
+  );
 
   const measure = useCallback(() => {
     if (step === null) return;
-    const el = document.querySelector(`[data-tour="${TOUR[step].anchor}"]`);
-    if (!el) {
+    const current = TOUR[step];
+    const found = stepAllowed(current, role) ? resolveAnchor(current, queryProbes) : null;
+    if (!found) {
       setAnchor(null);
-      /**
-       * Skip to the next step that is actually on screen — or end the tour if
-       * there is none that way. `nextVisibleStep` carries the reasoning and
-       * the bug this replaces.
-       *
-       * The direction of travel is honoured: somebody pressing Back through a
-       * step that has gone should keep going back rather than be bounced
-       * forward past what they were returning to.
-       */
-      const onward = nextVisibleStep(step + heading, heading, (a) =>
-        Boolean(document.querySelector(`[data-tour="${a}"]`))
-      );
-      // Nothing left to point at in the direction being travelled. Ending is
-      // the honest outcome: a tour with no visible subject has nothing to say,
-      // and leaving it running is the invisible-dialog bug.
-      if (onward === null) tourState.stop();
-      else tourState.goTo(onward);
+      const onward = nextVisibleStep(step + heading.current, heading.current, present);
+      if (onward === null) {
+        // Nothing left to point at going this way. Going forward that is the
+        // end; going back it is the first step that exists, if any does.
+        const back = heading.current === -1 ? nextVisibleStep(step, 1, present) : null;
+        if (back === null) tourState.stop();
+        else tourState.goTo(back);
+      } else tourState.goTo(onward);
       return;
     }
-    const box = boxOf(el);
-    setAnchor(box);
-    // Measured after the commit, so this is the height of the step now on
-    // screen rather than of the one that just left.
-    const height = cardRef.current?.offsetHeight || CARD_H;
-    setPlace(
-      placeCard(
-        box,
-        { width: CARD_W, height },
-        { width: window.innerWidth, height: window.innerHeight },
-        TOUR[step].side
-      )
-    );
-  }, [step, heading]);
+    const box = found.box();
+    setAnchor((prev) => {
+      const radius = cornerOf(found.el, box);
+      const same =
+        prev &&
+        prev.radius === radius &&
+        prev.box.x === box.x &&
+        prev.box.y === box.y &&
+        prev.box.width === box.width &&
+        prev.box.height === box.height;
+      return same ? prev : { box, radius };
+    });
+    const h = cardRef.current?.offsetHeight || CARD_H;
+    const next = placeCard(box, { width: CARD_W, height: h }, { width: window.innerWidth, height: window.innerHeight }, current.side);
+    // Unchanged placements keep their identity, so a mutation elsewhere on the
+    // page does not re-render the tour.
+    setPlace((prev) => (prev && prev.x === next.x && prev.y === next.y && prev.side === next.side ? prev : next));
+  }, [step, role, present]);
 
   useLayoutEffect(() => {
     measure();
   }, [measure]);
 
   /**
-   * Follow the screen while it moves.
-   *
-   * The board pans under the tour, panels open, and the window resizes. A card
-   * measured once is a card pointing at where something used to be, which is a
-   * more confusing failure than not pointing at all.
+   * Follow the screen while it moves: the window resizing, panels opening, the
+   * dock reflowing or sliding in. Coalesced to one measure per frame, and only while the tour
+   * is running.
    */
   useEffect(() => {
     if (step === null) return;
-    const on = () => measure();
-    window.addEventListener('resize', on);
-    window.addEventListener('scroll', on, true);
+    let frame = 0;
+    const soon = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        measure();
+      });
+    };
+    window.addEventListener('resize', soon);
+    window.addEventListener('scroll', soon, true);
+    // Chrome that slides or fades in moves by transform, which neither observer
+    // below reports. The end of its motion is when its box is final.
+    window.addEventListener('transitionend', soon, true);
+    window.addEventListener('animationend', soon, true);
+    const resized = new ResizeObserver(soon);
+    resized.observe(document.body);
+    if (cardRef.current) resized.observe(cardRef.current);
+    const mutated = new MutationObserver(soon);
+    mutated.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'hidden', 'data-tour'] });
     return () => {
-      window.removeEventListener('resize', on);
-      window.removeEventListener('scroll', on, true);
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', soon);
+      window.removeEventListener('scroll', soon, true);
+      window.removeEventListener('transitionend', soon, true);
+      window.removeEventListener('animationend', soon, true);
+      resized.disconnect();
+      mutated.disconnect();
     };
   }, [step, measure]);
 
+  const running = step !== null;
+
+  /** Take focus on start, give it back on the way out. */
   useEffect(() => {
-    if (step === null) return;
+    if (!running) return;
+    const active = document.activeElement;
+    returnFocus.current = active instanceof HTMLElement && active !== document.body ? active : null;
+    return () => {
+      const back = returnFocus.current;
+      if (back && back.isConnected) back.focus({ preventScroll: true });
+    };
+  }, [running]);
+
+  const visible = running && !!anchor && !!place;
+  useEffect(() => {
+    if (visible && !cardRef.current?.contains(document.activeElement)) nextRef.current?.focus({ preventScroll: true });
+  }, [visible, step]);
+
+  const order = stepsFor(role);
+  const at = step === null ? -1 : order.indexOf(step);
+
+  const go = useCallback((direction: 1 | -1) => {
+    heading.current = direction;
+    if (direction === 1) tourState.next();
+    else tourState.back();
+  }, []);
+
+  useEffect(() => {
+    if (!running) return;
     const onKey = (e: KeyboardEvent) => {
+      const inCard = cardRef.current?.contains(document.activeElement) ?? false;
+      if (!inCard && isEditable(document.activeElement)) return;
       if (e.key === 'Escape') {
         e.stopPropagation();
         tourState.stop();
-      } else if (e.key === 'ArrowRight' || e.key === 'Enter') {
+      } else if (e.key === 'ArrowRight') {
         e.preventDefault();
-        setHeading(1);
-        tourState.next();
+        e.stopPropagation();
+        go(1);
       } else if (e.key === 'ArrowLeft') {
         e.preventDefault();
-        setHeading(-1);
-        tourState.back();
+        e.stopPropagation();
+        go(-1);
+      } else if ((e.key === 'Home' || e.key === 'End') && inCard && order.length > 0) {
+        e.preventDefault();
+        heading.current = e.key === 'Home' ? 1 : -1;
+        tourState.goTo(e.key === 'Home' ? order[0] : order[order.length - 1]);
       }
     };
-    // Capture, so Escape ends the tour rather than clearing the selection
-    // underneath it, and so the arrows do not also nudge whatever is selected.
+    // Capture, so Escape ends the tour rather than clearing the selection under
+    // it, and the arrows do not also nudge whatever is selected.
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [step]);
+  }, [running, go, order]);
 
   if (step === null || !anchor || !place) return null;
 
   const current = TOUR[step];
-  const last = step === TOUR.length - 1;
+  const last = at === order.length - 1;
+  const { box, radius } = anchor;
 
   /**
-   * The pen stroke from the card to the ring.
-   *
-   * Aimed at the ring rather than at the element, so it stops at the mark
-   * instead of crossing it -- an arrow that lands inside the circle it drew is
-   * two annotations arguing about which one is doing the pointing.
-   */
-  const pointer = pointerPath(
-    { x: place.x, y: place.y, width: CARD_W, height: cardRef.current?.offsetHeight || CARD_H },
-    ringBox(anchor),
-    place.side,
-    current.id
-  );
-
-  /**
-   * Portaled to `<body>`, not rendered where it is mounted.
-   *
-   * The same trap the profile editor and the comments overlay both document:
-   * the header carries a `backdrop-filter`, which makes it a containing block
-   * for `position: fixed`, and anything fixed inside it is sized to a 52px
-   * strip instead of to the viewport.
+   * Portaled to `<body>`: a header with `backdrop-filter` is a containing block
+   * for `position: fixed`, and anything fixed inside it is sized to that strip.
    */
   return createPortal(
-    <div className="tour" role="dialog" aria-modal="false" aria-label={`Tour, step ${step + 1} of ${TOUR.length}`}>
-      {/* The surround, as one shadow. Never takes a click: the point of a tour
-          is that the board underneath is still yours. */}
+    <div className="tour">
       <div
         className="tour__spot"
         aria-hidden="true"
         style={{
-          transform: `translate(${anchor.x - HALO}px, ${anchor.y - HALO}px)`,
-          width: anchor.width + HALO * 2,
-          height: anchor.height + HALO * 2,
+          transform: `translate(${box.x - HALO}px, ${box.y - HALO}px)`,
+          width: box.width + HALO * 2,
+          height: box.height + HALO * 2,
+          borderRadius: radius + HALO,
         }}
       />
 
-      {/**
-        * The marks. Keyed on the step so each one draws itself on rather than
-        * cutting from the last, and drawn over the scrim so the ring reads as
-        * being on the glass rather than under it.
-        */}
+      {/* Keyed on the step so the ring draws itself on for each one. */}
       <svg className="tour__ink" key={current.id} aria-hidden="true">
-        {/* `pathLength` normalises each mark to a length of one, so a single
-            dash rule draws on a ring, a shaft and a head of very different
-            real lengths at the same rate. */}
-        <path className="tour__ring" pathLength={1} d={ringPath(anchor, current.id)} />
-        {/* Absent when the card had to be clamped against its target, where a
-            stroke between two touching things points at nothing. */}
-        {pointer && <path className="tour__shaft" pathLength={1} d={pointer.shaft} />}
-        {pointer && <path className="tour__head" pathLength={1} d={pointer.head} />}
+        <path className="tour__ring" pathLength={1} d={outlinePath(box, radius, current.id)} />
       </svg>
 
       <div
         ref={cardRef}
         className="tour__card"
+        role="dialog"
+        aria-modal="false"
+        aria-labelledby={titleId}
+        aria-describedby={bodyId}
         data-side={place.side}
         style={{ transform: `translate(${place.x}px, ${place.y}px)`, width: CARD_W }}
       >
-        {/* Keyed on the step, so the words cross-fade while the card travels.
-            The movement is the continuity here, which is what makes a fade the
-            right thing inside it. */}
+        <span className="sr-only" aria-live="polite">
+          {`Step ${at + 1} of ${order.length}: ${current.title}`}
+        </span>
         <div className="tour__body" key={current.id}>
-          {/* No "3 of 6" above the title. The dots below already say where you
-              are, and they can also be pressed, so a second readout was the
-              same fact twice with the mute half on top -- and it pushed the
-              handwritten title, which is the voice, into second place. The
-              count survives where it is genuinely needed, in the dialog's
-              accessible name. */}
-          <h2 className="tour__title">{current.title}</h2>
-          <p className="tour__text">{current.body}</p>
+          <h2 id={titleId} className="tour__title">
+            {current.title}
+          </h2>
+          <p id={bodyId} className="tour__text">
+            {stepBody(current, role)}
+          </p>
         </div>
 
         <div className="tour__foot">
-          <div className="tour__dots" role="tablist" aria-label="Steps">
-            {TOUR.map((s, i) => (
+          <div className="tour__dots" role="group" aria-label="Steps">
+            {order.map((i, n) => (
               <button
-                key={s.id}
+                key={TOUR[i].id}
                 type="button"
-                role="tab"
-                aria-selected={i === step}
-                aria-label={s.title}
-                className={`tour__dot${i === step ? ' is-active' : ''}`}
+                aria-current={i === step ? 'step' : undefined}
+                aria-label={`Step ${n + 1}: ${TOUR[i].title}`}
+                className="tour__dot"
+                data-active={i === step || undefined}
                 onClick={() => {
-                  setHeading(i > step ? 1 : -1);
+                  heading.current = i > step ? 1 : -1;
                   tourState.goTo(i);
                 }}
               />
@@ -281,29 +287,14 @@ export const TourGuide: React.FC = () => {
           </div>
 
           <div className="tour__actions">
-            {step > 0 && (
-              <button
-                type="button"
-                className="tour__back"
-                onClick={() => {
-                  setHeading(-1);
-                  tourState.back();
-                }}
-                aria-label="Previous step"
-              >
-                <ArrowLeft size={14} />
+            {at > 0 && (
+              <button type="button" className="tour__back" onClick={() => go(-1)} aria-label="Previous step">
+                <ArrowLeft size={14} aria-hidden="true" />
               </button>
             )}
-            <button
-              type="button"
-              className="tour__next"
-              onClick={() => {
-                setHeading(1);
-                tourState.next();
-              }}
-            >
+            <button ref={nextRef} type="button" className="tour__next" onClick={() => (last ? tourState.finish() : go(1))}>
               {last ? 'Done' : 'Next'}
-              {!last && <ArrowRight size={14} aria-hidden />}
+              {!last && <ArrowRight size={14} aria-hidden="true" />}
             </button>
           </div>
         </div>
@@ -312,9 +303,10 @@ export const TourGuide: React.FC = () => {
           type="button"
           className="tour__close"
           onClick={() => tourState.stop()}
-          aria-label="End the tour"
+          aria-label="Close the tour. Starting it again picks up here"
+          data-tooltip="Close"
         >
-          <X size={13} />
+          <X size={14} aria-hidden="true" />
         </button>
       </div>
     </div>,
@@ -323,106 +315,9 @@ export const TourGuide: React.FC = () => {
 };
 
 /**
- * The mark on the offer, drawn by the same pen as the tour it offers.
+ * The first-run layer: the getting-started checklist for editors, the tour's
+ * offer for everyone else, and the dashboard's guided start.
  *
- * A circle with a stroke into it: the two marks the walkthrough is made of, at
- * badge size. It is the honest way to advertise a hand-drawn tour, and it is
- * cheaper than the alternative -- a lucide glyph would have been a third
- * visual language on a card whose whole job is to introduce the second.
- *
- * Computed once at module load, because both paths are pure functions of a
- * seed and rebuilding them per render produces the identical string at a cost.
+ * Exported under its old name so the board's mount line stays as it is.
  */
-const OFFER_RING = roughEllipse(20, 20, 15, 14, {
-  seed: seedFrom('offer:ring'),
-  level: 'heavy',
-  width: 2,
-});
-
-const OFFER_TICK = roughPolyline(
-  [
-    { x: 13, y: 21 },
-    { x: 18, y: 26 },
-    { x: 28, y: 13 },
-  ],
-  { seed: seedFrom('offer:tick'), closed: false, level: 'medium', width: 2 }
-);
-
-/**
- * The offer, once.
- *
- * ## Why it is offered rather than started
- *
- * A tour that begins on its own is the product deciding that its own
- * introduction matters more than whatever you opened it to do, and somebody
- * arriving through a shared link is trying to reach a colleague's board. So
- * this is two buttons and a sentence, and declining is recorded exactly as
- * firmly as accepting: neither is asked twice.
- *
- * ## Why it comes before everything else that coaches
- *
- * It used to wait for the dock's question about frames, which was backwards:
- * the tour is where things are and the dock's question is a specific follow-up
- * about one of them. Worse, the dock coach only appears once the board has an
- * object on it, so on a *new* board nothing was offered at all and the tour
- * could only be found in the reference panel's footer. An empty board is the
- * best moment for it, not a moment to be excluded from.
- *
- * ## Why it waits a beat
- *
- * Not for effect. A card that is already there when the page finishes painting
- * reads as part of the page, and this is a question about the page. A second
- * and a half is long enough for somebody to have looked at the board first,
- * which is what makes it an offer rather than a toll gate.
- */
-const OFFER_DELAY = 1500;
-
-export const TourOffer: React.FC<{ visible: boolean }> = ({ visible }) => {
-  const { seen, step } = useSyncExternalStore(
-    tourState.subscribe,
-    tourState.getSnapshot,
-    tourState.getSnapshot
-  );
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    if (!visible || seen) return;
-    const t = window.setTimeout(() => setReady(true), OFFER_DELAY);
-    return () => window.clearTimeout(t);
-  }, [visible, seen]);
-
-  if (!visible || seen || step !== null || !ready) return null;
-
-  return (
-    <aside className="tour-offer" role="note" aria-label="Take a tour">
-      <span className="tour-offer__mark" aria-hidden="true">
-        <svg viewBox="0 0 40 40">
-          <path className="tour-offer__ring" pathLength={1} d={OFFER_RING} />
-          <path className="tour-offer__tick" pathLength={1} d={OFFER_TICK} />
-        </svg>
-      </span>
-
-      <div className="tour-offer__body">
-        <p className="tour-offer__title">First time here?</p>
-        {/* The count comes from the table, not from the sentence. "six steps"
-            was written out, and the reference panel's own button already says
-            `Take the {TOUR.length}-step tour` — so the two would have
-            disagreed the moment a step was added, with the prose version being
-            the one nobody would think to update. Same fault `toolNames.ts`
-            opens by describing, in the copy rather than in a binding. */}
-        <p className="tour-offer__text">
-          Twenty seconds, {TOUR.length} steps, and you will know where everything is.
-        </p>
-      </div>
-
-      <div className="tour-offer__actions">
-        <button type="button" className="tour-offer__ghost" onClick={() => tourState.decline()}>
-          Not now
-        </button>
-        <button type="button" className="tour-offer__primary" onClick={() => tourState.start()}>
-          Show me round
-        </button>
-      </div>
-    </aside>
-  );
-};
+export const TourOffer: React.FC<{ visible: boolean }> = OnboardingLayer;
