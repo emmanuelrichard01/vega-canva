@@ -1,22 +1,53 @@
 import React from 'react';
-import { Link2, Unlink2 } from 'lucide-react';
+import {
+  ArrowLeftRight,
+  ArrowUpDown,
+  Columns3,
+  Grid2x2,
+  Link2,
+  MoveHorizontal,
+  MoveVertical,
+  Rows3,
+  Unlink2,
+} from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import { GridKindIcon } from '../workspace/gridIcons';
-import { NumberStepper } from '../ui/NumberStepper';
 import { GRID_PRESETS, gridPresetMatching } from '../../engine/grid/gridPresets';
-import { Slider } from '../ui/Slider';
 import { ColorPickerPopover } from '../ui/ColorPickerPopover';
 import { setGridRecipe } from '../../engine/grid/gridApply';
 import { gridContent } from '../../engine/grid/gridSlotApply';
 import { recipeCells, switchKind, withSpec, withStyle, type GridRecipe } from '../../engine/grid/gridBuild';
+import { canEditCells, currentTrackSizes, resetTracks, setTrack, setTrackCount } from '../../engine/grid/gridEdit';
+import { gridEditMode, useGridEditMode } from '../../engine/grid/gridEditMode';
+import { paddingOf } from '../../engine/grid/gridLayout';
+import { MAX_TRACKS } from '../../engine/grid/gridTracks';
 import { GridThumb, GridVariations } from './GridVariations';
 import { CellFace } from './CellFace';
+import {
+  ColorChip,
+  FullRow,
+  IconToggle,
+  Note,
+  NumberField,
+  PairRow,
+  Row,
+  Section,
+  SegmentedControl,
+  Select,
+  SpecimenPicker,
+  Switch,
+  type NumberFieldChange,
+} from './grammar';
 import {
   GRID_HINTS,
   GRID_KINDS,
   GRID_LABELS,
   VARIATION_LABELS,
+  type CellAlign,
+  type CellAlignAxis,
   type GridKind,
+  type GridPadding,
+  type GridTrack,
 } from '../../engine/grid/gridLayout';
 import {
   CELL_SHAPES,
@@ -29,843 +60,737 @@ import {
   SHAPE_LABELS,
   type CellShape,
   type ColorMode,
+  type GridDisplayMode,
 } from '../../engine/grid/gridStyle';
+import './gridSection.css';
 
 /**
  * Editing a grid after it exists.
  *
- * ## Why this is a panel section and not a dialog
- *
- * Nobody chooses a grid; they *try* grids. The questions are all comparative —
- * is four columns better than three, does this palette carry the hierarchy —
- * and every one of them is answered by looking at the board, not at a preview
- * inside a modal that covers it. A section in the panel that is already open
- * puts every control one click from the thing it changes.
- *
- * ## Why every control re-lays rather than regenerates
- *
- * `relayoutGrid` reconciles: nodes are matched by cell index, so one more
- * column updates what is there and adds three. Regenerating would break
- * connectors bound to those ids, drop anything placed inside a cell, and put
- * thirty deletions in the history for one adjustment.
- *
- * ## The seed, and why there are two of them
- *
- * Layout randomness and colour randomness re-roll separately. A single "give me
- * another" that moved both would make it impossible to keep an arrangement you
- * liked while trying colours against it, which is most of what anyone does with
- * a generator.
+ * Six sections in the panel grammar's order of questions: what system it is,
+ * how its tracks are arranged, how content sits in it, its individual tracks,
+ * what its modules look like, and how colour is spent. Every number field
+ * writes the document only when a value is committed, so a scrub is one undo
+ * step.
  */
-
-/**
- * One labelled band of controls.
- *
- * ## Why the section needed banding at all
- *
- * Fourteen controls ran down this panel in one column with two headings
- * between them — "Cells" and "Colour" — so the eight controls above the first
- * heading belonged to nothing, and the two questions they actually answer
- * (which system, and how big are its parts) were told apart only by reading
- * every label. In a 260px column that is a scroll you navigate by memory.
- *
- * Four bands, one header treatment, and each header carries the one fact that
- * band is judged by: the module count for Layout, a specimen module for Cells.
- * Those two facts were already on screen, each in its own bespoke row — this
- * puts them where they were always trying to be, and takes two rows back.
- */
-const Band: React.FC<{
-  title: string;
-  /** The one thing this band is judged by, shown in its header. */
-  aside?: React.ReactNode;
-  children: React.ReactNode;
-}> = ({ title, aside, children }) => (
-  <section className="grid-band">
-    <header className="grid-band__head">
-      <span className="grid-section__label">{title}</span>
-      {aside}
-    </header>
-    {children}
-  </section>
-);
 
 interface Props {
   /** The selected grid node. */
   nodeId: string;
 }
 
+/** The kinds with real rows and columns, which are the ones that can hug, span and size tracks. */
+const REGULAR: ReadonlySet<GridKind> = new Set(['columns', 'modular']);
+
 export const GridSection: React.FC<Props> = ({ nodeId }) => {
-  /**
-   * Subscribed to the node, not merely read once.
-   *
-   * A peer re-laying the grid, this client's own write landing, and an undo all
-   * arrive the same way, and every control here shows a value that has to
-   * follow them.
-   */
   const node = useStore((s) => s.objects[nodeId]);
   const recipe = node?.type === 'grid' ? node.grid : null;
   /**
-   * Whether the two gaps move together.
-   *
-   * Local rather than stored: it is a way of *editing*, not a property of the
-   * grid, and a collaborator who unlinks their gaps has not changed the board.
-   * Starts on, because a grid with matching gaps is what almost everyone wants
-   * and the link is easier to notice when breaking it is the deliberate act.
+   * What is in the grid, selected as one string so the section re-renders when
+   * content enters, leaves or waits, and not on every edit elsewhere on the
+   * board. A string rather than the summary object because the summary carries
+   * an array, and a fresh array per read would never compare equal.
    */
-  const [linkWanted, setLinkWanted] = React.useState(true);
-  /**
-   * Wanting to mix shapes, before there is a mix to see.
-   *
-   * The same arrangement as `linkWanted` and for the same reason. The grid
-   * stores a list of shapes, and how many there are *is* whether they mix, so
-   * there is no mode left to store -- but turning the switch on is something
-   * you do *before* picking the second shape, and a switch derived purely from
-   * the list would spring back off in the moment between the two.
-   *
-   * So it is wanted-or-already-true: the row becomes multi-select the instant
-   * you ask for it, and stays that way for as long as the grid says so.
-   */
+  const contentKey = useStore((s) => {
+    const c = gridContent(s.objects, nodeId);
+    return `${c.modules}|${c.filled}|${c.parkedIds.join(',')}`;
+  });
+  const content = React.useMemo(() => {
+    const [modules, filled, ids] = contentKey.split('|');
+    const parkedIds = ids ? ids.split(',') : [];
+    return { modules: Number(modules), filled: Number(filled), parked: parkedIds.length, parkedIds };
+  }, [contentKey]);
+  const editing = useGridEditMode();
+  // Edit cells belongs to a selected grid: leaving the grid's panel leaves the mode.
+  React.useEffect(
+    () => () => {
+      if (gridEditMode.get().gridId === nodeId) gridEditMode.exit();
+    },
+    [nodeId]
+  );
+
+  // Ways of editing rather than properties of the grid, so they stay local.
+  const [gapsLinkWanted, setGapsLinkWanted] = React.useState(true);
+  const [padLinkWanted, setPadLinkWanted] = React.useState(true);
   const [mixWanted, setMixWanted] = React.useState(false);
-  /**
-   * Linked only when you want it **and** the two actually agree.
-   *
-   * Stored preference alone was wrong in both directions. It started on, so a
-   * kind whose defaults are deliberately uneven -- baseline runs 0 across and
-   * 12 down -- showed a closed chain over two different numbers, and the next
-   * edit silently flattened one into the other. And switching kind changes the
-   * gutters underneath the state, so the chain kept claiming a link that the
-   * values had stopped honouring.
-   *
-   * Deriving it means the chain can only ever be closed over a pair that is
-   * equal, which is the only state in which the chain is true rather than a
-   * promise about the next edit.
-   */
-  const linked = linkWanted && recipe?.spec.gutterX === recipe?.spec.gutterY;
-  /**
-   * What the current settings actually produce.
-   *
-   * Laid out rather than multiplied, because most kinds do not multiply: bento
-   * merges compartments, masonry derives a count per column, golden takes its
-   * own number of steps. The layout is pure arithmetic over a dozen numbers, so
-   * asking it is cheaper than any guess would be wrong.
-   */
+
   const cellCount = React.useMemo(() => (recipe ? recipeCells(recipe).length : 0), [recipe]);
-  /**
-   * What is in the grid.
-   *
-   * Read from the objects table rather than from the grid node, because content
-   * lives in *other* nodes: a picture dropped into a module changes the
-   * picture, not the grid, so subscribing to the grid alone would leave this
-   * showing a stale count until something happened to touch the grid itself.
-   *
-   * `gridContent` takes the table rather than reaching into the store, which is
-   * what makes the dependency here a real one instead of a hint to the linter.
-   */
-  const objects = useStore((s) => s.objects);
-  const content = React.useMemo(() => gridContent(objects, nodeId), [objects, nodeId]);
-  /**
-   * How big a module actually is, so a 22px swatch can round in proportion.
-   *
-   * A 12px radius is a soft corner on a 120px module and a pill on a swatch;
-   * without the real size the preview would exaggerate every radius above
-   * about six and stop being a preview.
-   */
   const sampleCell = React.useMemo(() => {
     if (!recipe) return 0;
     const cells = recipeCells(recipe);
-    if (cells.length === 0) return 0;
-    return Math.min(...cells.map((c) => Math.min(c.width, c.height)));
+    return cells.length === 0 ? 0 : Math.min(...cells.map((c) => Math.min(c.width, c.height)));
   }, [recipe]);
-  // Subscribed to, not merely read: the section has to re-render when a peer
-  // re-lays the grid, and when this client's own relayout lands.
-  if (!recipe) return null;
 
-  /**
-   * One write, whatever changed.
-   *
-   * ## What this used to have to do
-   *
-   * Three statements: measure where the grid's nodes had drifted to, divide
-   * that by where the recipe claimed they should be to recover the transform
-   * somebody had applied since the last edit, splice the corrected box into the
-   * new recipe, then reconcile thirty nodes against it. Skipping any part of it
-   * made the first panel edit after a resize snap the grid back to where it used
-   * to be.
-   *
-   * None of that is needed now, because none of it was ever about the edit. It
-   * was about a recipe and a set of nodes holding two copies of one box between
-   * them. The box is the node's, the modules are derived from it, and changing
-   * the recipe cannot move the grid.
-   */
+  if (!recipe || node?.type !== 'grid') return null;
+
+  const { spec, style } = recipe;
   const apply = (next: GridRecipe) => setGridRecipe(nodeId, next);
-
   const patchSpec = (patch: Parameters<typeof withSpec>[1]) => apply(withSpec(recipe, patch));
   const patchStyle = (patch: Parameters<typeof withStyle>[1]) => apply(withStyle(recipe, patch));
+  /** A number field's handler: write on commit only. */
+  const onCommit = (write: (v: number) => void) => (v: number, change: NumberFieldChange) => {
+    if (change.commit) write(v);
+  };
 
-  /** Which kinds care about rows, and which about columns. A control that does nothing is worse than none. */
-  const usesRows = !['columns', 'manuscript'].includes(recipe.spec.kind);
-  /**
-   * A merged ring has one module, so its spoke count controls nothing.
-   *
-   * Leaving the stepper there would be the same failure as a variation slider
-   * on a kind with no notion of it: a control you can turn that does not turn
-   * anything, and the only way to learn that is to try.
-   */
-  const merged = recipe.spec.kind === 'radial' && recipe.spec.merged === true;
-  const displayMode = recipe.style.mode ?? 'surface';
-  const usesColumns = !['manuscript', 'baseline'].includes(recipe.spec.kind) && !merged;
-  /** The two kinds built out of rings, and so the two with rings to turn. */
-  const hasRings = recipe.spec.kind === 'radial' || recipe.spec.kind === 'orbit';
-  /**
-   * What the dial is called here, which is different in every kind.
-   *
-   * It opens a hole in the dial, mixes the compartments in a bento box, sizes
-   * the hero of a hierarchy and shears a cascade. One word for four controls
-   * meant the only way to learn which was to drag it and watch. `golden` has no
-   * notion of it and gets no slider, rather than a slider that does nothing.
-   */
-  const variationLabel = VARIATION_LABELS[recipe.spec.kind];
-  /** More than one shape chosen, or a request to choose one. */
-  const mixing = mixWanted || recipe.style.shapes.length > 1;
+  const kind = spec.kind;
+  const regular = REGULAR.has(kind);
+  const merged = kind === 'radial' && spec.merged === true;
+  const hasRings = kind === 'radial' || kind === 'orbit';
+  const usesRows = !['columns', 'manuscript'].includes(kind);
+  const usesColumns = !['manuscript', 'baseline'].includes(kind) && !merged;
+  const variationLabel = VARIATION_LABELS[kind];
+  const displayMode: GridDisplayMode = style.mode ?? 'surface';
+  const mixing = mixWanted || style.shapes.length > 1;
+  const activePreset = gridPresetMatching(spec);
+  const gapsLinked = gapsLinkWanted && spec.gutterX === spec.gutterY;
+  const pad = paddingOf(spec);
+  const padUniform = pad.top === pad.right && pad.right === pad.bottom && pad.bottom === pad.left;
+  const padLinked = padLinkWanted && padUniform;
+  const align: CellAlign = spec.contentAlign ?? { x: 'stretch', y: 'stretch' };
+  const editable = canEditCells(kind);
+  const isEditing = editing.gridId === nodeId;
 
-  const activePreset = gridPresetMatching(recipe.spec);
+  /**
+   * Track counts on the regular kinds go through `setTrackCount`, which keeps
+   * content in the module it was in when the numbering shifts. Other kinds
+   * number modules by position and keep the simple write.
+   */
+  const setCount = (axis: 'cols' | 'rows', n: number) => {
+    if (regular) setTrackCount(nodeId, axis, n);
+    else patchSpec(axis === 'cols' ? { columns: n } : { rows: n });
+  };
+
+  const setPadding = (next: GridPadding) => {
+    const uniform = next.top === next.right && next.right === next.bottom && next.bottom === next.left;
+    // A uniform inset is stored as the plain margin, so the common case keeps
+    // the shape every older reader understands.
+    patchSpec(uniform ? { margin: next.top, padding: undefined } : { padding: next, margin: 0 });
+  };
+
+  const setAlign = (next: CellAlign) =>
+    patchSpec({ contentAlign: next.x === 'stretch' && next.y === 'stretch' ? undefined : next });
+
+  const rowLabel = hasRings ? 'Rings' : 'Rows';
+  const colLabel = hasRings ? 'Spokes' : kind === 'golden' ? 'Steps' : 'Columns';
 
   return (
-    <div className="grid-section">
-      <Band title="System">
-      {/*
-        The grids people ask for by name.
-
-        The eleven systems below answer *arrangement*, and each arrives at
-        `KIND_DEFAULTS` — chosen to show that kind at its best, which is the
-        right default and is not a configuration. Proportion is the other half,
-        and it is where the named grids live: a twelve-column, 24-gutter web
-        grid is four separate edits away, and every one of them is a number
-        somebody has to already know.
-
-        A row of words rather than miniatures, deliberately, where the systems
-        below get pictures. A system is a shape and the word means nothing
-        until you have seen one; a preset is a *name for numbers*, and "Twelve
-        column" says more than any thumbnail of twelve slivers could. Putting
-        pictures on both would also make two adjacent rows of tiles that mean
-        different kinds of thing.
-
-        "Custom" is shown rather than nothing when the spec matches no preset,
-        because a grid arriving at a kind's defaults has not been configured —
-        and a row that simply had nothing selected would read as a control that
-        failed to notice.
-      */}
-      <span className="grid-section__caption">
-        Preset
-        <strong>{activePreset?.label ?? 'Custom'}</strong>
-      </span>
-      <div className="grid-presets" role="radiogroup" aria-label="Grid preset">
-        {GRID_PRESETS.map((preset) => {
-          const on = activePreset?.id === preset.id;
-          return (
-            <button
-              key={preset.id}
-              type="button"
-              role="radio"
-              aria-checked={on}
-              className="grid-preset"
-              data-active={on || undefined}
-              data-tooltip={preset.hint}
-              data-tooltip-pos="left"
-              onClick={() => {
-                /*
-                  The kind first, then the numbers.
-
-                  `switchKind` brings that kind's own defaults with it, which is
-                  right for the picker below and is exactly what the preset is
-                  overriding — so the patch has to land after it, not before.
-                */
-                apply(withSpec(switchKind(recipe, preset.kind), preset.patch));
-              }}
-            >
-              {preset.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* The system. Ten miniatures rather than a dropdown of ten words,
-          because a grid system is a picture and the words mean nothing until
-          you have seen one. */}
-      {/* Switching kind brings that kind's own track counts with it -- see
-          `KIND_DEFAULTS`. The same two fields mean twelve spokes to a dial and
-          three modules to a modular grid, so carrying the old numbers across
-          would show most kinds at their worst. */}
-      <div className="grid-section__kinds" role="radiogroup" aria-label="Grid system">
-        {GRID_KINDS.map((kind: GridKind) => (
-          <button
-            key={kind}
-            type="button"
-            role="radio"
-            aria-checked={recipe.spec.kind === kind}
-            className="grid-kind"
-            data-active={recipe.spec.kind === kind || undefined}
-            data-tooltip={`${GRID_LABELS[kind]}: ${GRID_HINTS[kind]}`}
-            onClick={() => apply(switchKind(recipe, kind))}
-          >
-            {/* No label under the tile.
-                Five across a 260px panel leaves about forty pixels a word, so
-                "Hierarchical" and "Manuscript" both arrived as "Hier..." --
-                which identifies nothing and takes a line to do it. The caption
-                below names whichever is chosen, in full, and the tooltip names
-                the rest. */}
-            <GridKindIcon kind={kind} size={24} />
-          </button>
-        ))}
-      </div>
-
-      {/* The caption carries the name the tiles no longer show, and the one
-          line explaining what the system is *for*. Both belong to the current
-          choice, so they sit under the picker rather than inside it. */}
-      <p className="grid-section__hint">
-        <strong>{GRID_LABELS[recipe.spec.kind]}</strong>
-        {' '}
-        {GRID_HINTS[recipe.spec.kind]}
-      </p>
-
-      {/**
-        * What the grid is being used *as*, which is a different question from
-        * what it contains -- and the reason it sits under the system picker
-        * rather than in the palette band. Switching to a guide and back returns
-        * the same grid: the mode touches no seed and no layout.
-        *
-        * The three labels and their hints come from `gridStyle`, beside the
-        * resolver that acts on them, so a fourth mode is one edit and not four.
-        */}
-      <span className="grid-section__caption">
-        Used as
-        <strong>{GRID_DISPLAY_LABELS[displayMode]}</strong>
-      </span>
-      <div className="grid-presets" role="radiogroup" aria-label="What the grid is used as">
-        {GRID_DISPLAY_MODES.map((m) => (
-          <button
-            key={m}
-            type="button"
-            role="radio"
-            aria-checked={displayMode === m}
-            className="grid-preset"
-            data-active={displayMode === m || undefined}
-            data-tooltip={GRID_DISPLAY_HINTS[m]}
-            onClick={() => apply(withStyle(recipe, { mode: m }))}
-          >
-            {GRID_DISPLAY_LABELS[m]}
-          </button>
-        ))}
-      </div>
-      <p className="grid-section__hint">{GRID_DISPLAY_HINTS[displayMode]}</p>
-
-      {/* A switch, not a button reading "On" -- the same control the ring
-          toggle above uses, for the same boolean shape. It was drawn as a
-          preset chip, which is the class this panel uses for *choices between
-          alternatives*, and a chip that toggles is a chip whose unpressed
-          state means nothing. */}
-      <label className="grid-field grid-field--wide grid-toggle-field">
-        <span>Track labels</span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={recipe.style.showLabels === true}
-          className="grid-switch"
-          data-active={recipe.style.showLabels || undefined}
-          data-tooltip={
-            recipe.style.showLabels
-              ? 'Hide the C1 / R1 track names'
-              : 'Name the top row and left column, the way a column guide is counted'
-          }
-          onClick={() => apply(withStyle(recipe, { showLabels: !recipe.style.showLabels }))}
-        >
-          <span className="grid-switch__dot" />
-        </button>
-      </label>
-      </Band>
-
-      {/**
-        * How many modules this makes, said in the header of the band that sets
-        * it — the one fact this whole group is judged by.
-        *
-        * Rows and columns multiply, and most kinds do not multiply them the way
-        * you would guess: bento merges compartments, masonry derives its own
-        * count per column, radial multiplies rings by spokes. So "4 x 4" is not
-        * a number anyone can compute from the two steppers, and the count is
-        * exactly what decides whether a grid is a layout or a texture.
-        */}
-      <Band
-        title="Layout"
-        aside={
-          <span className="grid-section__count">
-            {cellCount} {cellCount === 1 ? 'module' : 'modules'}
-          </span>
-        }
+    <div className="gs">
+      <Section
+        id="grid-system"
+        title="Grid"
+        meta={`${cellCount} ${cellCount === 1 ? 'module' : 'modules'}`}
       >
-      {/**
-        * And what is *in* those modules.
-        *
-        * The panel that owns grids said nothing about their contents, so a grid
-        * holding six photographs read from here as an empty scaffold. The
-        * waiting count is the important half: content with no module in the
-        * current arrangement is sitting in a strip below the grid, and the
-        * strip cannot explain itself.
-        */}
-      {content.filled + content.parked > 0 && (
-        <p className="grid-section__content">
-          {content.filled} of {content.modules} filled
-          {content.parked > 0 && (
-            <>
-              {' · '}
-              <strong
-                data-tooltip={`${content.parked} ${content.parked === 1 ? 'item has' : 'items have'} no module in this arrangement. They are waiting below the grid and will return when there is room.`}
+        <SpecimenPicker
+          label="Grid system"
+          value={kind}
+          options={GRID_KINDS.map((k) => ({
+            value: k,
+            label: `${GRID_LABELS[k]}: ${GRID_HINTS[k]}`,
+            render: () => <GridKindIcon kind={k} size={20} />,
+          }))}
+          onChange={(k) => apply(switchKind(recipe, k))}
+        />
+        <Note>
+          <strong className="gs-strong">{GRID_LABELS[kind]}.</strong> {GRID_HINTS[kind]}
+        </Note>
+        <Row label="Preset">
+          <Select
+            label="Grid preset"
+            value={activePreset?.id ?? 'custom'}
+            options={[
+              ...GRID_PRESETS.map((p) => ({ value: p.id, label: p.label, detail: p.hint })),
+              { value: 'custom', label: 'Custom', detail: 'Your own numbers' },
+            ]}
+            onChange={(id) => {
+              const preset = GRID_PRESETS.find((p) => p.id === id);
+              // The kind first (it brings its own defaults), then the preset's numbers.
+              if (preset) apply(withSpec(switchKind(recipe, preset.kind), preset.patch));
+            }}
+          />
+        </Row>
+        <Row label="Used as" hint={GRID_DISPLAY_HINTS[displayMode]} stack>
+          <SegmentedControl
+            ariaLabel="What the grid is used as"
+            fill
+            value={displayMode}
+            segments={GRID_DISPLAY_MODES.map((m) => ({ value: m, label: GRID_DISPLAY_LABELS[m], hint: GRID_DISPLAY_HINTS[m] }))}
+            onChange={(m) => patchStyle({ mode: m as GridDisplayMode })}
+          />
+        </Row>
+      </Section>
+
+      <Section id="grid-arrangement" title="Arrangement">
+        {(usesRows || usesColumns) && (
+          <PairRow>
+            {usesRows ? (
+              <NumberField
+                label={rowLabel}
+                glyph={<Rows3 size={12} />}
+                value={kind === 'columns' ? 1 : spec.rows}
+                min={1}
+                max={MAX_TRACKS}
+                onChange={onCommit((n) => setCount('rows', n))}
+              />
+            ) : (
+              <span />
+            )}
+            {usesColumns ? (
+              <NumberField
+                label={colLabel}
+                glyph={<Columns3 size={12} />}
+                value={spec.columns}
+                min={1}
+                max={MAX_TRACKS}
+                onChange={onCommit((n) => setCount('cols', n))}
+              />
+            ) : (
+              <span />
+            )}
+          </PairRow>
+        )}
+        <PairRow linked>
+          <NumberField
+            label="Gap across"
+            glyph={<MoveHorizontal size={12} />}
+            value={spec.gutterX}
+            min={0}
+            max={400}
+            unit="px"
+            onChange={onCommit((v) => patchSpec(gapsLinked ? { gutterX: v, gutterY: v } : { gutterX: v }))}
+          />
+          <IconToggle
+            label={gapsLinked ? 'Unlink the gaps' : 'Link the gaps'}
+            pressed={gapsLinked}
+            onClick={() => {
+              const next = !gapsLinked;
+              setGapsLinkWanted(next);
+              if (next) patchSpec({ gutterY: spec.gutterX });
+            }}
+          >
+            {gapsLinked ? <Link2 size={13} /> : <Unlink2 size={13} />}
+          </IconToggle>
+          <NumberField
+            label="Gap down"
+            glyph={<MoveVertical size={12} />}
+            value={spec.gutterY}
+            min={0}
+            max={400}
+            unit="px"
+            onChange={onCommit((v) => patchSpec(gapsLinked ? { gutterX: v, gutterY: v } : { gutterY: v }))}
+          />
+        </PairRow>
+        {variationLabel && !(regular && spec.tracks) && (
+          <Row label={variationLabel} stack>
+            <NumberField
+              label={variationLabel}
+              value={Math.round(spec.variation * 100)}
+              min={0}
+              max={100}
+              unit="%"
+              onChange={onCommit((v) => patchSpec({ variation: v / 100 }))}
+            />
+          </Row>
+        )}
+        {hasRings && spec.rows > 1 && !merged && (
+          <Row label="Ring offset" hint="Turns each ring against the one inside it, in modules">
+            <NumberField
+              label="Ring offset"
+              value={Math.round((spec.stagger ?? 0) * 100)}
+              min={0}
+              max={100}
+              unit="%"
+              onChange={onCommit((v) => patchSpec({ stagger: v / 100 }))}
+            />
+          </Row>
+        )}
+        {kind === 'radial' && (
+          <FullRow>
+            <Switch
+              block
+              checked={merged}
+              label="Continuous ring"
+              tooltip="One unbroken band per ring instead of sectors"
+              onChange={(on) => patchSpec({ merged: on })}
+            />
+          </FullRow>
+        )}
+        <FullRow>
+          <Switch
+            block
+            checked={style.showLabels === true}
+            label="Track labels"
+            tooltip="Name the top row and left column, C1 and R1"
+            onChange={(on) => patchStyle({ showLabels: on })}
+          />
+        </FullRow>
+      </Section>
+
+      <Section id="grid-layout" title="Layout">
+        {padLinked ? (
+          <PairRow linked>
+            <NumberField
+              label="Padding"
+              glyph={<Grid2x2 size={12} />}
+              value={pad.top}
+              min={0}
+              max={400}
+              unit="px"
+              onChange={onCommit((v) => setPadding({ top: v, right: v, bottom: v, left: v }))}
+            />
+            <IconToggle label="Set each side" pressed={false} onClick={() => setPadLinkWanted(false)}>
+              <Unlink2 size={13} />
+            </IconToggle>
+            <span />
+          </PairRow>
+        ) : (
+          <>
+            <PairRow linked>
+              <NumberField
+                label="Padding top"
+                glyph="T"
+                value={pad.top}
+                min={0}
+                max={400}
+                onChange={onCommit((v) => setPadding({ ...pad, top: v }))}
+              />
+              <IconToggle
+                label="Same on every side"
+                pressed={false}
+                onClick={() => {
+                  setPadLinkWanted(true);
+                  setPadding({ top: pad.top, right: pad.top, bottom: pad.top, left: pad.top });
+                }}
               >
-                {content.parked} waiting
-              </strong>
-            </>
-          )}
-        </p>
-      )}
-      <div className="grid-section__row">
-        {usesRows && (
-          <label className="grid-field">
-            <span>{hasRings ? 'Rings' : 'Rows'}</span>
-            <NumberStepper value={recipe.spec.rows} min={1} max={24} onChange={(rows) => patchSpec({ rows })} />
-          </label>
+                <Link2 size={13} />
+              </IconToggle>
+              <NumberField
+                label="Padding right"
+                glyph="R"
+                value={pad.right}
+                min={0}
+                max={400}
+                onChange={onCommit((v) => setPadding({ ...pad, right: v }))}
+              />
+            </PairRow>
+            <PairRow linked>
+              <NumberField
+                label="Padding bottom"
+                glyph="B"
+                value={pad.bottom}
+                min={0}
+                max={400}
+                onChange={onCommit((v) => setPadding({ ...pad, bottom: v }))}
+              />
+              <span />
+              <NumberField
+                label="Padding left"
+                glyph="L"
+                value={pad.left}
+                min={0}
+                max={400}
+                onChange={onCommit((v) => setPadding({ ...pad, left: v }))}
+              />
+            </PairRow>
+          </>
         )}
-        {usesColumns && (
-          <label className="grid-field">
-            {/* A dial is divided into spokes and a spiral into steps. Calling
-                both "columns" is the same failure as calling four different
-                controls "variation". */}
-            <span>
-              {hasRings ? 'Spokes'
-                : recipe.spec.kind === 'golden' ? 'Steps'
-                : 'Columns'}
-            </span>
-            <NumberStepper value={recipe.spec.columns} min={1} max={24} onChange={(columns) => patchSpec({ columns })} />
-          </label>
-        )}
-      </div>
-
-      {/**
-        * Two gaps with a link between them, not two gaps and a button.
-        *
-        * "Match gaps" was a labelled button sitting beside Margin, which put a
-        * control for the row above inside the row below and made it read as
-        * something Margin did. A chain between the two fields is the pattern
-        * every inspector uses for a locked pair -- including the width and
-        * height a few sections up -- and it says which two things it binds by
-        * being between them.
-        */}
-      <div className="grid-section__gaps">
-        <label className="grid-field">
-          <span>Gap across</span>
-          <NumberStepper
-            suffix="px"
-            value={recipe.spec.gutterX}
-            min={0}
-            max={200}
-            onChange={(gutterX) => patchSpec(linked ? { gutterX, gutterY: gutterX } : { gutterX })}
+        <Row label="Content" hint="Where content sits in its module, and whether it fills it">
+          <div className="gs-align">
+            <AlignMatrix value={align} onChange={setAlign} />
+            <div className="gs-align__fill">
+              <IconToggle
+                label={align.x === 'stretch' ? 'Content fills the width' : 'Fill the width'}
+                pressed={align.x === 'stretch'}
+                onClick={() => setAlign({ ...align, x: align.x === 'stretch' ? 'center' : 'stretch' })}
+              >
+                <ArrowLeftRight size={13} />
+              </IconToggle>
+              <IconToggle
+                label={align.y === 'stretch' ? 'Content fills the height' : 'Fill the height'}
+                pressed={align.y === 'stretch'}
+                onClick={() => setAlign({ ...align, y: align.y === 'stretch' ? 'center' : 'stretch' })}
+              >
+                <ArrowUpDown size={13} />
+              </IconToggle>
+            </div>
+          </div>
+        </Row>
+        <Row label="Rows" hint="Hug makes each row as tall as the tallest text, sticky or table in it">
+          <SegmentedControl
+            ariaLabel="Row sizing"
+            fill
+            value={spec.sizing === 'hug' ? 'hug' : 'fixed'}
+            disabledReason={regular ? undefined : 'Only column and modular grids have rows that can grow'}
+            segments={[
+              { value: 'fixed', label: 'Fixed', hint: 'Rows share the grid height' },
+              { value: 'hug', label: 'Hug content', hint: 'Rows grow to fit what is in them' },
+            ]}
+            onChange={(v) => patchSpec({ sizing: v === 'hug' ? 'hug' : undefined })}
           />
-        </label>
-        <button
-          type="button"
-          className="grid-lock"
-          data-active={linked || undefined}
-          aria-pressed={linked}
-          data-tooltip={linked ? 'Gaps are linked' : 'Link the gaps'}
-          aria-label={linked ? 'Unlink the gaps' : 'Link the gaps'}
-          onClick={() => {
-            const next = !linked;
-            setLinkWanted(next);
-            // Closing the chain over two different numbers has to pick one, and
-            // cross\ is the one the eye reads first.
-            if (next) patchSpec({ gutterY: recipe.spec.gutterX });
-          }}
-        >
-          {linked ? <Link2 size={13} /> : <Unlink2 size={13} />}
-        </button>
-        <label className="grid-field">
-          <span>Gap down</span>
-          <NumberStepper
-            suffix="px"
-            value={recipe.spec.gutterY}
-            min={0}
-            max={200}
-            onChange={(gutterY) => patchSpec(linked ? { gutterX: gutterY, gutterY } : { gutterY })}
-          />
-        </label>
-      </div>
-
-      <div className="grid-section__row">
-        <label className="grid-field">
-          <span>Margin</span>
-          <NumberStepper suffix="px" value={recipe.spec.margin} min={0} max={400} onChange={(margin) => patchSpec({ margin })} />
-        </label>
-      </div>
-
-      {recipe.spec.kind === 'radial' && (
-        /**
-         * One ring, or several pieces of one.
-         *
-         * A toggle rather than a gutter of zero, which is what people reach for
-         * first and is not the same thing: butted sectors are still separate
-         * modules, so they take separate colours, separate strokes and separate
-         * corner radii, and every one of those turns the seams back on. What the
-         * shape wants to be is one closed band, and only one module can be that.
-         */
-        <label className="grid-field grid-field--wide grid-toggle-field">
-          <span>Continuous ring</span>
+        </Row>
+        <FullRow>
           <button
             type="button"
-            role="switch"
-            aria-checked={merged}
-            className="grid-switch"
-            data-active={merged || undefined}
-            data-tooltip={merged ? 'Split the ring into sectors' : 'Fuse the sectors into one band'}
-            onClick={() => patchSpec({ merged: !merged })}
+            className="gs-action"
+            aria-pressed={isEditing}
+            data-tooltip={
+              editable
+                ? isEditing
+                  ? 'Stop editing cells (Esc)'
+                  : 'Merge, split and resize modules on the board. Or double-click the grid'
+                : 'Cells can be edited on column, modular and bento grids'
+            }
+            disabled={!editable}
+            onClick={() => (isEditing ? gridEditMode.exit() : gridEditMode.enter(nodeId))}
           >
-            <span className="grid-switch__dot" />
+            {isEditing ? 'Done editing cells' : 'Edit cells'}
           </button>
-        </label>
+        </FullRow>
+      </Section>
+
+      {regular && (
+        <Section id="grid-tracks" title="Tracks" collapsible defaultOpen={false}>
+          <TrackList node={node} axis="cols" title="Columns" />
+          {kind === 'modular' && <TrackList node={node} axis="rows" title="Rows" />}
+        </Section>
       )}
 
-      {hasRings && recipe.spec.rows > 1 && !merged && (
-        /**
-         * Turning each ring past the one inside it.
-         *
-         * Rings that share their spokes read as a single wheel -- symmetrical,
-         * correct, and completely still. Offsetting them drops one ring's joins
-         * into the middle of the next one's modules, and the arrangement starts
-         * reading as layers rather than as a diagram. Only offered with more
-         * than one ring, because with one there is nothing to offset it against.
-         *
-         * Measured in modules rather than degrees so the effect survives a
-         * change of spoke count: half a module is half a module at six spokes
-         * and at twenty.
-         */
-        <div className="grid-field grid-field--wide">
-          <span>Ring offset</span>
-          <Slider
-            label="Ring offset"
-            labelHidden
-            value={Math.round((recipe.spec.stagger ?? 0) * 100)}
-            min={0}
-            max={100}
-            onChange={(v) => patchSpec({ stagger: v / 100 })}
-          />
-        </div>
-      )}
-
-      {variationLabel && (
-        <div className="grid-field grid-field--wide">
-          <span>{variationLabel}</span>
-          <Slider
-            label={variationLabel}
-            labelHidden
-            value={Math.round(recipe.spec.variation * 100)}
-            min={0}
-            max={100}
-            onChange={(v) => patchSpec({ variation: v / 100 })}
-          />
-        </div>
-      )}
-
-      </Band>
-
-      {/**
-        * The header carries a specimen of the module itself.
-        *
-        * Shape, corner radius, stroke and opacity are four controls whose only
-        * meaningful output is one picture, and that picture was only available
-        * on the board -- so setting a radius meant adjusting, looking away,
-        * and coming back. One 30px tile answers all four at once, and it sits
-        * in the band header for the same reason the module count does: it is
-        * the thing this group is judged by.
-        */}
-      <Band
+      <Section
+        id="grid-cells"
         title="Cells"
-        aside={
-          <span className="grid-section__specimen" data-tooltip="One module, as it will be drawn">
+        meta={
+          <span className="gs-specimen" aria-hidden="true">
             <CellFace
-              shape={recipe.style.shapes[0] ?? 'rect'}
-              size={30}
-              fill={recipe.style.palette[Math.floor(recipe.style.palette.length / 2)] ?? '#94A3B8'}
-              radius={recipe.style.radius}
+              shape={style.shapes[0] ?? 'rect'}
+              size={18}
+              fill={style.palette[Math.floor(style.palette.length / 2)] ?? 'currentColor'}
+              radius={style.radius}
               cellSize={sampleCell}
-              strokeColor={recipe.style.strokeColor}
-              strokeWidth={recipe.style.strokeWidth}
-              opacity={recipe.style.opacity}
+              strokeColor={style.strokeColor}
+              strokeWidth={style.strokeWidth}
+              opacity={style.opacity}
             />
           </span>
         }
       >
-      {/**
-        * The shape of a module, and whether there is more than one of them.
-        *
-        * ## Why the mode control went
-        *
-        * A two-segment "One shape / Mixed" `SegmentedControl` sat above this
-        * row, and it was wrong three ways at once.
-        *
-        * It looked wrong: that component sizes each segment to its own content
-        * and never stretches -- it is built for a row of 20px specimen icons --
-        * so two short words sat at the left end of a full-width grey track with
-        * most of it empty. Nothing else in the panel has that silhouette.
-        *
-        * It said nothing the row below did not already say. A list of shapes
-        * *is* the answer to "one or several", and keeping both meant they could
-        * disagree; see `GridStyle.shapes` for the two ways they did.
-        *
-        * And it silently changed what a click here *meant* -- replace in one
-        * mode, toggle in the other -- with nothing on screen to say so, which
-        * is the one thing a control must never do quietly.
-        *
-        * What replaces it is a switch that describes its effect on this row in
-        * two words, built from the same `grid-switch` as the continuous-ring
-        * toggle in the band above: a binary choice that looks like the other
-        * binary choice in this panel rather than like a tab strip. It sits
-        * *under* the row it governs for the same reason that one does -- the
-        * picture is the control, and the qualifier follows it.
-        */}
-      <span className="grid-section__caption">
-        Shape
-        {/* Named in full here, which the icon-only row cannot do -- the same
-            arrangement the palette and colour-mode captions already use. */}
-        <strong>
-          {mixing
-            ? `Mixing ${recipe.style.shapes.length} of ${CELL_SHAPES.length}`
-            : SHAPE_LABELS[recipe.style.shapes[0] ?? 'rect']}
-        </strong>
-      </span>
-      {/* A radio group when one shape is chosen, a set of toggles when several
-          are -- announced as whichever it currently is, rather than as toggles
-          that happen to behave like radios most of the time. */}
-      <div
-        className="grid-section__shapes"
-        role={mixing ? 'group' : 'radiogroup'}
-        aria-label={mixing ? 'Shapes in the mix' : 'Cell shape'}
-      >
-        {CELL_SHAPES.map((shape: CellShape) => {
-          const on = recipe.style.shapes.includes(shape);
-          return (
-            <button
-              key={shape}
-              type="button"
-              className="grid-shape"
-              role={mixing ? undefined : 'radio'}
-              {...(mixing ? { 'aria-pressed': on } : { 'aria-checked': on })}
-              data-active={on || undefined}
-              aria-label={SHAPE_LABELS[shape]}
-              data-tooltip={
-                mixing
-                  ? on
-                    ? `Take ${SHAPE_LABELS[shape].toLowerCase()} out of the mix`
-                    : `Add ${SHAPE_LABELS[shape].toLowerCase()} to the mix`
-                  : SHAPE_LABELS[shape]
-              }
-              onClick={() => {
-                // The list is the state, so a click either sets it or edits it.
-                if (!mixing) {
-                  patchStyle({ shapes: [shape] });
-                  return;
-                }
-                const next = on
-                  ? recipe.style.shapes.filter((s) => s !== shape)
-                  : [...recipe.style.shapes, shape];
-                // Never empty: a grid of nothing is not a state worth reaching.
-                patchStyle({ shapes: next.length > 0 ? next : [shape] });
-              }}
-            >
-              <CellFace
-                shape={shape}
-                size={22}
-                fill="currentColor"
-                radius={recipe.style.radius}
-                cellSize={sampleCell}
-              />
-            </button>
-          );
-        })}
-      </div>
-
-      <label className="grid-field grid-field--wide grid-toggle-field">
-        <span>Mix shapes</span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={mixing}
-          className="grid-switch"
-          data-active={mixing || undefined}
-          data-tooltip={mixing ? 'Use one shape for every module' : 'Draw each module from the shapes you pick'}
-          onClick={() => {
-            if (!mixing) {
-              setMixWanted(true);
-              return;
-            }
-            setMixWanted(false);
-            /**
-             * Turning it off has to write, because the list is the state.
-             * Leaving three shapes selected under a switch that reads "off"
-             * would be the switch telling you something the grid disagrees
-             * with -- and the first one is what this band's header already
-             * shows as the specimen.
-             */
-            if (recipe.style.shapes.length > 1) patchStyle({ shapes: [recipe.style.shapes[0]] });
-          }}
-        >
-          <span className="grid-switch__dot" />
-        </button>
-      </label>
-
-      <div className="grid-section__row">
-        <label className="grid-field">
-          <span>Corners</span>
-          <NumberStepper suffix="px" value={recipe.style.radius} min={0} max={200} onChange={(radius) => patchStyle({ radius })} />
-        </label>
-        <label className="grid-field">
-          <span>Stroke</span>
-          <NumberStepper
-            suffix="px"
-            value={recipe.style.strokeWidth}
-            min={0}
-            max={40}
-            onChange={(strokeWidth) => patchStyle({ strokeWidth })}
+        {mixing ? (
+          <div className="gs-shapes" role="group" aria-label="Shapes in the mix">
+            {CELL_SHAPES.map((shape: CellShape) => {
+              const on = style.shapes.includes(shape);
+              return (
+                <IconToggle
+                  key={shape}
+                  label={on ? `Take ${SHAPE_LABELS[shape].toLowerCase()} out of the mix` : `Add ${SHAPE_LABELS[shape].toLowerCase()} to the mix`}
+                  pressed={on}
+                  onClick={() => {
+                    const next = on ? style.shapes.filter((s) => s !== shape) : [...style.shapes, shape];
+                    patchStyle({ shapes: next.length > 0 ? next : [shape] });
+                  }}
+                >
+                  <CellFace shape={shape} size={18} fill="currentColor" radius={style.radius} cellSize={sampleCell} />
+                </IconToggle>
+              );
+            })}
+          </div>
+        ) : (
+          <SpecimenPicker
+            label="Cell shape"
+            value={style.shapes[0] ?? 'rect'}
+            options={CELL_SHAPES.map((shape) => ({
+              value: shape,
+              label: SHAPE_LABELS[shape],
+              render: () => <CellFace shape={shape} size={18} fill="currentColor" radius={style.radius} cellSize={sampleCell} />,
+            }))}
+            onChange={(shape) => patchStyle({ shapes: [shape] })}
           />
-        </label>
-      </div>
-
-      {recipe.style.strokeWidth > 0 && (
-        <label className="grid-field grid-field--wide">
-          <span>Stroke colour</span>
-          <ColorPickerPopover
-            color={recipe.style.strokeColor}
-            onChange={(strokeColor) => patchStyle({ strokeColor })}
-          />
-        </label>
-      )}
-
-      <div className="grid-field grid-field--wide">
-        <span>Opacity</span>
-        <Slider
-          label="Opacity"
-          labelHidden
-          value={Math.round(recipe.style.opacity * 100)}
-          min={0}
-          max={100}
-          onChange={(v) => patchStyle({ opacity: v / 100 })}
-        />
-      </div>
-
-      </Band>
-
-      <Band title="Colour">
-      {/* Two rows of swatches sat here with nothing to tell them apart: a
-          column of ramps to pick from, then a row of the current ramp's own
-          colours to edit. Identical shapes, opposite meanings. */}
-      {/* The caption carries the current palette's name, which frees the tiles
-          from carrying names of their own -- and a name per tile was what kept
-          the list one column wide and mostly out of sight. */}
-      <span className="grid-section__caption">
-        Palette
-        <strong>{GRID_PALETTES.find((p) => p.colors.join() === recipe.style.palette.join())?.name ?? 'Custom'}</strong>
-      </span>
-      <div className="grid-section__palettes" role="radiogroup" aria-label="Palette">
-        {GRID_PALETTES.map((palette) => {
-          const on = palette.colors.join() === recipe.style.palette.join();
-          return (
-            <button
-              key={palette.id}
-              type="button"
-              role="radio"
-              aria-checked={on}
-              className="grid-palette"
-              data-active={on || undefined}
-              data-tooltip={palette.name}
-              onClick={() => patchStyle({ palette: palette.colors })}
-            >
-              <span className="grid-palette__ramp">
-                {palette.colors.map((c) => (
-                  <span key={c} className="grid-palette__chip" style={{ background: c }} />
-                ))}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Swatch-level editing, so a shipped palette is a starting point rather
-          than the only answer. */}
-      <span className="grid-section__caption">Or edit these colours</span>
-      <div className="grid-section__swatches">
-        {recipe.style.palette.map((color, i) => (
-          <ColorPickerPopover
-            key={i}
-            color={color}
-            onChange={(next) => {
-              const palette = [...recipe.style.palette];
-              palette[i] = next;
-              patchStyle({ palette });
+        )}
+        <FullRow>
+          <Switch
+            block
+            checked={mixing}
+            label="Mix shapes"
+            tooltip="Draw each module from the shapes you pick"
+            onChange={(on) => {
+              setMixWanted(on);
+              if (!on && style.shapes.length > 1) patchStyle({ shapes: [style.shapes[0]] });
             }}
           />
-        ))}
-      </div>
+        </FullRow>
+        <PairRow>
+          <NumberField
+            label="Corner radius"
+            glyph="◜"
+            value={style.radius}
+            min={0}
+            max={400}
+            unit="px"
+            onChange={onCommit((radius) => patchStyle({ radius }))}
+          />
+          <NumberField
+            label="Stroke width"
+            glyph="▭"
+            value={style.strokeWidth}
+            min={0}
+            max={40}
+            unit="px"
+            onChange={onCommit((strokeWidth) => patchStyle({ strokeWidth }))}
+          />
+        </PairRow>
+        {style.strokeWidth > 0 && (
+          <Row label="Stroke">
+            <ColorChip label="Stroke colour" value={style.strokeColor} onChange={(strokeColor) => patchStyle({ strokeColor })} />
+          </Row>
+        )}
+        <Row label="Opacity">
+          <NumberField
+            label="Opacity"
+            value={Math.round(style.opacity * 100)}
+            min={0}
+            max={100}
+            unit="%"
+            onChange={onCommit((v) => patchStyle({ opacity: v / 100 }))}
+          />
+        </Row>
+      </Section>
 
-      {/**
-        * How the palette is spent, shown rather than named.
-        *
-        * This was a native `<select>` of six sentences — the only raw select in
-        * the section, in a panel whose every other visual choice is a picture.
-        * `gridStyle.ts` renamed these options from how they work to what you
-        * get ("Biggest cells darkest" rather than "By size") precisely because
-        * *"a menu is read once, at the moment of choosing, with no way to try
-        * each option but to try each option."* Renaming was the best a menu
-        * could do; it does not fix the problem, it apologises for it.
-        *
-        * Six tiles fix it. Each is the **current grid** with only this one
-        * field changed, drawn by the same `GridThumb` the variations picker
-        * uses — so a tile cannot promise a composition the board would decline
-        * to produce, and what differs between the tiles is exactly what the
-        * control changes. The caption names the chosen one in full, which is
-        * the same arrangement the system picker above already uses.
-        */}
-      <span className="grid-section__caption">
-        How colours are used
-        <strong>{COLOR_MODE_LABELS[recipe.style.colorMode]}</strong>
-      </span>
-      <div className="grid-section__modes" role="radiogroup" aria-label="How colours are used">
-        {COLOR_MODES.map((mode: ColorMode) => {
-          const on = recipe.style.colorMode === mode;
+      <Section
+        id="grid-colour"
+        title="Colour"
+        meta={GRID_PALETTES.find((p) => p.colors.join() === style.palette.join())?.name ?? 'Custom'}
+      >
+        <div className="gs-palettes" role="radiogroup" aria-label="Palette">
+          {GRID_PALETTES.map((palette) => {
+            const on = palette.colors.join() === style.palette.join();
+            return (
+              <button
+                key={palette.id}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                aria-label={palette.name}
+                className="gs-palette"
+                data-tooltip={palette.name}
+                onClick={() => patchStyle({ palette: palette.colors })}
+              >
+                {palette.colors.map((c) => (
+                  <span key={c} className="gs-palette__chip" style={{ background: c }} />
+                ))}
+              </button>
+            );
+          })}
+        </div>
+        <Row label="Colours">
+          <div className="gs-swatches">
+            {style.palette.map((color, i) => (
+              <ColorPickerPopover
+                key={i}
+                color={color}
+                allowNone={false}
+                onChange={(next) => {
+                  const palette = [...style.palette];
+                  palette[i] = next;
+                  patchStyle({ palette });
+                }}
+              />
+            ))}
+          </div>
+        </Row>
+        <SpecimenPicker
+          label="How colours are used"
+          value={style.colorMode}
+          size={48}
+          options={COLOR_MODES.map((mode: ColorMode) => ({
+            value: mode,
+            label: COLOR_MODE_LABELS[mode],
+            render: () => <GridThumb recipe={withStyle(recipe, { colorMode: mode })} />,
+          }))}
+          onChange={(mode) => patchStyle({ colorMode: mode })}
+        />
+        <Note>{COLOR_MODE_LABELS[style.colorMode]}</Note>
+      </Section>
+
+      {content.filled + content.parked > 0 && (
+        <Section id="grid-content" title="Content" meta={`${content.filled} of ${content.modules} filled`}>
+          {content.parked > 0 ? (
+            <Note>
+              <button
+                type="button"
+                className="gs-link"
+                data-tooltip="Select the content that has no module in this arrangement"
+                onClick={() =>
+                  window.dispatchEvent(new CustomEvent('requestSelectNodes', { detail: { ids: content.parkedIds } }))
+                }
+              >
+                {content.parked} waiting
+              </button>{' '}
+              below the grid. They return when there is a module for them.
+            </Note>
+          ) : (
+            <Note>Every item has a module. Drag one out to release it, or hold Ctrl while dropping to keep it free.</Note>
+          )}
+        </Section>
+      )}
+
+      <Section id="grid-variations" title="Variations" collapsible>
+        <GridVariations recipe={recipe} onPick={apply} />
+      </Section>
+    </div>
+  );
+};
+
+const AXES: readonly CellAlignAxis[] = ['start', 'center', 'end'];
+const AXIS_WORD: Record<CellAlignAxis, [string, string]> = {
+  start: ['left', 'top'],
+  center: ['centre', 'middle'],
+  end: ['right', 'bottom'],
+  stretch: ['full width', 'full height'],
+};
+
+/**
+ * Where content sits in its module, as a 3×3 matrix like Figma's.
+ *
+ * A stretched axis shows as a bar across that axis rather than a dot, and
+ * clicking a position on a stretched axis keeps it stretched; the Fill
+ * toggles beside the matrix are what turn stretching on and off.
+ */
+const AlignMatrix: React.FC<{ value: CellAlign; onChange: (next: CellAlign) => void }> = ({ value, onChange }) => {
+  const pick = (x: CellAlignAxis, y: CellAlignAxis) =>
+    onChange({ x: value.x === 'stretch' ? 'stretch' : x, y: value.y === 'stretch' ? 'stretch' : y });
+  const onKey = (e: React.KeyboardEvent) => {
+    const ix = AXES.indexOf(value.x === 'stretch' ? 'center' : value.x);
+    const iy = AXES.indexOf(value.y === 'stretch' ? 'center' : value.y);
+    const move: Record<string, [number, number]> = {
+      ArrowLeft: [-1, 0],
+      ArrowRight: [1, 0],
+      ArrowUp: [0, -1],
+      ArrowDown: [0, 1],
+    };
+    const d = move[e.key];
+    if (!d) return;
+    e.preventDefault();
+    const nx = AXES[Math.min(2, Math.max(0, ix + d[0]))];
+    const ny = AXES[Math.min(2, Math.max(0, iy + d[1]))];
+    pick(nx, ny);
+  };
+  return (
+    <div
+      className="gs-matrix"
+      role="radiogroup"
+      aria-label="Content alignment"
+      data-stretch-x={value.x === 'stretch' || undefined}
+      data-stretch-y={value.y === 'stretch' || undefined}
+      onKeyDown={onKey}
+    >
+      {AXES.flatMap((y) =>
+        AXES.map((x) => {
+          const fx = value.x === 'stretch' ? 'center' : value.x;
+          const fy = value.y === 'stretch' ? 'center' : value.y;
+          const checked = fx === x && fy === y;
+          // Bars: a horizontal one along the chosen row when width fills, a
+          // vertical one down the chosen column when height fills.
+          const inH = value.x === 'stretch' && y === fy;
+          const inV = value.y === 'stretch' && x === fx;
+          const isFocus =
+            x === (value.x === 'stretch' ? 'center' : value.x) && y === (value.y === 'stretch' ? 'center' : value.y);
+          const name = `${AXIS_WORD[value.y === 'stretch' ? 'stretch' : y][1]} ${AXIS_WORD[value.x === 'stretch' ? 'stretch' : x][0]}`;
           return (
             <button
-              key={mode}
+              key={`${x}-${y}`}
               type="button"
               role="radio"
-              aria-checked={on}
-              className="grid-mode"
-              data-active={on || undefined}
-              data-tooltip={COLOR_MODE_LABELS[mode]}
-              aria-label={COLOR_MODE_LABELS[mode]}
-              onClick={() => patchStyle({ colorMode: mode })}
+              aria-checked={checked}
+              aria-label={`Align ${name}`}
+              tabIndex={isFocus ? 0 : -1}
+              className="gs-matrix__cell"
+              data-h={inH || undefined}
+              data-v={inV || undefined}
+              onClick={() => pick(x, y)}
             >
-              <GridThumb recipe={withStyle(recipe, { colorMode: mode })} />
+              <span className="gs-matrix__mark" />
+              {inH && <span className="gs-matrix__bar gs-matrix__bar--h" aria-hidden="true" />}
+              {inV && <span className="gs-matrix__bar gs-matrix__bar--v" aria-hidden="true" />}
             </button>
           );
-        })}
+        })
+      )}
+    </div>
+  );
+};
+
+type TrackKind = 'fr' | 'px' | 'auto';
+
+const trackKind = (t: GridTrack | undefined): TrackKind => (t === 'auto' ? 'auto' : t && 'px' in t ? 'px' : 'fr');
+
+/**
+ * One axis's tracks, each with its sizing and size.
+ *
+ * Shares are shown as their weight and fixed tracks in pixels. Auto tracks
+ * take their size from the content measured in them; with nothing measured
+ * they behave as one share.
+ */
+const TrackList: React.FC<{
+  node: Extract<ReturnType<typeof useStore.getState>['objects'][string], { type: 'grid' }>;
+  axis: 'cols' | 'rows';
+  title: string;
+}> = ({ node, axis, title }) => {
+  const spec = node.grid.spec;
+  const n = axis === 'cols' ? Math.max(1, Math.floor(spec.columns)) : Math.max(1, Math.floor(spec.rows));
+  const tracks = spec.tracks?.[axis];
+  const sizes = React.useMemo(() => currentTrackSizes(node, axis), [node, axis]);
+  // A long axis lists its first 24 tracks; the rest are edited on the board.
+  const shown = Math.min(n, 24);
+  const letter = axis === 'cols' ? 'C' : 'R';
+  return (
+    <div className="gs-tracks" role="group" aria-label={title}>
+      <div className="gs-tracks__head">
+        <span>{title}</span>
+        {tracks && (
+          <button type="button" className="gs-link" onClick={() => resetTracks(node.id, axis)}>
+            Make even
+          </button>
+        )}
       </div>
-
-      </Band>
-
-      {/**
-        * Picking a grid by looking at it, rather than rolling for one.
-        *
-        * This was four buttons -- Arrangement, Colour, Both, Surprise me --
-        * each committing a change you could not see until it had happened.
-        * Press twice and the arrangement you liked was gone. `GridVariations`
-        * shows five candidates and writes nothing until one is chosen.
-        */}
-      <GridVariations recipe={recipe} onPick={apply} />
-
+      {Array.from({ length: shown }, (_, i) => {
+        const t = tracks?.[i];
+        const k = trackKind(t);
+        const value = k === 'px' ? (t as { px: number }).px : k === 'fr' && t ? (t as { fr: number }).fr : Math.round(sizes[i]);
+        return (
+          <div className="gs-track" key={i}>
+            <span className="gs-track__name">{`${letter}${i + 1}`}</span>
+            <Select<TrackKind>
+              label={`${letter}${i + 1} sizing`}
+              value={tracks ? k : 'fr'}
+              options={[
+                { value: 'fr', label: 'Share', detail: 'A share of the space left over' },
+                { value: 'px', label: 'Fixed', detail: 'A size in pixels' },
+                { value: 'auto', label: 'Auto', detail: 'As big as its content' },
+              ]}
+              onChange={(next) =>
+                setTrack(
+                  node.id,
+                  axis,
+                  i,
+                  next === 'auto' ? 'auto' : next === 'px' ? { px: Math.round(sizes[i]) } : { fr: 1 }
+                )
+              }
+            />
+            <NumberField
+              label={`${letter}${i + 1} ${k === 'px' ? 'size' : 'share'}`}
+              value={tracks && k === 'auto' ? Math.round(sizes[i]) : tracks ? value : 1}
+              min={k === 'px' ? 1 : 0.1}
+              max={k === 'px' ? 100000 : 1000}
+              step={k === 'px' ? 1 : 0.5}
+              precision={k === 'px' ? 0 : 1}
+              unit={k === 'px' ? 'px' : 'fr'}
+              disabledReason={tracks && k === 'auto' ? 'Sized by its content' : undefined}
+              onChange={(v, change) => {
+                if (!change.commit) return;
+                setTrack(node.id, axis, i, k === 'px' && tracks ? { px: v } : { fr: v });
+              }}
+            />
+          </div>
+        );
+      })}
+      {n > shown && <Note>{`${n - shown} more ${title.toLowerCase()}: edit them on the board.`}</Note>}
     </div>
   );
 };

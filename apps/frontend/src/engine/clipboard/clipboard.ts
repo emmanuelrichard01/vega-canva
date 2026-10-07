@@ -69,16 +69,41 @@ export function writeClipboard(nodes: readonly AnyNode[]): ClipboardPayload | nu
   };
 }
 
+/**
+ * Limits on what a paste may create.
+ *
+ * The clipboard is untrusted input: anyone can put text carrying our marker on
+ * it. Without a cap, one paste could write an unbounded number of nodes into a
+ * board every collaborator then has to load, and a deeply nested value can
+ * exhaust the stack of every recursive reader downstream.
+ */
+export const MAX_PASTE_NODES = 5000;
+export const MAX_PASTE_DEPTH = 32;
+const MAX_PASTE_CHARS = 20_000_000;
+
+/** Whether a JSON value nests no deeper than `max`. Iterative, so it cannot overflow. */
+export function withinDepth(value: unknown, max: number): boolean {
+  const stack: Array<[unknown, number]> = [[value, 0]];
+  while (stack.length > 0) {
+    const [v, depth] = stack.pop()!;
+    if (!v || typeof v !== 'object') continue;
+    if (depth >= max) return false;
+    for (const child of Array.isArray(v) ? v : Object.values(v)) stack.push([child, depth + 1]);
+  }
+  return true;
+}
+
 /** `null` for anything that is not one of ours — including valid JSON. */
 export function parseClipboard(text: string): ClipboardPayload | null {
-  if (!text || !text.includes(CLIPBOARD_MAGIC)) return null;
+  if (!text || text.length > MAX_PASTE_CHARS || !text.includes(CLIPBOARD_MAGIC)) return null;
   try {
     const raw = JSON.parse(text);
     if (!raw || raw.kind !== CLIPBOARD_MAGIC || !Array.isArray(raw.nodes)) return null;
-    if (raw.nodes.length === 0) return null;
+    if (raw.nodes.length === 0 || raw.nodes.length > MAX_PASTE_NODES) return null;
+    if (!withinDepth(raw.nodes, MAX_PASTE_DEPTH)) return null;
     return {
       kind: CLIPBOARD_MAGIC,
-      nodes: raw.nodes.filter((n: unknown) => n && typeof n === 'object'),
+      nodes: raw.nodes.filter((n: unknown) => n && typeof n === 'object' && !Array.isArray(n)),
       origin: {
         x: Number.isFinite(raw.origin?.x) ? raw.origin.x : 0,
         y: Number.isFinite(raw.origin?.y) ? raw.origin.y : 0,
@@ -193,6 +218,12 @@ export function pasteNodes(
      * an ordinary picture, and dropping it onto a module puts it in one.
      */
     delete next.gridSlot;
+    // A copy is authored by whoever pastes it, and starts with nobody's
+    // reactions. `createNode` enforces the same; dropping them here keeps the
+    // payload honest for any other consumer.
+    for (const key of ['createdBy', 'createdByName', 'createdByColor', 'createdAt', 'updatedBy', 'updatedByName', 'updatedAt', 'reactions']) {
+      delete next[key];
+    }
 
     for (const end of ['from', 'to'] as const) {
       const value = next[end];

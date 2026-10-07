@@ -1,5 +1,6 @@
 import type { AnyNode } from './schema';
 import { runPoints } from './lineEnds';
+import { compareStacking } from './stacking';
 
 /**
  * How many points of a line's run a summary keeps.
@@ -264,7 +265,7 @@ export function buildPreview(
     .sort((a, b) => previewWeight(b) - previewWeight(a))
     .slice(0, maxItems)
     // Back into stacking order, so the drawing layers the way the board does.
-    .sort((a, b) => a.zIndex - b.zIndex);
+    .sort(compareStacking);
 
   const round = (n: number) => Math.round(n * 1000) / 1000;
 

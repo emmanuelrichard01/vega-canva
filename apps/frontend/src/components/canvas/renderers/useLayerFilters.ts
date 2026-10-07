@@ -1,7 +1,14 @@
-import { useEffect } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import Konva from 'konva';
 import type React from 'react';
 import { cameraSystem } from '../../../engine/CameraSystem';
+import { engineEvents } from '../../../engine/EventBus';
+
+/** Below this zoom a blur is invisible on screen and its bitmap is skipped. */
+const FAR_ZOOM = 0.15;
+
+const subscribeCamera = (onChange: () => void) => engineEvents.on('CameraChanged', onChange);
+const readFarZoom = () => cameraSystem.zoom < FAR_ZOOM;
 
 /**
  * Layer blur, and the cache it requires.
@@ -13,7 +20,7 @@ import { cameraSystem } from '../../../engine/CameraSystem';
  * blur a shape and resize it and you see the old size, blurred; change its
  * colour and you see the old colour.
  *
- * The three rules, all of which cost something to get wrong:
+ * The rules, all of which cost something to get wrong:
  *
  * 1. **Never cache an unblurred node.** A cache on every object on the board
  *    is a bitmap per object, and the blur is the only reason to pay for one.
@@ -25,7 +32,7 @@ import { cameraSystem } from '../../../engine/CameraSystem';
  * 3. **`pixelRatio` follows the display.** The default of 1 caches at CSS
  *    pixels, so every blurred object on a retina screen is visibly softer than
  *    its neighbours — for the wrong reason.
- * 4. **Level of Detail (LOD) Downsampling**: When zoomed far out (zoom < 0.15),
+ * 4. **Skip the blur when zoomed far out** (below `FAR_ZOOM`):
  *    Gaussian blurs are visually indistinguishable on screen. Bypassing bitmap
  *    caching at extreme overviews saves substantial GPU texture memory.
  *
@@ -39,13 +46,13 @@ export function useLayerFilters(
   deps: unknown[]
 ): void {
   const radius = blur && blur > 0 ? blur : 0;
+  // A boolean snapshot, so crossing the threshold re-runs the effect and an
+  // ordinary zoom does not re-render anything.
+  const isFarZoom = useSyncExternalStore(subscribeCamera, readFarZoom, readFarZoom);
 
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
-
-    // LOD: when zoomed far out (< 15%), bypass blur filter caching
-    const isFarZoom = cameraSystem.zoom < 0.15;
 
     if (radius <= 0 || isFarZoom) {
       // `filters([])` and not just clearing the cache: a node left holding a
@@ -73,7 +80,7 @@ export function useLayerFilters(
     // Intentionally driven by the caller's dependency list: this hook cannot
     // see what the node is made of.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [radius, ...deps]);
+  }, [radius, isFarZoom, ...deps]);
 
   // A cached node left behind on unmount would hold its bitmap until the
   // node is collected; Konva's own destroy handles that, but a node that is

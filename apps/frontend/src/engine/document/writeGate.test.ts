@@ -18,6 +18,7 @@ vi.mock('./doc', async () => {
     objectsMap: doc.getMap('objects'),
     groupsMap: doc.getMap('groups'),
     identitiesMap: doc.getMap('identities'),
+    metadataMap: doc.getMap('metadata'),
     provider: {
       awareness: {
         getLocalState: () => ({}),
@@ -28,7 +29,7 @@ vi.mock('./doc', async () => {
   };
 });
 
-const { createNode, updateNode, deleteNode, readNode } = await import('./mutations');
+const { createNode, updateNode, updateNodes, deleteNode, readNode, setBoardMetadata } = await import('./mutations');
 const { objectsMap } = await import('./doc');
 const { setRoomRole } = await import('../model/permissions');
 
@@ -103,5 +104,47 @@ describe('the write path refuses a role that cannot edit', () => {
     createNode(shape('n1'));
     deleteNode('n1');
     expect(readNode('n1')).toBeNull();
+  });
+});
+
+describe('provenance on the write path', () => {
+  const shape = (id: string, extra: Record<string, unknown> = {}) =>
+    ({ id, type: 'shape', x: 0, y: 0, width: 10, height: 10, ...extra }) as never;
+
+  beforeEach(() => {
+    setRoomRole('editor');
+    Array.from(objectsMap.keys()).forEach((k) => objectsMap.delete(k));
+  });
+
+  it("does not let a paste or duplicate carry the original's author or reactions", () => {
+    createNode(shape('copy', { createdBy: 'ada', createdByName: 'Ada', updatedBy: 'bob', reactions: { '🔥': ['ada'] } }));
+    const node = readNode('copy');
+    expect(node?.createdBy).not.toBe('ada');
+    expect(node?.createdByName).not.toBe('Ada');
+    expect(node?.updatedBy).toBeUndefined();
+    expect(node?.reactions).toBeUndefined();
+  });
+
+  it('keeps recorded authorship for a backup restore, which asks for it', () => {
+    createNode(shape('restored', { createdBy: 'ada', createdByName: 'Ada' }), { preserveAuthorship: true });
+    expect(readNode('restored')?.createdBy).toBe('ada');
+  });
+
+  it('stamps who changed it on bulk updates too', () => {
+    createNode(shape('a'));
+    createNode(shape('b'));
+    objectsMap.get('a')!.delete('updatedBy');
+    updateNodes(['a', 'b'], { width: 20 });
+    expect(readNode('a')?.updatedBy).toBeTruthy();
+  });
+
+  it('refuses board metadata writes for a viewer', async () => {
+    const { metadataMap } = await import('./doc');
+    setRoomRole('viewer');
+    setBoardMetadata('name', 'Renamed');
+    expect((metadataMap as any).get('name')).toBeUndefined();
+    setRoomRole('editor');
+    setBoardMetadata('name', 'Renamed');
+    expect((metadataMap as any).get('name')).toBe('Renamed');
   });
 });

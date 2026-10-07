@@ -34,24 +34,36 @@ What the model cannot do, and what you are choosing when you ship it:
 ### Invite links, and the half of the problem they solve
 
 With `SHARE_SECRET` set, the share dialog can mint `/i/<token>` links carrying
-a **signed** role. `onAuthenticate` verifies the signature, checks the token
-was minted for *this* room, and sets `readOnly` from the role inside it. A
-person holding a view link cannot promote it: the role is covered by the
-signature, and the previous implementation — where `role` was a field the
-client wrote and the server read back — is gone.
+a **signed** role. `onAuthenticate` (`apps/server/src/collab.ts`) verifies the
+signature, checks the token was minted for *this* room, and enforces the role
+inside it:
 
-**Minting needs no permission, and that is correct.** A token is strictly less
-than the room id it derives from, so anyone who can ask for one already has
-everything it grants. Attenuating a capability you hold never needs authority.
+- **viewer**: the connection is read-only. (Until this was fixed the server
+  returned `readOnly` from the hook, which Hocuspocus ignores; it reads
+  `connectionConfig.readOnly`. Viewers could write.)
+- **commenter**: each update is applied to a scratch copy first, and refused
+  unless everything it changes is a comment thread, an identity, or a node's
+  reactions (`commenterFilter.ts`). Because a client's updates are causally
+  chained, a refused update also blocks everything that client sends after it
+  until it reloads, so the client must not attempt a refused write.
+- **editor**: anything.
 
-What it does **not** do: a token names its room, because the client needs that
-to open the document. Someone who reads it out of their own URL can connect the
-ordinary way and get an editor session, because a bare room id still opens a
-board. Closing that means **refusing unsigned connections**, which would break
-every link already shared and the room-code join box with it. That is a product
-decision and it has not been taken; until it is, an invite link is enforced
-against the link, not against a determined holder. The share dialog says so in
-those words.
+**Minting is bounded by what the caller holds.** `POST /rooms/:id/invite` mints
+a role at or below the caller's own, and no longer-lived than the caller's own
+invite. A caller presents its invite as `X-Invite-Token`; without one it holds
+what the room id grants (editor, or nothing under `ENFORCE_SHARE_TOKENS`).
+`ADMIN_SECRET` may mint anything.
+
+What a token does **not** do on its own: it names its room, because the client
+needs that to open the document. Someone who reads it out of their own URL can
+connect on the bare room id and get an editor session. **`ENFORCE_SHARE_TOKENS=true`
+closes that**: unsigned WebSocket connections are refused, REST routes need
+`X-Invite-Token` (history: viewer; uploads and the share card: editor; link
+previews: viewer), and room-keyed share cards answer "not found". It breaks
+every bare room link already shared and the room-code join box with it, which
+is why it is off by default. Media URLs stay readable without the header,
+because an image tag cannot send one; their ids are unguessable and only
+reachable through a board.
 
 Expiry is real — it is inside the signed payload — and it is the only
 per-link control there is. Rotating `SHARE_SECRET` revokes every outstanding
@@ -83,15 +95,21 @@ page somebody fixes in five minutes.
 | --- | --- | --- |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | yes | |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | yes | |
-| `ALLOWED_ORIGINS` | yes | Comma separated. A leading-label wildcard is allowed for preview hosts (`https://*.vercel.app`); a bare `*` is not. Entries are compared as browsers spell an origin, so a trailing slash or a capital is forgiven. An entry that is not an origin fails at boot, naming itself. |
+| `ALLOWED_ORIGINS` | yes | Comma separated. A leading-label wildcard is allowed for preview hosts, but **never under a public suffix**: `https://*.vercel.app` admits every Vercel site on the internet, with credentials. Use your team's scope (`https://*-yourteam.vercel.app`) or list preview hosts explicitly. A bare `*` is not allowed. Entries are compared as browsers spell an origin, so a trailing slash or a capital is forgiven. An entry that is not an origin fails at boot, naming itself. |
 | `PUBLIC_API_URL` | yes | Written into documents as the address of uploaded media. Changing it later orphans media in boards written before the change. |
 | `TRUST_PROXY` | if behind a proxy | Hop count. Wrong either way breaks rate limiting. |
-| `REDIS_HOST` | only for >1 instance | Without it, instances share neither documents and awareness nor rate limits and IP quotas. |
+| `DATABASE_URL` | instead of the `POSTGRES_*` fields | A connection string; `sslmode=require` turns TLS on. |
+| `REDIS_URL` or `REDIS_HOST` | only for >1 instance | Without it, instances share neither documents and awareness nor rate limits and upload quotas. `REDIS_URL` may be `rediss://` (TLS) and carry a password; with `REDIS_HOST`, use `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_TLS`. |
 | `SHARE_SECRET` | no | Signs invite links. Without it, only full-access links can be offered. Rotating it revokes every outstanding invite — the only revocation there is. |
-| `AUTH_SECRET` | no | One shared token. Not authorization. The client sends it as `VITE_AUTH_SECRET`; set both or neither, or every client is refused. |
+| `AUTH_SECRET` | no | One shared token. Not authorization. The client sends it as `VITE_AUTH_SECRET`; set both or neither, or every client is refused. Because it is in the browser bundle, it guards nothing else. |
+| `SESSION_SECRET` | **yes** | Signs anonymous session tokens. At least 32 characters, different from `SHARE_SECRET` and `AUTH_SECRET`. Not derived from `SHARE_SECRET`, because rotating that key is how invites are revoked and must not reset every identity. Development without it uses a per-process key. |
+| `ADMIN_SECRET` | no | Bearer token for `/admin/reap`, `/admin/stats` and minting invites of any role. Unset means the routes are closed. |
+| `ENFORCE_SHARE_TOKENS` | no | `true` makes a bare room id open nothing. See §1. |
+| `WS_MAX_PAYLOAD_BYTES` / `MAX_DOCUMENT_BYTES` | no | 4 MB per WebSocket frame (larger frames close the socket); 32 MB per document (updates past it are refused). |
+| `WS_MAX_CONNECTIONS_PER_IP`, `ROOM_CREATE_BURST`, `ROOM_CREATE_PER_MINUTE` | no | 32 sockets per address; new boards per address, a burst of 30 then 6 a minute. |
 | `SENTRY_DSN` | no | Error tracking. `/readyz` reports `errorTracking` — trust that, not the log line. |
 | `MIN_ROOM_ID_LENGTH` | no | Default 8. Lower only to keep older short-id boards reachable. |
-| `HISTORY_FLUSH_MS` | no | Default 1000. See §4. |
+| `HISTORY_FLUSH_MS` / `HISTORY_MAX_BYTES` | no | Default 1000 ms and 64 MB. See §4. |
 
 On the frontend's host (Vercel):
 
@@ -120,7 +138,15 @@ with, which is the exact situation those headers exist to prevent.
 
 Consequences worth knowing:
 
-- Media access now follows room access, which is where it belonged.
+- The media route serves only objects recorded in `media_refs`, so it cannot
+  be pointed at anything else that shares the bucket.
+- Uploads (and link-preview pictures) are charged to a daily allowance per
+  client address **and** per session; the stricter decides. Charging the
+  session alone was free to escape, because the server mints a new session for
+  any request without a cookie. A request whose declared size already breaks
+  the allowance is refused before anything is streamed to storage.
+- At 90% of `MAX_GLOBAL_STORAGE_BYTES` error tracking is told (at most
+  hourly); at 100% uploads stop.
 - Images load with CORS, so `crossOrigin="anonymous"` succeeds and PNG export of
   boards containing images is no longer silently tainted.
 - **Boards written before this change hold direct object-store URLs and will
@@ -168,12 +194,18 @@ Two things made it total rather than occasional:
   after the ten-second forced-exit timer, or never.
 - Nothing called `flushPendingStores()`.
 
-Shutdown now closes connections first (a client still attached can write during
-the flush), calls `flushPendingStores()`, and waits for the open-document count
-to reach zero before `pool.end()` — closing the pool first kills the
-connections mid-write and hands the loss straight back. There is an eight
-second backstop so one board that refuses to store cannot take the rest with
-it.
+Shutdown (`shutdown.ts`) now marks the instance draining (`/readyz` answers
+503), arms a fifteen-second forced exit before anything else, closes
+connections (a client still attached can write during the flush), calls
+`flushPendingStores()`, and waits for the open-document count to reach zero
+before `pool.end()` — closing the pool first kills the connections mid-write
+and hands the loss straight back. There is an eight second backstop so one
+board that refuses to store cannot take the rest with it, and a second signal
+exits at once.
+
+With Redis fan-out, every instance holding a document sees every update; only
+the instance that received an update from a client records it in the history,
+so the log is not written once per instance.
 
 **Why nobody reported it as data loss.** The person editing keeps everything:
 `y-indexeddb` holds their copy on their own machine, so their board looks
@@ -209,7 +241,9 @@ board. Four pieces, each able to fail without taking the others down:
    real board's card with an empty one.
 2. **The server keeps it and draws it.** `room_cards` (migration 4) holds one
    row per room. `GET /cards/room/:id` answers the facts and `…/image.png`
-   draws 1200×630 with resvg, cached in memory by room and version. Everything
+   draws 1200×630 with resvg on a worker thread (so a render never stalls the
+   WebSocket traffic on the same event loop), cached in memory by room and
+   version. Everything
    a client sent is checked again on the way out: colours must match a CSS
    colour grammar, numbers are clamped to known ranges, and the name is drawn
    as glyph outlines — there is no text node in the picture to break out of.
@@ -243,9 +277,11 @@ images from one vector mark. Rerun it after changing the mark or the card.
 - `GET /healthz` — liveness. Deliberately checks nothing else: a liveness probe
   that touches the database turns a recoverable dependency outage into a
   restart loop that guarantees one.
-- `GET /readyz` — readiness. Checks the database, and reports history queue
-  depth and drops. A server that cannot reach Postgres should be taken out of
-  rotation, not restarted.
+- `GET /readyz` — readiness. 503 while draining for shutdown; otherwise one
+  `SELECT 1`, plus history queue depth and drops. A server that cannot reach
+  Postgres should be taken out of rotation, not restarted.
+- `GET /admin/stats` — storage totals, behind `ADMIN_SECRET`. They used to be
+  in the public readiness payload, computed by a full-table sum on every probe.
 
 ---
 
@@ -263,44 +299,45 @@ the system.
    still never run.** One manual run is what turns a tested mechanism into a
    backup; until then recovery is six hours.
 
-   `R2_BACKUP_BUCKET` is currently the media bucket, which is a deliberate
-   shortcut with a real cost — see `SETUP-CHECKLIST.md` §1a.
+   `R2_BACKUP_BUCKET` is currently the media bucket. **Move it to a separate
+   bucket with its own scoped token** (`SETUP-CHECKLIST.md` §1a): the server's
+   storage credentials can delete anything in the media bucket, backups
+   included, and a lifecycle rule aimed at media would reach them too. The
+   media route no longer serves keys it did not record, so the dumps are not
+   readable through it.
 
    `room_snapshots` is overwritten in place with no version history, so read
    the restore procedure before you need it, not during.
 
-2. **The reaper is written but deliberately not scheduled.**
-   `apps/server/scripts/reap-rooms.ts` reports by default and deletes with
-   `--apply`. Two things to settle before it ever runs unattended:
+2. **The reaper runs weekly as a report, and deletes only when told to.**
+   `.github/workflows/reap.yml` runs `apps/server/scripts/reap-rooms.ts` on a
+   schedule. It reports by default and deletes with `--apply` or
+   `REAP_APPLY=true`. It reads the same variables as the server
+   (`DATABASE_URL` or the `POSTGRES_*` fields with `POSTGRES_SSL`, the `S3_*`
+   variables, `ROOM_TTL_DAYS`) and refuses to run with any of them missing,
+   rather than falling back to the development defaults.
 
-   - `media_refs.storage_key` was added nullable by migration 3 and never
-     backfilled. `reaper.ts` skips rows without one, so any media predating
-     that migration would have its database row cascaded away while the object
-     survives in R2 with its key now unrecoverable. Count them first:
-     `SELECT count(*) FROM media_refs WHERE storage_key IS NULL;`
-   - It hard-deletes, and §7.1 is still open. Turn on a known-good recovery
-     window before you turn on automatic deletion.
+   - Rows from before migration 3 have no `storage_key`; the reaper derives
+     their object key from the stored URL, which has always ended in the
+     object name.
+   - The delete re-checks inactivity, so a board opened after the scan
+     survives, and media uploaded after the scan is deleted with its room.
+   - It hard-deletes. Turn on a known-good recovery window (item 1) before
+     you set `REAP_APPLY`.
 
    `last_active_at` is now refreshed on connection as well as on change
    (`roomActivity.ts`), so a board people read and never edit no longer looks
    dormant. Before that fix it was the row most likely to be collected.
 
-3. **Rate limiting follows `REDIS_HOST`.** Set it and all three limiters — media
-   upload, room history, link preview — share one token bucket across every
-   instance, along with the per-IP storage quota. Leave it unset and each
-   process keeps its own buckets, which is correct for one instance and quietly
-   wrong for two: each client would get a full allowance per instance, nothing
-   would fail, and the numbers would simply be wrong.
-
-   This was previously wired the other way round — the Redis bucket existed and
-   **no call site passed a client** — so the note here used to say the limits
-   were per-process unconditionally. They are not any more, but the failure is
-   still silent if `REDIS_HOST` is missing on a multi-instance deployment, so it
-   stays on this list.
+3. **Rate limiting follows `REDIS_URL`/`REDIS_HOST`.** Set it and every
+   limiter (uploads, history, link previews, share cards, new boards) shares
+   one token bucket across instances, along with the upload quota. Leave it
+   unset and each process keeps its own, which is correct for one instance and
+   quietly wrong for two: each client gets a full allowance per instance.
 
    If Redis goes away at runtime the limiters fall back to memory rather than
-   refusing traffic, and log one line per thirty seconds rather than one per
-   reconnect.
+   refusing traffic, log one line per thirty seconds, and keep reconnecting
+   with a capped backoff for as long as it takes.
 
 4. **Object storage durability.** MinIO on one volume is one disk.
 
@@ -310,3 +347,44 @@ the system.
    measured-by-inspection problem, not a benchmarked one. The numbers to find
    out are: transactions per second per active board, and where the pool
    saturates.
+
+---
+
+## 9. Music: built-in stations and Spotify
+
+The six built-in stations (Acoustic Ambient, Peaceful Piano, Lo-fi, Synth,
+House, Retro) are generated in the browser with Web Audio. They need no
+configuration, download nothing, and carry no licensing obligations.
+
+Spotify is optional. To enable it:
+
+1. Create an app at <https://developer.spotify.com/dashboard>. Select **Web API**
+   and **Web Playback SDK**.
+2. Under **Redirect URIs**, register one entry per origin the frontend is served
+   from, each ending in `/spotify-callback`. Spotify matches them exactly:
+   - `https://your-domain.example/spotify-callback`
+   - `http://127.0.0.1:5173/spotify-callback` for local development. Spotify no
+     longer accepts `localhost`; use the loopback IP and open the app on it.
+   - Preview deployments each need their own entry, or set
+     `VITE_SPOTIFY_REDIRECT_URI` to one fixed origin.
+3. Set `VITE_SPOTIFY_CLIENT_ID` (and optionally `VITE_SPOTIFY_REDIRECT_URI`)
+   where the frontend is built, then rebuild. Both values are public; there is
+   no client secret, because sign-in uses Authorization Code with PKCE.
+
+**Development mode limit.** A new Spotify app runs in development mode: only
+the Spotify accounts you list under **User Management** (25 at most) can
+sign in. Everyone else is refused by Spotify. Opening it to all users requires
+applying for extended quota in the dashboard.
+
+**What plays where.**
+- Premium accounts play in the tab through the Web Playback SDK, which loads
+  from `sdk.scdn.co` on first use.
+- Other accounts play on a device where Spotify is already open, through the
+  Connect API.
+- With no device available, the player falls back to Spotify's embed player,
+  which plays previews.
+
+**Tokens.** Access and refresh tokens live in the tab's `sessionStorage`. They
+never reach the board or the server. "Disconnect" forgets them in that tab.
+Spotify offers no revocation endpoint to PKCE clients, so the player links to
+spotify.com/account/apps, where a person can withdraw access entirely.

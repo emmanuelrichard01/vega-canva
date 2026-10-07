@@ -33,7 +33,7 @@
 import type { BezierGeometry, ShapeNode } from '../schema';
 import { pathData, translatePath } from '../pathGeometry';
 import { clamp, ellipseContour, pen } from './pen';
-import { roundedBox } from './contours';
+import { chatBodyHeight, lockBodyTop, multiDocumentStep, roundedBox } from './contours';
 import { param } from './params';
 
 /** A full circle. A lamp, a snap, a pin's hole. */
@@ -410,6 +410,73 @@ export function shapeFeatureContours(
         disc(lampX, lampY, dotR),
         disc(lampX + dotR * 3.4, lampY, dotR),
       ];
+    }
+
+    /**
+     * The edges of the back sheets that lie over the stack: each sheet's top
+     * and right edge, from where the sheet in front of it stops.
+     */
+    case 'multi_document': {
+      const d = multiDocumentStep(w, h);
+      const a = param(g, 'waveHeight') * (h - 2 * d);
+      const fw = w - 2 * d;
+      return [
+        rule(d, 2 * d, fw, 2 * d, fw, h - d - a),
+        rule(2 * d, d, w - d, d, w - d, h - 2 * d - a),
+      ];
+    }
+
+    /** The sort symbol is a decision cut across its middle. */
+    case 'sort':
+      return [rule(0, cy, w, cy)];
+
+    /** The flowchart OR junction carries a plus; the summing junction an X. */
+    case 'or_junction':
+      return [rule(cx, 0, cx, h), rule(0, cy, w, cy)];
+
+    /** The near end of the drum, which is what makes it read as lying down. */
+    case 'direct_access_storage': {
+      const rx = param(g, 'rimRatio') * w;
+      return [pen().arc(w - rx, cy, rx, cy, -Math.PI / 2, (-Math.PI * 3) / 2).open()];
+    }
+
+    /**
+     * Three typing dots, centred in the body: the placeholder for a message,
+     * so they give way to one once the bubble has text.
+     */
+    case 'chat': {
+      if ((node as { text?: string }).text) return [];
+      const bh = chatBodyHeight(h);
+      const r = clamp(Math.min(w, bh) * 0.055, 1.4, 8);
+      const gap = r * 3.4;
+      return [-1, 0, 1].map((i) => disc(cx + i * gap, bh / 2, r));
+    }
+
+    /** The keyhole: a round ward and the slot below it. */
+    case 'lock': {
+      const top = lockBodyTop(h);
+      const kr = clamp(short * 0.07, 1.6, 14);
+      const ky = top + (h - top) * 0.32;
+      return [disc(cx, ky, kr), rule(cx, ky + kr, cx, ky + kr * 2.2)];
+    }
+
+    /**
+     * A settings panel: three tracks, each with its knob somewhere different,
+     * which is what separates "adjustable" from "a list".
+     */
+    case 'sliders': {
+      const pad = clamp(w * 0.16, 6, 44);
+      const r = clamp(Math.min(w, h) * 0.075, 2, 14);
+      const stops = [0.32, 0.68, 0.46];
+      const parts: BezierGeometry[] = [];
+      stops.forEach((at, i) => {
+        const y = h * (0.28 + i * 0.22);
+        const kx = pad + (w - pad * 2) * at;
+        parts.push(disc(kx, y, r));
+        if (kx - r > pad) parts.push(rule(pad, y, kx - r, y));
+        if (kx + r < w - pad) parts.push(rule(kx + r, y, w - pad, y));
+      });
+      return parts;
     }
 
     default:

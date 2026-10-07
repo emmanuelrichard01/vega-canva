@@ -36,14 +36,20 @@ import { doc, applyGroupPlan } from '../engine/document';
 import { editor } from '../engine/api/EditorAPI';
 import { useStore } from './useStore';
 
+/**
+ * The document as it is now, read when an action runs.
+ *
+ * Read lazily rather than passed in, so the room does not have to subscribe to
+ * every change of every object just to keep these callbacks current.
+ */
+const liveObjects = () => useStore.getState().objects;
+
 export interface UseRoomClipboardOptions {
-  diagramObjects: Record<string, AnyNode>;
   selectionRef: React.MutableRefObject<string[]>;
   setSelectedIds: (ids: string[]) => void;
 }
 
 export function useRoomClipboard({
-  diagramObjects,
   selectionRef,
   setSelectedIds,
 }: UseRoomClipboardOptions) {
@@ -81,7 +87,7 @@ export function useRoomClipboard({
   const copySelection = useCallback(
     (event?: ClipboardEvent): CopyResult => {
       const nodes = selectionRef.current
-        .map((id) => diagramObjects[id])
+        .map((id) => liveObjects()[id])
         .filter(Boolean) as AnyNode[];
       const payload = writeClipboard(nodes);
       if (!payload) return { written: false, ids: [] };
@@ -124,7 +130,7 @@ export function useRoomClipboard({
       });
       return { written: true, ids: payload.nodes.map((n) => String(n.id)) };
     },
-    [diagramObjects, selectionRef]
+    [selectionRef]
   );
 
   /** Where a paste lands when nothing more specific says otherwise. */

@@ -118,11 +118,20 @@ describe('connectorPoints', () => {
     expect(connectorPoints({ nodeId: 'a' }, { nodeId: 'b' }, 'straight', boxOf)).toEqual([100, 30, 300, 30]);
   });
 
-  it('adds the elbows for an orthogonal route', () => {
+  it('runs an orthogonal route straight when the ports line up', () => {
     const pts = connectorPoints({ nodeId: 'a' }, { nodeId: 'b' }, 'orthogonal', boxOf);
+    expect(pts).toEqual([100, 30, 300, 30]);
+  });
+
+  it('turns down the middle of the gap when the ports are offset', () => {
+    const offset: Record<string, Box> = { a: box(0, 0), b: box(300, 100) };
+    const pts = connectorPoints({ nodeId: 'a' }, { nodeId: 'b' }, 'orthogonal', (id) => offset[id] ?? null);
     expect(pts.length).toBe(8);
     expect(pts.slice(0, 2)).toEqual([100, 30]);
-    expect(pts.slice(-2)).toEqual([300, 30]);
+    expect(pts.slice(-2)).toEqual([300, 130]);
+    // The vertical leg sits midway between the two boxes' facing edges.
+    expect(pts[2]).toBe(200);
+    expect(pts[4]).toBe(200);
   });
 });
 

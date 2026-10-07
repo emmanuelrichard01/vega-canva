@@ -1,65 +1,147 @@
-import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Every renderer that draws text with a webfont has to do two things, and
  * doing one is worse than doing neither: subscribe to `fontEpoch` so the
- * drawing is redone when the real face lands, and call `ensureFontLoaded` so
- * something actually asks for that face. Subscribing without requesting waits
- * for an event nobody triggered; requesting without subscribing gets the event
- * and ignores it.
+ * drawing is redone when the real face lands, and request that face so
+ * something actually loads it. Subscribing without requesting waits for an
+ * event nobody triggered; requesting without subscribing gets the event and
+ * ignores it.
  *
- * `ShapeRenderer` did neither, which is why a mermaid diagram -- almost
- * entirely shape labels -- drew its text measured against the fallback face
- * and left it there. A reload appeared to fix it because the font was then in
- * cache and won the race.
- *
- * Checked by reading the source rather than by rendering: proving this
- * properly needs a canvas, a font that has genuinely not loaded, and control
- * over when it does. The claim here is narrow and structural, and so is the
- * check.
+ * jsdom has no `document.fonts`, so one is installed here before the font
+ * modules load: `load` is recorded and resolved on demand, which is what
+ * lets a test say when the face "arrives".
  */
-const here = dirname(fileURLToPath(import.meta.url));
-const read = (name: string) => readFileSync(join(here, name), 'utf8');
+const fonts = vi.hoisted(() => {
+  const pending: Array<() => void> = [];
+  const load = vi.fn(
+    (_spec: string) =>
+      new Promise<unknown[]>((resolve) => {
+        pending.push(() => resolve([{}]));
+      })
+  );
+  const api = {
+    load,
+    ready: new Promise<void>(() => {}),
+    addEventListener: () => {},
+    /** Deliver every face requested so far. */
+    arrive() {
+      pending.splice(0).forEach((done) => done());
+    },
+  };
+  Object.defineProperty(globalThis.document, 'fonts', { value: api, configurable: true });
+  return api;
+});
+
+import { createElement } from 'react';
+import { act, cleanup } from '@testing-library/react';
+import type Konva from 'konva';
+import { nodesOf, renderInStage } from '../../../test/konvaHarness';
+import { fontEpoch } from '../../../engine/text/fontEpoch';
+import { normalizeNode } from '../../../engine/document/normalize';
+import { ShapeRenderer } from './ShapeRenderer';
+import { TextRenderer } from './TextRenderer';
+import { StickyRenderer } from './StickyRenderer';
+import type { ShapeNode, StickyNode, TextNode } from '../../../engine/model/schema';
+
+const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+
+const shapeNode = normalizeNode({
+  id: 'label-probe',
+  type: 'shape',
+  x: 0,
+  y: 0,
+  width: 220,
+  height: 120,
+  geometry: { kind: 'rect' },
+  text: 'A labelled shape',
+  typography: { fontFamily: 'Inter', fontSize: 18, fontWeight: 700 },
+}) as ShapeNode;
+
+const textNode = normalizeNode({
+  id: 'text-probe',
+  type: 'text',
+  x: 0,
+  y: 0,
+  width: 240,
+  height: 40,
+  text: 'Some words',
+  typography: { fontFamily: 'Inter', fontSize: 18 },
+}) as TextNode;
+
+const stickyNode = normalizeNode({
+  id: 'sticky-probe',
+  type: 'sticky',
+  x: 0,
+  y: 0,
+  width: 200,
+  height: 200,
+  text: 'A note',
+}) as StickyNode;
+
+/** Each renderer, and the face it must ask for: family and drawn weight. */
+const RENDERERS = [
+  ['ShapeRenderer', () => createElement(ShapeRenderer, { node: shapeNode, showLabel: true }), ['700', 'Inter']],
+  ['TextRenderer', () => createElement(TextRenderer, { node: textNode, visible: true }), ['400', 'Inter']],
+  [
+    'StickyRenderer',
+    () => createElement(StickyRenderer, { node: stickyNode, showText: true, myAuthorId: 'me' }),
+    ['600', 'Caveat'],
+  ],
+] as const;
 
 /**
- * Each renderer, with the file that measures on its behalf where that is not
- * the renderer itself. `StickyRenderer` delegates to `stickyFit`, which is
- * where its `requestFont` lives -- the obligation is on the pair, not on the
- * component file.
+ * Requests are deduplicated per spec for the life of the module, so this asks
+ * whether the face was ever requested, not whether this render requested it.
  */
-const TEXT_RENDERERS: Array<{ renderer: string; measures: string[] }> = [
-  { renderer: 'ShapeRenderer.tsx', measures: ['ShapeRenderer.tsx'] },
-  { renderer: 'TextRenderer.tsx', measures: ['TextRenderer.tsx'] },
-  { renderer: 'StickyRenderer.tsx', measures: ['StickyRenderer.tsx', 'stickyFit.ts'] },
-];
+const requested = (parts: readonly string[]) =>
+  fonts.load.mock.calls.some(([spec]) => parts.every((p) => spec.includes(p)));
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe('renderers that draw a webfont', () => {
-  it('subscribe to the font epoch', () => {
-    for (const { renderer, measures } of TEXT_RENDERERS) {
-      const src = measures.map(read).join('\n');
-      expect(src, renderer).toContain('fontEpoch');
-    }
+  it.each(RENDERERS)('%s subscribes to the font epoch', (_name, element) => {
+    const subscribe = vi.spyOn(fontEpoch, 'subscribe');
+    renderInStage(element());
+    expect(subscribe).toHaveBeenCalled();
   });
 
-  it('ask for the face they are going to measure', () => {
-    for (const { renderer, measures } of TEXT_RENDERERS) {
-      const src = measures.map(read).join('\n');
-      expect(
-        src.includes('ensureFontLoaded') || src.includes('requestFont'),
-        `${renderer} subscribes to the epoch but nothing requests the font`
-      ).toBe(true);
-    }
+  it.each(RENDERERS)('%s asks for the face it is going to measure', async (_name, element, face) => {
+    renderInStage(element());
+    await flush();
+    const specs = fonts.load.mock.calls.map(([spec]) => spec);
+    expect(requested(face), `no request for ${face.join(' ')} in: ${specs.join(' | ')}`).toBe(true);
   });
 
-  it('redraws the shape label when the epoch changes', () => {
-    // Konva measures a string once and keeps the result -- line breaks,
-    // textWidth, and the offsets `align: center` is computed from. On a font
-    // swap none of the attributes it watches has changed, so the node has to
-    // be rebuilt for the measurement to be taken again.
-    const src = read('ShapeRenderer.tsx');
-    expect(src).toMatch(/key=\{`label-\$\{epoch\}`\}/);
+  it('rebuilds the shape label when the face arrives', async () => {
+    // Konva measures a string once and keeps the result. On a font swap none of
+    // the attributes it watches change, so the node has to be rebuilt for the
+    // measurement to be taken again.
+    const stage = renderInStage(RENDERERS[0][1]());
+    await flush();
+    const label = (s: Konva.Stage) =>
+      nodesOf<Konva.Text>(s, 'Text').find((t) => t.text() === 'A labelled shape');
+    const before = label(stage);
+    expect(before).toBeDefined();
+
+    // Control: with no face arriving, the same node stays, so the identity
+    // check below measures the epoch and nothing else.
+    await flush();
+    expect(label(stage)).toBe(before);
+
+    const epoch = fontEpoch.get();
+    await act(async () => {
+      fonts.arrive();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(fontEpoch.get()).toBeGreaterThan(epoch);
+
+    const after = label(stage);
+    expect(after).toBeDefined();
+    expect(after, 'the label node must be replaced, not reused').not.toBe(before);
   });
 });

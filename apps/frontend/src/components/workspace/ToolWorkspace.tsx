@@ -14,7 +14,10 @@ import { dockDefaults } from '../../engine/workspace/dockDefaults';
 import {
   addSeparator,
   DOCK_SEATS,
+  drawerSeats,
+  isCarried,
   isDefaultLayout,
+  isOnDock,
   moveItem,
   hideSeat,
   removeAt,
@@ -59,6 +62,16 @@ import { STICKY_THEMES, type StickyTheme } from '../../engine/model/schema';
 import { cameraSystem } from '../../engine/CameraSystem';
 import { editor } from '../../engine/api/EditorAPI';
 import { canUseTool } from '../../engine/model/permissions';
+import { FeatureBoundary } from '../ui/FeatureBoundary';
+import { ColorPickerPopover } from '../ui/ColorPickerPopover';
+import { EndCapIcon, RouteIcon } from '../panel/connectorIcons';
+import { ThemeService } from '../../engine/ThemeService';
+import type { Routing } from '../../engine/model/connector';
+import { Menu } from '../menu/Menu';
+import { connectorDefaults } from '../../engine/tools/connectorDefaults';
+import { END_CAP_KINDS, END_CAP_LABELS, type EndCapKind } from '../../engine/model/connectorEnds';
+import { storageGet, storageSet } from '../../utils/safeStorage';
+import './shell.css';
 
 /**
  * How the active-tool marker travels from seat to seat.
@@ -467,12 +480,12 @@ const MORE_SEAT = DOCK_SEATS.length;
  * unlabelled row nobody can identify.
  */
 const SEAT_LABEL: Record<DockSeat, string> = {
-  chart: 'Chart', table: 'Table',
+  chart: 'Chart', table: 'Table', data: 'Data',
   select: 'Select', directSelect: 'Direct select', hand: 'Hand',
   draw: 'Draw', eraser: 'Eraser',
   type: 'Type', shape: 'Shape', line: 'Line',
   frame: 'Frame', grid: 'Grid', connector: 'Connector', sticky: 'Note',
-  image: 'Image', audio: 'Audio', forces: 'Forces',
+  image: 'Image', audio: 'Voice note', media: 'Media', comment: 'Comment', forces: 'Forces',
 };
 
 /**
@@ -503,15 +516,42 @@ const SEAT_TOOL: Partial<Record<DockSeat, string>> = {
   sticky: 'sticky',
   image: 'image',
   audio: 'audio',
+  comment: 'comment',
   forces: 'forces',
 };
+
+/**
+ * Seats that are a single act, with no flyout behind them.
+ *
+ * Taken from the drawer, one of these is armed where it is; there is nothing
+ * else to it. A seat with a flyout goes back on the dock instead, because a
+ * menu row has nowhere to put that seat's choices.
+ */
+const SINGLE_ACT: ReadonlySet<DockSeat> = new Set<DockSeat>([
+  'hand', 'directSelect', 'eraser', 'connector', 'sticky', 'image', 'audio', 'comment', 'forces',
+]);
+
+/** The three tools the Data seat carries, in the order its switch shows them. */
+const DATA_KINDS = ['table', 'chart', 'grid'] as const;
+type DataKind = (typeof DATA_KINDS)[number];
+const DATA_KIND_KEY = 'vega_dock_data_kind';
+
+/** What the Media seat carries; a click on the seat arms the last of these used. */
+const MEDIA_TOOLS = ['image', 'audio', 'link', 'code'] as const;
+type MediaTool = (typeof MEDIA_TOOLS)[number];
+const MEDIA_TOOL_KEY = 'vega_dock_media_tool';
+
+function readChoice<T extends string>(key: string, options: readonly T[], fallback: T): T {
+  const stored = storageGet(key);
+  return options.includes(stored as T) ? (stored as T) : fallback;
+}
 
 const SEAT_GLYPH: Record<DockSeat, React.ReactNode> = {
   select: <MousePointer2 size={16} />, directSelect: <MousePointerClick size={16} />, hand: <HandIcon size={16} />,
   draw: <Pen size={16} />, eraser: <Eraser size={16} />,
   type: <Type size={16} />, shape: <Square size={16} />, line: <Minus size={16} />,
-  frame: <Frame size={16} />, grid: <LayoutGrid size={16} />, chart: <BarChart3 size={16} />, table: <Table2 size={16} />, connector: <Spline size={16} />, sticky: <StickyNote size={16} />,
-  image: <ImageIcon size={16} />, audio: <Mic size={16} />, forces: <Sparkles size={16} />,
+  frame: <Frame size={16} />, grid: <LayoutGrid size={16} />, chart: <BarChart3 size={16} />, table: <Table2 size={16} />, data: <Table2 size={16} />, connector: <Spline size={16} />, sticky: <StickyNote size={16} />,
+  image: <ImageIcon size={16} />, audio: <Mic size={16} />, media: <ImageIcon size={16} />, comment: <MessageSquare size={16} />, forces: <Sparkles size={16} />,
 };
 
 
@@ -519,9 +559,12 @@ const SEAT_GLYPH: Record<DockSeat, React.ReactNode> = {
  *  rebuilt in the component body it was a new object every render and the
  *  memo that reads it could not list it as a dependency. */
 
-export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAddTextBlock }) => {
-  /** What the drawer holds, as data — the menu and the seat's icon read it. */
-  const EXTRA_TOOLS: Array<{
+const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAddTextBlock }) => {
+  /**
+   * The Media seat's tools that are not seats of their own. They live in its
+   * flyout, and in the drawer whenever the Media seat is put away.
+   */
+  const MEDIA_EXTRAS: Array<{
     id: string;
     icon: React.ReactNode;
     label: string;
@@ -529,11 +572,6 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
     isActive: (tool: string) => boolean;
     run: () => void;
   }> = [
-    {
-      id: 'comment', icon: <MessageSquare size={16} />, label: 'Comment',
-      description: 'pin a note to a point or an object',
-      isActive: (t) => t === 'comment', run: () => setTool('comment'),
-    },
     {
       id: 'code', icon: <Code2 size={16} />, label: 'Code block',
       description: 'highlighted code, editable in place',
@@ -608,7 +646,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   /** Editing the dock is a mode, and a loud one -- see `dock-editing`. */
   const [editing, setEditing] = useState(false);
 
-  type DockMenu = 'pen' | 'shape' | 'frame' | 'grid' | 'chart' | 'table' | 'block' | 'more';
+  type DockMenu = 'select' | 'pen' | 'shape' | 'frame' | 'grid' | 'chart' | 'table' | 'data' | 'media' | 'block' | 'more';
   const [pinnedMenu, setPinnedMenu] = useState<DockMenu | null>(null);
   const [hoveredMenu, setHoveredMenu] = useState<DockMenu | null>(null);
   const [lastShape, setLastShape] = useState<ShapePreset>('rect');
@@ -623,6 +661,43 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   const [lastChart, setLastChart] = useState<ChartKindId>(ChartTool.kind);
   const [lastTable, setLastTable] = useState<string>(TableTool.preset);
   const [lastFrame, setLastFrame] = useState<string>('frame');
+
+  /**
+   * Which data tool the Data seat wears, and which the Media seat wears.
+   *
+   * Remembered across sessions: a person who works in tables reaches for the
+   * seat expecting a table every time, the way the Shape seat remembers its
+   * shape within one.
+   */
+  const [lastData, setLastData] = useState<DataKind>(() => readChoice(DATA_KIND_KEY, DATA_KINDS, 'table'));
+  const [lastMedia, setLastMedia] = useState<MediaTool>(() => readChoice(MEDIA_TOOL_KEY, MEDIA_TOOLS, 'image'));
+  /** Which data tool's choices the Data flyout is showing. Follows the seat until switched. */
+  const [dataTab, setDataTab] = useState<DataKind>(lastData);
+  useEffect(() => {
+    if ((DATA_KINDS as readonly string[]).includes(activeToolId)) {
+      setLastData(activeToolId as DataKind);
+      setDataTab(activeToolId as DataKind);
+      storageSet(DATA_KIND_KEY, activeToolId);
+    } else if ((MEDIA_TOOLS as readonly string[]).includes(activeToolId)) {
+      setLastMedia(activeToolId as MediaTool);
+      storageSet(MEDIA_TOOL_KEY, activeToolId);
+    }
+  }, [activeToolId]);
+
+  /** The next connector's route and ends, for the connector shelf. */
+  const nextConnector = useSyncExternalStore(
+    connectorDefaults.subscribe,
+    connectorDefaults.getSnapshot,
+    connectorDefaults.getSnapshot
+  );
+  const [capMenu, setCapMenu] = useState<{ which: 'endStart' | 'endEnd'; rect: DOMRect; keyboard: boolean } | null>(null);
+  useEffect(() => {
+    if (activeToolId !== 'connector') setCapMenu(null);
+  }, [activeToolId]);
+  /** The press that closed a cap menu, so the click after it does not reopen it. */
+  const capClosed = useRef<{ which: string; at: number } | null>(null);
+  const connectorColor = useStore((s) => s.connectorColor);
+  const setConnectorColor = useStore((s) => s.setConnectorColor);
 
   /**
    * While the dock is being edited, only the drawer opens.
@@ -775,7 +850,13 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
     // Smoothing slider in the Draw flyout could not be moved from the keyboard
     // at all: every arrow moved focus to another seat instead.
     if ((e.target as HTMLElement).closest?.('.dock-flyout, .tool-shelf')) return;
-    const live = buttonsRef.current.filter(Boolean) as HTMLButtonElement[];
+    // In the order the dock shows them, which the layout decides, and only the
+    // seats actually on it: a put-away seat's button is still mounted.
+    const live = (buttonsRef.current.filter(Boolean) as HTMLButtonElement[])
+      .filter((b) => b.offsetParent !== null)
+      .map((b) => ({ b, r: b.getBoundingClientRect() }))
+      .sort((p, q) => (Math.abs(p.r.top - q.r.top) > 8 ? p.r.top - q.r.top : p.r.left - q.r.left))
+      .map((p) => p.b);
     if (live.length === 0) return;
     e.preventDefault();
 
@@ -787,7 +868,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
       : e.key === 'ArrowRight' ? (from + 1) % live.length
       : (from - 1 + live.length) % live.length;
 
-    setFocusIndex(next);
+    setFocusIndex(Math.max(0, buttonsRef.current.indexOf(live[next])));
     live[next]?.focus();
   };
 
@@ -863,7 +944,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   const openSeatMenu = (menu: DockMenu) => {
     setPinnedMenu(menu);
     window.setTimeout(() => {
-      dockRef.current?.querySelector<HTMLElement>('.dock-flyout .seat-menu__tile')?.focus();
+      dockRef.current?.querySelector<HTMLElement>('.dock-flyout .seat-menu__tile, .dock-flyout .dock-item')?.focus();
     }, 0);
   };
 
@@ -986,6 +1067,85 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
     []
   );
 
+  /**
+   * The Grid, Chart and Table menus, as functions, because each is shown by
+   * its own seat when that seat is pinned and by the Data seat otherwise.
+   * `header` is the Data seat's switch between the three.
+   */
+  const gridSeatMenu = (header?: React.ReactNode) => (
+    <SeatMenu
+      header={header}
+      noun="grids"
+      quick={QUICK_GRIDS.map(gridTile)}
+      current={gridTile(gridKind)}
+      onPick={pickGrid}
+      locked={seatLocked('grid')}
+      onLock={() => lockSeat('grid', () => setTool('grid'))}
+      sheet={
+        <DockSheet
+          variant="card"
+          columns={3}
+          width={318}
+          sections={gridSections}
+          value={gridKind}
+          onPick={pickGrid}
+          idle="Pick a system, then drag it out on the board"
+        />
+      }
+    />
+  );
+  const chartSeatMenu = (header?: React.ReactNode) => (
+    <SeatMenu
+      header={header}
+      noun="charts"
+      quick={QUICK_CHARTS.map(chartTile)}
+      current={chartTile(lastChart)}
+      onPick={pickChart}
+      locked={seatLocked('chart')}
+      onLock={() => lockSeat('chart', () => { ChartTool.kind = lastChart; setTool('chart'); })}
+      sheet={
+        <DockSheet
+          variant="card"
+          columns={4}
+          width={344}
+          height={320}
+          searchPlaceholder="Search charts"
+          sections={chartSections}
+          value={lastChart}
+          onPick={pickChart}
+          focusSearch
+          idle="Pick what the chart should show, then drag it out"
+        />
+      }
+    />
+  );
+  const tableSeatMenu = (header?: React.ReactNode) => (
+    <SeatMenu
+      header={header}
+      noun="tables"
+      wideTiles
+      quick={QUICK_TABLES.map(tableTile)}
+      current={tableTile(lastTable)}
+      onPick={pickTable}
+      locked={seatLocked('table')}
+      onLock={() => lockSeat('table', () => { TableTool.preset = lastTable; setTool('table'); })}
+      sheet={
+        <DockSheet
+          variant="card"
+          columns={3}
+          width={360}
+          height={340}
+          searchPlaceholder="Tables, or a column like “owner”"
+          sections={tableSections}
+          value={lastTable}
+          onPick={pickTable}
+          focusSearch
+          idle="Start blank, or from a finished table"
+        />
+      }
+    />
+  );
+
   // `R` arms the bare `shape` id, which the canvas resolves to a rectangle --
   // so the seat and the shelf say rectangle too, rather than nothing.
   const armedShape: ShapePreset | null =
@@ -1050,71 +1210,100 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   );
 
   /**
-   * Everything the drawer offers, whether it was born there or was put there.
+   * Whether a put-away seat is carried by a seat on the dock -- Direct select
+   * by Select, the eraser by Draw, and so on. A carried tool shows in its
+   * host's flyout and nowhere else.
+   */
+  const carried = (seat: DockSeat) => isCarried(layout, seat);
+
+  /**
+   * Everything the drawer offers.
    *
-   * ## Why a put-away seat has to be a real entry
-   *
-   * The drawer already held two tools that behave properly: Comment arms the
-   * comment tool, and the three-dots button becomes a speech bubble while it is
-   * armed, so the dock still answers "what am I holding" with the seat that is
-   * holding it. A put-away seat listed beside them that only offered to move
-   * itself back would be the odd one out in its own menu -- and would make
-   * putting a tool away a decision to stop using it, rather than a decision
-   * about where it lives.
-   *
-   * So they are folded into one list. Same rows, same activation, same icon
-   * swap on the button. Where a seat *lives* is then genuinely a layout
-   * question and nothing more, which is the whole premise of an editable dock.
+   * A put-away seat nobody carries is listed here. A single-act tool (see
+   * `SINGLE_ACT`) is armed in place, because there is nothing more to it. A
+   * seat with a flyout goes back on the dock, next to the drawer, and arms: a
+   * menu row has nowhere to put its choices, so reaching for it here is the
+   * signal that it belongs on the dock.
    */
   const drawerTools = useMemo(() => {
-    /**
-     * A put-away seat, offered as "put it back and use it".
-     *
-     * ## Why picking one restores it rather than arming it in place
-     *
-     * Arming it in place is what this did, and it half-works: it is fine for a
-     * tool that is a single act -- the eraser, the hand -- and broken for the
-     * seven whose button opens a flyout. Draw is pencil *or* pen at four sizes;
-     * Shape is a grid of presets; Grid is ten systems. From a menu row there is
-     * nowhere for any of that to go, so the drawer silently armed the default
-     * and the rest of the tool was unreachable. A tool you can only half-use is
-     * worse than one you have to fetch.
-     *
-     * Temporarily adding the seat and taking it away again -- the obvious
-     * repair -- has no defensible revert moment. After one stroke? After
-     * switching tools? After the flyout closes? Every answer is wrong for some
-     * tool. And it makes the dock's geometry unstable: buttons that come and go
-     * mid-session shift every other seat under the pointer, so muscle memory
-     * never forms. That is a worse fault than the one it fixes.
-     *
-     * So: reaching for a tool in the drawer *is* the signal that it belongs on
-     * your dock. It goes back, next to the drawer you clicked -- so it arrives
-     * under the pointer rather than somewhere you have to hunt for -- and it
-     * arms. Full flyout, full behaviour, no special case. Putting it away again
-     * is one drag, and the drawer is where you just were.
-     */
-    const fromSeats = layout.hidden.map((seat) => {
+    const fromSeats = drawerSeats(layout).map((seat) => {
       const toolId = SEAT_TOOL[seat];
+      const inPlace = SINGLE_ACT.has(seat);
       return {
         id: seat,
         icon: SEAT_GLYPH[seat],
         label: SEAT_LABEL[seat],
-        description: 'add to the toolbar',
-        // Never "active": it is not the tool, it is the offer to have the tool.
-        // Once taken, the seat is on the dock and shows its own state.
-        isActive: () => false,
+        description: inPlace ? (seat === 'forces' ? 'push, pull and drop objects' : 'use it from here') : 'add to the toolbar',
+        isActive: (tool: string) =>
+          inPlace && (seat === 'forces' ? isForceTool(tool) : toolId !== undefined && tool === toolId),
         run: () => {
-          // Back on the dock, at the end -- beside the drawer that offered it.
+          if (inPlace) {
+            if (seat === 'forces') pick(lastForce);
+            else if (toolId) setTool(toolId);
+            return;
+          }
           dockDefaults.set(showSeat(layoutRef.current, seat));
           if (toolId) setTool(toolId);
         },
       };
     });
-    return [...EXTRA_TOOLS, ...fromSeats];
+    const extras = isOnDock(layout, 'media') ? [] : MEDIA_EXTRAS;
+    return [...extras, ...fromSeats];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout.hidden, activeToolId]);
+  }, [layout, activeToolId, lastForce]);
 
   const activeExtra = drawerTools.find((entry) => entry.isActive(activeToolId));
+
+  /* --------------------------------------------- what the carrying seats wear */
+
+  /** Select wears direct selection while that is armed and has no seat of its own. */
+  const selectWearsDirect = activeToolId === 'direct-select' && carried('directSelect');
+  const eraserCarried = carried('eraser');
+  const drawActive = isPen || (activeToolId === 'eraser' && eraserCarried);
+  const lineCarried = carried('line');
+  const shapeActive = isShape || (isLine && lineCarried);
+
+  /** A data tool is the Data seat's to show only when that tool has no seat of its own. */
+  const armedData = (DATA_KINDS as readonly string[]).includes(activeToolId) && carried(activeToolId as DockSeat)
+    ? (activeToolId as DataKind)
+    : null;
+  const DATA_LABEL: Record<DataKind, string> = { table: 'Table', chart: 'Chart', grid: 'Grid' };
+  const dataGlyph = (kind: DataKind, size = 18) =>
+    kind === 'table' ? <Table2 size={size - 1} />
+    : kind === 'chart' ? <ChartKindIcon kind={lastChart} size={size} />
+    : <GridKindIcon kind={gridKind} size={size} />;
+  const dataDescription = (kind: DataKind) =>
+    kind === 'table' ? tableName : kind === 'chart' ? CHART_LABELS[lastChart] : GRID_LABELS[gridKind];
+  const armData = (kind: DataKind) => {
+    if (kind === 'table') pickTable(lastTable);
+    else if (kind === 'chart') pickChart(lastChart);
+    else pick('grid');
+  };
+  /** The switch at the top of the Data flyout. Switching shows a tool's choices; it arms nothing. */
+  const dataSwitch = (
+    <SegmentedControl
+      ariaLabel="Data tool"
+      value={dataTab}
+      onChange={(v) => setDataTab(v as DataKind)}
+      fill
+      segments={DATA_KINDS.map((kind) => ({
+        value: kind,
+        label: DATA_LABEL[kind],
+        hint: `${DATA_LABEL[kind]} (${shortcutFor(kind)})`,
+      }))}
+    />
+  );
+
+  const MEDIA_LABEL: Record<MediaTool, string> = { image: 'Image', audio: 'Voice note', link: 'Link', code: 'Code block' };
+  const MEDIA_GLYPH: Record<MediaTool, React.ReactNode> = {
+    image: <ImageIcon size={17} />,
+    audio: <Mic size={17} />,
+    link: <Link2 size={17} />,
+    code: <Code2 size={17} />,
+  };
+  const mediaArmed =
+    activeToolId === 'link' || activeToolId === 'code' ||
+    ((activeToolId === 'image' || activeToolId === 'audio') && carried(activeToolId));
 
 
   /**
@@ -1351,15 +1540,24 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
       at = to > from ? to - 1 : to;
     };
 
-    const up = () => {
+    const end = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', cancel);
       setDragging(null);
+    };
+    const up = () => {
+      end();
       if (!moved) onTap?.();
     };
+    // A touch the browser takes over (a scroll, a system gesture) ends here
+    // instead of in `pointerup`; without it the listeners stayed attached and
+    // the dock stayed in its dragging state. A cancelled press is never a tap.
+    const cancel = () => end();
 
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
   };
 
   /** A seat, found by id so it survives its own reordering. */
@@ -1445,6 +1643,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
     : activeToolId === 'grid' ? 'Grid'
     : activeToolId === 'chart' ? 'Chart'
     : activeToolId === 'table' ? 'Table'
+    : activeToolId === 'connector' ? 'Connector'
     : null;
 
   let shelfBody: React.ReactNode = null;
@@ -1558,6 +1757,51 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
             icon: <LineProfileIcon profile={profile} />,
           }))}
         />
+      </>
+    );
+  } else if (activeToolId === 'connector') {
+    shelfBody = (
+      <>
+        <SegmentedControl
+          ariaLabel="Route for the next connector"
+          value={nextConnector.routing}
+          onChange={(v) => connectorDefaults.set({ routing: v as Routing })}
+          segments={[
+            { value: 'orthogonal', label: 'Elbow', hint: 'Right angles, the way a flowchart reads', icon: <RouteIcon routing="orthogonal" /> },
+            { value: 'curved', label: 'Curved', hint: 'A smooth arc', icon: <RouteIcon routing="curved" /> },
+            { value: 'straight', label: 'Straight', hint: 'A direct line', icon: <RouteIcon routing="straight" /> },
+          ]}
+        />
+        <span className="dock-rule" aria-hidden="true" />
+        {/* The two ends in the order they are drawn, each its own choice. */}
+        <div className="shelf-ends" role="group" aria-label="Ends of the next connector">
+          {(['endStart', 'endEnd'] as const).map((which) => (
+            <button
+              key={which}
+              type="button"
+              className={`btn-icon shelf-btn shelf-end${capMenu?.which === which ? ' is-on' : ''}`}
+              aria-haspopup="menu"
+              aria-expanded={capMenu?.which === which}
+              aria-label={`${which === 'endStart' ? 'Start' : 'End'}: ${END_CAP_LABELS[nextConnector[which]]}`}
+              data-tooltip={capMenu ? undefined : `${which === 'endStart' ? 'Start' : 'End'}: ${END_CAP_LABELS[nextConnector[which]]}`}
+              onClick={(e) => {
+                const recent = capClosed.current;
+                if (recent && recent.which === which && performance.now() - recent.at < 300) return;
+                setCapMenu({ which, rect: e.currentTarget.getBoundingClientRect(), keyboard: e.detail === 0 });
+              }}
+            >
+              <EndCapIcon kind={nextConnector[which]} flip={which === 'endStart'} />
+            </button>
+          ))}
+        </div>
+        <span className="dock-rule" aria-hidden="true" />
+        <div className="shelf-colour" data-tooltip="Colour of the next connector">
+          <ColorPickerPopover
+            color={connectorColor || ThemeService.getDefaultStrokeColor()}
+            onChange={setConnectorColor}
+            allowNone={false}
+          />
+        </div>
       </>
     );
   }
@@ -1714,6 +1958,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
       // ref threaded down from `Room`. See `engine/learn/tour.ts`; a test fails
       // if a step names an anchor nothing carries.
       data-tour="dock"
+      data-region="2"
       data-editing={editing || undefined}
       data-dragging={dragging || undefined}
       role="toolbar"
@@ -1739,6 +1984,27 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
           </motion.div>
         )}
       </AnimatePresence>
+      {capMenu && (
+        <Menu
+          label={capMenu.which === 'endStart' ? 'Start of the next connector' : 'End of the next connector'}
+          entries={END_CAP_KINDS.map((kind: EndCapKind) => ({
+            kind: 'item' as const,
+            id: kind,
+            label: END_CAP_LABELS[kind],
+            icon: <EndCapIcon kind={kind} flip={capMenu.which === 'endStart'} />,
+            // One of six, not a switch: the current one carries a tick and says so.
+            detail: nextConnector[capMenu.which] === kind ? 'In use' : undefined,
+            trailing: nextConnector[capMenu.which] === kind ? <Check size={14} aria-hidden /> : undefined,
+            onSelect: () => connectorDefaults.set({ [capMenu.which]: kind }),
+          }))}
+          anchor={{ kind: 'rect', rect: capMenu.rect, prefer: 'above', align: 'start' }}
+          focusFirst={capMenu.keyboard}
+          onClose={() => {
+            capClosed.current = { which: capMenu.which, at: performance.now() };
+            setCapMenu(null);
+          }}
+        />
+      )}
       {/**
         * The separators, rendered from the layout rather than written between
         * the groups.
@@ -1785,11 +2051,37 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
       {/* Navigate. Two tools that move you rather than change the board, so
           they lead and are separated from everything that creates. */}
       <div className="dock-group">
-        <DockButton
-          {...seatProps('select')}
-          icon={<MousePointer2 size={18} />} label="Select" toolId="select"
-          active={activeToolId === 'select'} onClick={() => setTool('select')}
-        />
+        {/* Select carries Direct select while that has no seat of its own:
+            the same act at a different grain, one hover away. */}
+        <div {...(carried('directSelect') ? hoverProps('select') : null)} className="dock-slot-wrap" {...seatChrome('select')}>
+          <DockButton
+            {...seatProps('select', true)}
+            icon={selectWearsDirect ? <MousePointerClick size={18} /> : <MousePointer2 size={18} />}
+            label={selectWearsDirect ? 'Direct select' : 'Select'}
+            toolId={selectWearsDirect ? 'direct-select' : 'select'}
+            description={selectWearsDirect ? 'anchors and handles' : undefined}
+            active={activeToolId === 'select' || selectWearsDirect}
+            hasMenu={carried('directSelect')}
+            menuOpen={openMenu === 'select'}
+            onClick={() => setTool(selectWearsDirect ? 'direct-select' : 'select')}
+            onOpenMenu={carried('directSelect') ? () => openSeatMenu('select') : undefined}
+          >
+            {openMenu === 'select' && (
+              <Flyout title="Select">
+                <FlyoutItem
+                  icon={<MousePointer2 size={16} />} label="Select" toolId="select"
+                  description="whole objects" active={activeToolId === 'select'}
+                  onClick={() => pick('select')}
+                />
+                <FlyoutItem
+                  icon={<MousePointerClick size={16} />} label="Direct select" toolId="direct-select"
+                  description="anchors and handles" active={activeToolId === 'direct-select'}
+                  onClick={() => pick('direct-select')}
+                />
+              </Flyout>
+            )}
+          </DockButton>
+        </div>
         {/* Direct selection sits beside Select because it is the same act at a
             different grain — one asks which object, the other which part of it.
             Every vector editor pairs them, and putting it in a drawer would
@@ -1814,8 +2106,12 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
         <div {...hoverProps('pen')} className="dock-slot-wrap" {...seatChrome('draw')}>
             <DockButton
               {...seatProps('draw', true)}
-              icon={activeToolId === 'bezier-pen' ? <PenToolIcon size={18} /> : <Pen size={18} />}
-              label="Draw" active={isPen} hasMenu menuOpen={openMenu === 'pen'}
+              icon={
+                activeToolId === 'bezier-pen' ? <PenToolIcon size={18} />
+                : activeToolId === 'eraser' && eraserCarried ? <Eraser size={17} />
+                : <Pen size={18} />
+              }
+              label="Draw" active={drawActive} hasMenu menuOpen={openMenu === 'pen'}
               onClick={() => toggleMenu('pen')}
             >
               {openMenu === 'pen' && (
@@ -1830,6 +2126,13 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                     description="anchor points and curves" active={activeToolId === 'bezier-pen'}
                     onClick={() => pick('bezier-pen')}
                   />
+                  {eraserCarried && (
+                    <FlyoutItem
+                      icon={<Eraser size={16} />} label="Eraser" toolId="eraser"
+                      description="[ and ] resize it" active={activeToolId === 'eraser'}
+                      onClick={() => pick('eraser')}
+                    />
+                  )}
                   {/*
                     The options below belong to whichever tool is armed.
 
@@ -2031,10 +2334,14 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
         <div {...hoverProps('shape')} className="dock-slot-wrap" {...seatChrome('shape')}>
           <DockButton
             {...seatProps('shape', true)}
-            icon={<ShapeIcon kind={seatShape} size={18} />}
+            icon={
+              isLine && lineCarried
+                ? <LineSpecimen profile={lineProfile} endEnd={armedLine === 'arrow' ? 'arrow' : 'none'} />
+                : <ShapeIcon kind={seatShape} size={18} />
+            }
             label="Shape" toolId="shape"
-            description={SHAPE_BY_PRESET[seatShape].label}
-            active={isShape}
+            description={isLine && lineCarried ? SHAPE_BY_PRESET[armedLine!].label : SHAPE_BY_PRESET[seatShape].label}
+            active={shapeActive}
             hasMenu
             menuOpen={openMenu === 'shape'}
             onClick={() => pick(shapeToolId(seatShape))}
@@ -2050,6 +2357,27 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                   locked={seatLocked(shapeToolId(seatShape))}
                   onLock={() => lockSeat(shapeToolId(seatShape), () => setTool(shapeToolId(seatShape)))}
                   sheet={<ShapeSheet value={armedBoxShape} onPick={pickShape} focusSearch />}
+                  trailing={
+                    lineCarried &&
+                    LINE_PRESETS.map((kind) => (
+                      <button
+                        key={kind}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={armedLine === kind}
+                        aria-label={`${SHAPE_BY_PRESET[kind].label} (L)`}
+                        data-tooltip={`${SHAPE_BY_PRESET[kind].label} (L)`}
+                        className={`btn-icon seat-menu__tile${armedLine === kind ? ' active' : ''}`}
+                        onClick={() => {
+                          setLastLine(kind);
+                          pick(shapeToolId(kind));
+                          setHoveredMenu(null);
+                        }}
+                      >
+                        <LineSpecimen profile={lineProfile} endEnd={kind === 'arrow' ? 'arrow' : 'none'} />
+                      </button>
+                    ))
+                  }
                 />
               </Flyout>
             )}
@@ -2175,25 +2503,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
           >
             {openMenu === 'grid' && (
               <Flyout title="Grid system" bare>
-                <SeatMenu
-                  noun="grids"
-                  quick={QUICK_GRIDS.map(gridTile)}
-                  current={gridTile(gridKind)}
-                  onPick={pickGrid}
-                  locked={seatLocked('grid')}
-                  onLock={() => lockSeat('grid', () => setTool('grid'))}
-                  sheet={
-                    <DockSheet
-                      variant="card"
-                      columns={3}
-                      width={318}
-                      sections={gridSections}
-                      value={gridKind}
-                      onPick={pickGrid}
-                      idle="Pick a system, then drag it out on the board"
-                    />
-                  }
-                />
+                {gridSeatMenu()}
               </Flyout>
             )}
           </DockButton>
@@ -2215,28 +2525,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
           >
             {openMenu === 'chart' && (
               <Flyout title="Chart type" bare>
-                <SeatMenu
-                  noun="charts"
-                  quick={QUICK_CHARTS.map(chartTile)}
-                  current={chartTile(lastChart)}
-                  onPick={pickChart}
-                  locked={seatLocked('chart')}
-                  onLock={() => lockSeat('chart', () => { ChartTool.kind = lastChart; setTool('chart'); })}
-                  sheet={
-                    <DockSheet
-                      variant="card"
-                      columns={4}
-                      width={344}
-                      height={320}
-                      searchPlaceholder="Search charts"
-                      sections={chartSections}
-                      value={lastChart}
-                      onPick={pickChart}
-                      focusSearch
-                      idle="Pick what the chart should show, then drag it out"
-                    />
-                  }
-                />
+                {chartSeatMenu()}
               </Flyout>
             )}
           </DockButton>
@@ -2257,29 +2546,34 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
           >
             {openMenu === 'table' && (
               <Flyout title="Table" bare>
-                <SeatMenu
-                  noun="tables"
-                  wideTiles
-                  quick={QUICK_TABLES.map(tableTile)}
-                  current={tableTile(lastTable)}
-                  onPick={pickTable}
-                  locked={seatLocked('table')}
-                  onLock={() => lockSeat('table', () => { TableTool.preset = lastTable; setTool('table'); })}
-                  sheet={
-                    <DockSheet
-                      variant="card"
-                      columns={3}
-                      width={360}
-                      height={340}
-                      searchPlaceholder="Tables, or a column like “owner”"
-                      sections={tableSections}
-                      value={lastTable}
-                      onPick={pickTable}
-                      focusSearch
-                      idle="Start blank, or from a finished table"
-                    />
-                  }
-                />
+                {tableSeatMenu()}
+              </Flyout>
+            )}
+          </DockButton>
+        </div>
+
+        {/* Data: Table, Chart and Grid on one seat, wearing the last used.
+            A click arms that one; resting opens a switch between the three
+            above the chosen tool's own menu. Each still has its key (B, K, G)
+            and can be pinned as a seat of its own. */}
+        <div {...hoverProps('data')} className="dock-slot-wrap" {...seatChrome('data')}>
+          <DockButton
+            {...seatProps('data', true)}
+            icon={dataGlyph(armedData ?? lastData)}
+            label={DATA_LABEL[armedData ?? lastData]}
+            toolId={armedData ?? lastData}
+            description={dataDescription(armedData ?? lastData)}
+            active={armedData !== null}
+            hasMenu
+            menuOpen={openMenu === 'data'}
+            onClick={() => armData(lastData)}
+            onOpenMenu={() => openSeatMenu('data')}
+          >
+            {openMenu === 'data' && (
+              <Flyout title="Data" bare>
+                {dataTab === 'table' ? tableSeatMenu(dataSwitch)
+                  : dataTab === 'chart' ? chartSeatMenu(dataSwitch)
+                  : gridSeatMenu(dataSwitch)}
               </Flyout>
             )}
           </DockButton>
@@ -2343,6 +2637,60 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
           description="push, pull and drop objects"
           active={isForceTool(activeToolId)}
           onClick={() => pick(lastForce)}
+        />
+
+        {/* Media: what comes in from outside the board. A click arms the
+            last one used; the flyout holds the rest, and the diagram editor. */}
+        <div {...hoverProps('media')} className="dock-slot-wrap" {...seatChrome('media')}>
+          <DockButton
+            {...seatProps('media', true)}
+            icon={MEDIA_GLYPH[lastMedia]}
+            label={MEDIA_LABEL[lastMedia]}
+            toolId={lastMedia}
+            description="images, voice, links and code"
+            active={mediaArmed}
+            hasMenu
+            menuOpen={openMenu === 'media'}
+            onClick={() => setTool(lastMedia)}
+            onOpenMenu={() => openSeatMenu('media')}
+          >
+            {openMenu === 'media' && (
+              <Flyout title="Media">
+                {carried('image') && (
+                  <FlyoutItem
+                    icon={<ImageIcon size={16} />} label="Image" toolId="image"
+                    description="place a picture" active={activeToolId === 'image'}
+                    onClick={() => pick('image')}
+                  />
+                )}
+                {carried('audio') && (
+                  <FlyoutItem
+                    icon={<Mic size={16} />} label="Voice note" toolId="audio"
+                    description="record a spoken note" active={activeToolId === 'audio'}
+                    onClick={() => pick('audio')}
+                  />
+                )}
+                {MEDIA_EXTRAS.map((entry) => (
+                  <FlyoutItem
+                    key={entry.id}
+                    icon={entry.icon}
+                    label={entry.label}
+                    description={entry.description}
+                    active={entry.isActive(activeToolId)}
+                    onClick={() => { setPinnedMenu(null); setHoveredMenu(null); entry.run(); }}
+                  />
+                ))}
+              </Flyout>
+            )}
+          </DockButton>
+        </div>
+
+        <DockButton
+          {...seatProps('comment')}
+          icon={<MessageSquare size={17} />} label="Comment" toolId="comment"
+          description="pin a note to a point or an object"
+          active={activeToolId === 'comment'}
+          onClick={() => setTool('comment')}
         />
       </div>
 
@@ -2491,3 +2839,12 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
     </MotionConfig>
   );
 };
+
+/** The dock, contained: a crash here leaves the board and its other chrome running. */
+export const ToolWorkspace = React.memo(function ToolWorkspace(props: Props) {
+  return (
+    <FeatureBoundary name="tool dock" variant="panel" resetKey={props.activeToolId}>
+      <ToolWorkspaceInner {...props} />
+    </FeatureBoundary>
+  );
+});

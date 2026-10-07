@@ -1,3 +1,5 @@
+import { currentInvite } from '../room/invite';
+
 /**
  * View mode: which tools this browser tab offers, and nothing more.
  *
@@ -59,29 +61,6 @@ let activeRole: RoomRole = 'editor';
 const roleListeners = new Set<(role: RoomRole) => void>();
 
 /**
- * The role from `/i/<token>`, read without verifying — the server verifies.
- *
- * Inlined rather than imported from `engine/room/invite.ts` to keep this
- * module free of imports: it is loaded at the top of the document layer's
- * dependency graph, and `invite.ts` refers back to this file for `RoomRole`.
- * Fourteen lines is a cheaper answer than a cycle.
- */
-function readInviteRole(): RoomRole | null {
-  if (typeof window === 'undefined' || !window.location) return null;
-  const match = /^\/i\/([A-Za-z0-9_.-]+)\/?$/.exec(window.location.pathname);
-  if (!match) return null;
-  const dot = match[1].indexOf('.');
-  if (dot <= 0) return null;
-  try {
-    const json = atob(match[1].slice(0, dot).replace(/-/g, '+').replace(/_/g, '/'));
-    const role = (JSON.parse(json) as { o?: unknown }).o;
-    return role === 'viewer' || role === 'commenter' || role === 'editor' ? role : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Reads the mode out of `?role=` / `?permission=` on the current URL.
  *
  * Only consulted when this tab did *not* arrive on an invite. An invite
@@ -114,7 +93,8 @@ export function resolveInitialRole(search?: string): RoomRole {
  * Read lazily via `import()`-free indirection: `invite.ts` imports this
  * module's `RoomRole` type only, so there is no cycle at runtime.
  */
-activeRole = readInviteRole() ?? resolveInitialRole();
+// The role from `/i/<token>` is read unverified here; the server verifies it.
+activeRole = currentInvite()?.role ?? resolveInitialRole();
 
 export function getRoomRole(): RoomRole {
   return activeRole;

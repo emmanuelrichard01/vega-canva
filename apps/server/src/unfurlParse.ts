@@ -90,7 +90,7 @@ export function cleanText(value: string | undefined, max: number): string | unde
 /** The attributes of one tag, lower-cased names, values decoded. */
 export function readAttributes(tag: string): Record<string, string> {
   const attrs: Record<string, string> = {};
-  const pattern = /([^\s"'<>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
+  const pattern = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
   // Skip the tag name itself.
   const inner = tag.replace(/^<\s*[a-z0-9]+/i, '').replace(/\/?>$/, '');
   let match: RegExpExecArray | null;

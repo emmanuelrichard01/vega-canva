@@ -26,9 +26,51 @@ export interface Thread {
   x: number;
   y: number;
   objectId?: string;
+  /**
+   * Where on the object the pin sits, as fractions of its unrotated box
+   * (0,0 top-left, 1,1 bottom-right). Absent pins the top-right corner.
+   */
+  anchor?: { u: number; v: number };
   messages: ThreadMessage[];
   resolved: boolean;
   createdAt: number;
+  /** Raw reaction keys; read them through `messageReactions`. */
+  reactions?: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// Reactions
+// ---------------------------------------------------------------------------
+
+/**
+ * One key per (message, emoji, person), flat in the thread's reactions map.
+ *
+ * Flat on purpose. A nested map or array per emoji has to be created by the
+ * first person to react, and two people reacting at the same moment would
+ * each create their own and one would be discarded. A key per person is
+ * written only by that person, so concurrent reactions always all survive.
+ */
+const REACTION_SEP = '';
+
+export function reactionKey(messageId: string, emoji: string, authorId: string): string {
+  return [messageId, emoji, authorId].join(REACTION_SEP);
+}
+
+/** Emoji to the ids who reacted, for one message, in first-seen emoji order. */
+export function messageReactions(
+  raw: Record<string, unknown> | undefined,
+  messageId: string
+): Array<{ emoji: string; authorIds: string[] }> {
+  if (!raw) return [];
+  const byEmoji = new Map<string, string[]>();
+  for (const key of Object.keys(raw).sort()) {
+    const [mid, emoji, authorId] = key.split(REACTION_SEP);
+    if (mid !== messageId || !emoji || !authorId || !raw[key]) continue;
+    const list = byEmoji.get(emoji) ?? [];
+    list.push(authorId);
+    byEmoji.set(emoji, list);
+  }
+  return [...byEmoji.entries()].map(([emoji, authorIds]) => ({ emoji, authorIds }));
 }
 
 // ---------------------------------------------------------------------------
@@ -282,23 +324,25 @@ export interface AnchorTarget {
 /**
  * Where a pin sits in world space.
  *
- * A thread anchored to an object rides that object's top-right corner, so it
- * moves when the object moves. It used to compute that corner as
- * `(x + width, y)`, which is only the top-right corner of an *unrotated* box —
- * rotate a sticky and its comment stayed behind in mid-air, pointing at
- * nothing. Objects rotate about their centre, so the corner has to be rotated
- * about the centre too.
+ * A thread anchored to an object rides the spot it was dropped on (or the
+ * top-right corner, for threads that predate `anchor`), so it moves, scales
+ * and rotates with the object. Objects rotate about their centre, so the
+ * offset is rotated about the centre too.
  */
 export function anchorPoint(
-  thread: { x: number; y: number },
+  thread: { x: number; y: number; anchor?: { u: number; v: number } },
   target?: AnchorTarget | null
 ): { x: number; y: number } {
   if (!target) return { x: thread.x, y: thread.y };
 
   const cx = target.x + target.width / 2;
   const cy = target.y + target.height / 2;
-  const dx = target.width / 2;
-  const dy = -target.height / 2;
+  // The spot the comment was dropped on, carried as a fraction of the box so
+  // it stays on that spot through moves, resizes and rotations.
+  const u = thread.anchor ? clamp01(thread.anchor.u) : 1;
+  const v = thread.anchor ? clamp01(thread.anchor.v) : 0;
+  const dx = (u - 0.5) * target.width;
+  const dy = (v - 0.5) * target.height;
 
   const radians = ((target.rotation ?? 0) * Math.PI) / 180;
   if (!radians) return { x: cx + dx, y: cy + dy };
@@ -306,6 +350,26 @@ export function anchorPoint(
   const cos = Math.cos(radians);
   const sin = Math.sin(radians);
   return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+}
+
+const clamp01 = (n: number) => (Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0.5);
+
+/**
+ * The fractional anchor for a world point on a target, inverting its rotation.
+ * The inverse of `anchorPoint`.
+ */
+export function anchorFor(point: { x: number; y: number }, target: AnchorTarget): { u: number; v: number } {
+  const cx = target.x + target.width / 2;
+  const cy = target.y + target.height / 2;
+  const radians = ((target.rotation ?? 0) * Math.PI) / 180;
+  const px = point.x - cx;
+  const py = point.y - cy;
+  const lx = px * Math.cos(radians) + py * Math.sin(radians);
+  const ly = -px * Math.sin(radians) + py * Math.cos(radians);
+  return {
+    u: clamp01(target.width ? lx / target.width + 0.5 : 0.5),
+    v: clamp01(target.height ? ly / target.height + 0.5 : 0.5),
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { convertSvgTree, looksLikeSvg, parsePathData, type SvgLike } from './svgImport';
+import { convertSvgTree, looksLikeSvg, parsePathData, SVG_IMPORT_MAX_NODES, type SvgLike } from './svgImport';
 
 /**
  * A tiny element tree, so the conversion is asserted without a DOM.
@@ -240,5 +240,31 @@ describe('convertSvgTree', () => {
   it('returns null for markup with nothing convertible in it', () => {
     expect(importSvg([el('image', {})])).toBeNull();
     expect(importSvg([])).toBeNull();
+  });
+});
+
+describe('import limits', () => {
+  const el = (tagName: string, attrs: Record<string, string> = {}, children: SvgLike[] = []): SvgLike => ({
+    tagName,
+    children,
+    getAttribute: (name: string) => attrs[name] ?? null,
+    textContent: '',
+  } as unknown as SvgLike);
+
+  it('stops at the node cap and says so', () => {
+    const rects = Array.from({ length: SVG_IMPORT_MAX_NODES + 50 }, (_, i) =>
+      el('rect', { x: String(i), y: '0', width: '1', height: '1' })
+    );
+    const result = convertSvgTree(el('svg', {}, rects))!;
+    expect(result.nodes.length).toBe(SVG_IMPORT_MAX_NODES);
+    expect(result.skipped).toContain('elements beyond the import limit');
+  });
+
+  it('refuses groups nested past the depth cap instead of overflowing the stack', () => {
+    let inner: SvgLike = el('rect', { x: '0', y: '0', width: '10', height: '10' });
+    for (let i = 0; i < 100_000; i++) inner = el('g', {}, [inner]);
+    const result = convertSvgTree(el('svg', {}, [inner, el('rect', { x: '5', y: '5', width: '1', height: '1' })]));
+    expect(result?.nodes.length).toBe(1);
+    expect(result?.skipped).toContain('groups nested too deeply');
   });
 });

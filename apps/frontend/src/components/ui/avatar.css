@@ -1,0 +1,59 @@
+/* Avatars: a person's initials on their colour. Sized by --avatar-size. */
+
+.avatar {
+  width: var(--avatar-size);
+  height: var(--avatar-size);
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--avatar-fill);
+  color: var(--avatar-ink);
+  font-family: var(--font-sans);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  user-select: none;
+}
+
+/* Here right now: a ring in their colour, set off from the disc by a gap in
+   the surface colour so it reads on the disc's own colour too. */
+.avatar[data-ring='1'] {
+  box-shadow: 0 0 0 1.5px var(--surface-primary), 0 0 0 3px var(--avatar-ring);
+}
+
+/* You: the same disc with a small online dot in the corner, so you can find
+   yourself in a stack without your name being repeated. */
+.avatar[data-you='1'] { position: relative; overflow: visible; }
+.avatar[data-you='1']::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: max(6px, calc(var(--avatar-size) * 0.28));
+  height: max(6px, calc(var(--avatar-size) * 0.28));
+  border-radius: 50%;
+  background: var(--status-online);
+  box-shadow: 0 0 0 1.5px var(--surface-primary);
+}
+
+.avatar--more {
+  background: var(--surface-active);
+  color: var(--text-secondary);
+  font-weight: var(--weight-semibold);
+}
+
+.avatar-stack {
+  display: inline-flex;
+  align-items: center;
+}
+.avatar-stack > .avatar {
+  box-shadow: 0 0 0 1.5px var(--surface-primary);
+}
+.avatar-stack > .avatar[data-ring='1'] {
+  box-shadow: 0 0 0 1.5px var(--surface-primary), 0 0 0 3px var(--avatar-ring);
+}
+.avatar-stack > .avatar + .avatar {
+  margin-left: calc(var(--avatar-size) * -0.28);
+}

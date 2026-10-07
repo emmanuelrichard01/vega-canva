@@ -1,11 +1,17 @@
 import React from 'react';
-import { Circle } from 'react-konva';
+import { Circle, Line } from 'react-konva';
 import { nanoid } from 'nanoid';
 import { getStroke } from 'perfect-freehand';
 import type { Tool, ToolContext } from './Tool';
-import { doc, deleteNode } from '../document';
+import { doc, deleteNode, undoManager } from '../document';
 import { useStore } from '../../hooks/useStore';
-import { clipPolylineByCapsule, erasesObject } from './eraseHit';
+import { boxInPolygon, clipPolylineByCapsule, clipPolylineByPolygon, erasesObject } from './eraseHit';
+import { drawSettings, type EraserMode } from './drawSettings';
+import { ThemeService } from '../ThemeService';
+import { nodeBounds } from '../model/selection';
+
+/** How many recent nib positions the trail keeps. */
+const TRAIL_LENGTH = 12;
 
 function svgPathFromStroke(stroke: number[][]) {
   if (!stroke.length) return '';
@@ -96,24 +102,103 @@ export class EraserTool implements Tool {
   private lastX: number | null = null;
   private lastY: number | null = null;
 
+  /** The mode of the gesture in progress: the setting, swapped while Alt is held at the press. */
+  private mode: EraserMode = 'brush';
+  /** The loop a lasso gesture has drawn so far, in world units. */
+  private lasso: { x: number; y: number }[] = [];
+  /** The nib's recent positions, drawn as a fading trail behind it. */
+  private trail: { x: number; y: number }[] = [];
+
   onPointerDown(ctx: ToolContext, e: any) {
+    const setting = drawSettings.get().eraser;
+    this.mode = e?.evt?.altKey ? (setting === 'lasso' ? 'brush' : 'lasso') : setting;
+    this.trail = [];
+    this.lasso = [];
     if (!this.updatePos(ctx, e)) return;
     this.isErasing = true;
+    // One gesture is one undo step, separate from whatever came before.
+    undoManager.stopCapturing();
     this.lastX = this.currentX;
     this.lastY = this.currentY;
+    if (this.mode === 'lasso') {
+      this.lasso = [{ x: this.currentX, y: this.currentY }];
+      this.publishOverlay(ctx);
+      return;
+    }
     this.eraseAtPointer(ctx);
   }
 
   onPointerMove(ctx: ToolContext, e: any) {
     if (!this.updatePos(ctx, e)) return;
     if (!this.isErasing) return;
+    if (this.mode === 'lasso') {
+      const last = this.lasso[this.lasso.length - 1];
+      if (!last || Math.hypot(this.currentX - last.x, this.currentY - last.y) * ctx.camera.zoom >= 2) {
+        this.lasso.push({ x: this.currentX, y: this.currentY });
+        this.publishOverlay(ctx);
+      }
+      return;
+    }
     this.eraseSweep(ctx);
   }
 
-  onPointerUp() {
+  onPointerUp(ctx?: ToolContext) {
+    if (this.isErasing && this.mode === 'lasso' && ctx) this.eraseLasso(ctx);
+    if (this.isErasing) undoManager.stopCapturing();
     this.isErasing = false;
     this.lastX = null;
     this.lastY = null;
+    this.lasso = [];
+    this.trail = [];
+    if (ctx) this.publishOverlay(ctx);
+  }
+
+  /**
+   * Remove what the lasso encloses: objects lying entirely inside it, and the
+   * parts of freehand strokes inside it, cut exactly at the loop.
+   */
+  private eraseLasso(ctx: ToolContext) {
+    const polygon = this.lasso;
+    if (polygon.length < 3) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of polygon) {
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x);
+      maxY = Math.max(maxY, p.y);
+    }
+    const objects = useStore.getState().objects;
+    doc.transact(() => {
+      for (const [id, node] of Object.entries(objects)) {
+        const obj = node as any;
+        if (obj.locked || obj.hidden) continue;
+        if (obj.x > maxX || obj.y > maxY || obj.x + obj.width < minX || obj.y + obj.height < minY) continue;
+
+        if (obj.geometry?.kind === 'freehand' && obj.geometry.points?.length) {
+          const abs = obj.geometry.points.map((p: any) => ({ x: obj.x + p.x, y: obj.y + p.y }));
+          const runs = clipPolylineByPolygon(abs, polygon);
+          if (runs.length === 1 && runs[0].length === abs.length) continue;
+          deleteNode(id);
+          runs.forEach((run) => this.createFreehandSubPath(ctx, obj, run));
+          continue;
+        }
+        if (boxInPolygon(nodeBounds(obj), polygon)) deleteNode(id);
+      }
+    });
+  }
+
+  private publishOverlay(ctx: ToolContext) {
+    ctx.setOverlayState?.({
+      type: 'eraser',
+      x: this.currentX,
+      y: this.currentY,
+      zoom: ctx.camera.zoom,
+      size: EraserTool.size,
+      mode: this.isErasing ? this.mode : drawSettings.get().eraser,
+      lasso: this.lasso,
+      trail: this.trail,
+      count: this.lasso.length + this.trail.length,
+    });
   }
 
   onKeyDown(ctx: ToolContext, e: KeyboardEvent) {
@@ -134,22 +219,21 @@ export class EraserTool implements Tool {
       const stepped = e.key === ']' ? Math.ceil(next) : Math.floor(next);
       useStore.getState().setEraserSize(stepped);
       // Repaint the ring at its new size without waiting for a mouse move.
-      ctx.setOverlayState?.({
-        type: 'eraser',
-        x: this.currentX,
-        y: this.currentY,
-        zoom: ctx.camera.zoom,
-        size: EraserTool.size,
-      });
+      this.publishOverlay(ctx);
+    }
+    // Escape drops a lasso in progress without erasing anything.
+    if (e.key === 'Escape' && this.isErasing && this.mode === 'lasso') {
+      this.isErasing = false;
+      this.lasso = [];
+      this.publishOverlay(ctx);
     }
   }
 
   onDeactivate(ctx: ToolContext) {
-    // A tool switch triggered by a keyboard shortcut mid-drag never fires
-    // onPointerUp (that only happens on mouseup), so isErasing could stay
-    // stuck true and the cursor-replacement overlay circle stuck on screen
-    // — same class of bug as PenTool's mid-stroke tool switch.
+    // A tool switch mid-drag never fires onPointerUp, so the gesture ends here.
     this.isErasing = false;
+    this.lasso = [];
+    this.trail = [];
     ctx.setOverlayState?.(null);
   }
 
@@ -162,13 +246,11 @@ export class EraserTool implements Tool {
     this.currentX = (pos.x - ctx.camera.x) / ctx.camera.zoom;
     this.currentY = (pos.y - ctx.camera.y) / ctx.camera.zoom;
 
-    ctx.setOverlayState?.({
-      type: 'eraser',
-      x: this.currentX,
-      y: this.currentY,
-      zoom: ctx.camera.zoom,
-      size: EraserTool.size,
-    });
+    if (this.isErasing && this.mode === 'brush') {
+      this.trail.push({ x: this.currentX, y: this.currentY });
+      if (this.trail.length > TRAIL_LENGTH) this.trail.shift();
+    }
+    this.publishOverlay(ctx);
     return true;
   }
 
@@ -534,29 +616,77 @@ export class EraserTool implements Tool {
       x: minX, y: minY,
       width: Math.max(1, maxX - minX),
       height: Math.max(1, maxY - minY),
-      geometry: { kind: 'freehand', svgPath: svgPathFromStroke(stroke), points: relPoints, strokeSize: size },
+      geometry: {
+        kind: 'freehand',
+        svgPath: svgPathFromStroke(stroke),
+        points: relPoints,
+        strokeSize: size,
+        ...(original.geometry?.brush ? { brush: original.geometry.brush } : null),
+      },
     });
   }
 
   renderOverlay(ctx: ToolContext, overlayState: any) {
-    if (overlayState?.type === 'eraser') {
-      // The ring is the promise the eraser makes about what it will remove,
-      // so it has to be the same number the erase uses — it was a second
-      // hardcoded 15, which would have silently started lying the moment the
-      // size became adjustable.
-      const radius = (overlayState.size ?? EraserTool.size) / 2 / overlayState.zoom;
+    if (overlayState?.type !== 'eraser') return null;
+    const zoom = overlayState.zoom || 1;
+    const dark = ThemeService.isDarkMode();
+    // Neutral chrome: the eraser marks what it will touch, it is not an alarm.
+    const ink = dark ? 'rgba(244, 244, 245, 0.9)' : 'rgba(24, 24, 27, 0.85)';
+    const wash = dark ? 'rgba(244, 244, 245, 0.12)' : 'rgba(24, 24, 27, 0.08)';
+    const lasso: { x: number; y: number }[] = overlayState.lasso ?? [];
+    const trail: { x: number; y: number }[] = overlayState.trail ?? [];
+
+    if (overlayState.mode === 'lasso') {
       return (
+        <>
+          {lasso.length > 1 && (
+            <Line
+              points={lasso.flatMap((p) => [p.x, p.y])}
+              closed
+              fill={wash}
+              stroke={ink}
+              strokeWidth={1.25 / zoom}
+              dash={[5 / zoom, 4 / zoom]}
+              lineJoin="round"
+              listening={false}
+            />
+          )}
+          <Circle x={overlayState.x} y={overlayState.y} radius={3 / zoom} fill={ink} listening={false} />
+        </>
+      );
+    }
+
+    // The ring is the same number the erase uses, so it cannot misstate what
+    // will be removed.
+    const radius = (overlayState.size ?? EraserTool.size) / 2 / zoom;
+    return (
+      <>
+        {trail.length > 1 &&
+          trail.slice(1).map((p, i) => {
+            const prev = trail[i];
+            const age = (i + 1) / trail.length;
+            return (
+              <Line
+                key={i}
+                points={[prev.x, prev.y, p.x, p.y]}
+                stroke={ink}
+                strokeWidth={radius * 2 * age}
+                opacity={0.14 * age}
+                lineCap="round"
+                listening={false}
+              />
+            );
+          })}
         <Circle
           x={overlayState.x}
           y={overlayState.y}
           radius={radius}
-          fill="rgba(239, 68, 68, 0.2)"
-          stroke="#EF4444"
-          strokeWidth={2 / overlayState.zoom}
+          fill={wash}
+          stroke={ink}
+          strokeWidth={1.5 / zoom}
           listening={false}
         />
-      );
-    }
-    return null;
+      </>
+    );
   }
 }

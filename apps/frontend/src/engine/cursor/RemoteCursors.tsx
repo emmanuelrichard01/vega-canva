@@ -1,125 +1,69 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { cameraSystem } from '../CameraSystem';
 import { collaboratorStore } from '../presence/collaboratorStore';
 import { useCollaborators, useKeyedRef, usePresenceFrame } from '../presence/useCollaborators';
 import { ACTIVITY_LABEL } from '../presence/collaborators';
+import { CursorChatComposer } from '../presence/CursorChatComposer';
 import { chipColorsFor, placeChip, type ChipColors } from './remoteCursor';
 import { ARROW_D, ARROW_SCALE, ARROW_TIP, CURSOR_SIZE } from './cursorVisual';
 import { ToolBadge } from './cursorArt';
 import { useStore } from '../../hooks/useStore';
 import { RULER_SIZE } from '../../components/canvas/Rulers';
+import { canvasChromeContrast, useContrast } from '../ui/contrast';
+import '../presence/presence.css';
 
 /**
  * Other people's pointers.
  *
- * Your own pointer is drawn by `LocalCursor`; these are the same arrow in
- * someone else's colour. They are **content**, not chrome — which is why they
- * survive presentation mode and why they are custom-drawn rather than deferred
- * to anything native.
+ * Your own pointer is the OS cursor (see `LocalCursor`); these are the same
+ * arrow in someone else's colour, wearing the badge of the tool in their hand.
+ * They are content, not chrome, which is why they survive presentation mode.
  *
- * Three rules hold here, each of them a bug that was fixed:
+ * Three rules hold here:
  *
- * 1. **React mounts and unmounts; the frame loop moves.** Position is written
- *    straight to the DOM. Re-rendering the tree at broadcast rate to move a
- *    22px arrow is how a presence layer starts costing more than the document.
- * 2. **React owns visibility.** When the frame loop owned it, a cursor stayed
- *    at `opacity: 0` until the next animation frame — and in a throttled tab
- *    that frame can be a second away or never arrive, so the room looked empty.
- *    The one thing that must never depend on a frame is *whether someone is
- *    there*.
- * 3. **Nothing here writes awareness.** It used to, from a `window` mousemove
- *    that fired over every panel and disagreed with `Canvas` about what
- *    leaving the canvas meant. `presenceManager` is the only writer.
+ * 1. **React mounts and unmounts; the frame loop moves.** Position and the
+ *    tag's state (shown, compact, idle) are written straight to the DOM from
+ *    the shared presence frame, so nothing re-renders at broadcast rate.
+ * 2. **React owns visibility.** Whether someone is shown never waits on a
+ *    frame: in a throttled tab frames may not come, and the room must not look
+ *    empty.
+ * 3. **Nothing here writes awareness.** `presenceManager` is the only writer.
  *
- * Interpolation lives in `collaboratorStore` and runs in **world** space. It
- * used to run here in screen space, which meant panning your own canvas
- * dragged everybody else's pointer along a fifth of a second behind the
- * content it was sitting on.
+ * Motion (prediction plus a critically damped spring) lives in
+ * `collaboratorStore`, in world space; see `presence/cursorMotion.ts`.
  */
 
-/**
- * Same box, same scale, same hotspot as your own pointer.
- *
- * Not a coincidence and not worth "optimising" to a smaller arrow: a
- * collaborator's pointer should be the same object as yours, differing only in
- * colour. Sharing the geometry is also what lets it wear the same tool badge.
- */
 const HOTSPOT = ARROW_TIP;
 
-const ENTER_MS = 200;
-/** Exits are faster than entrances; a lingering ghost reads as lag. */
-const EXIT_MS = 120;
-/** Confident deceleration. Not a bounce — a bounce on a pointer reads as broken. */
-const EASE = 'cubic-bezier(0.16, 1, 0.3, 1)';
-
 /**
- * How long a name stays up after its owner stops moving.
- *
- * Six people in a room is six name tags permanently covering the work. Figma,
- * Miro and every other board of this kind fade the label and keep the arrow,
- * because the arrow is the information and the name is the introduction. A
- * label that says what someone is *doing* is exempt — that is information
- * again, so it stays until they stop doing it.
- *
- * Six seconds, not the two and a half this started at. Two and a half is long
- * enough to read a name you are already looking at, and too short for the case
- * that actually matters: following a marker across the board to find someone,
- * and arriving after their label has already gone.
+ * How long a name stays up after its owner stops moving. Long enough to follow
+ * someone's marker across the board and still find their name on arrival.
  */
 const LABEL_HOLD_MS = 6000;
+/** Still for this long, the tag shows its quiet second line (what they listen to). */
+const IDLE_AFTER_MS = 1400;
+/** Screen speeds (px/s) at which the tag shrinks to a dot, and grows back. */
+const COMPACT_ABOVE = 1100;
+const EXPAND_BELOW = 320;
 
 /** World distance that counts as "they moved", not float noise in a broadcast. */
 const MOVE_EPSILON = 0.5;
 
-/**
- * A collaborator's pointer: your arrow in their colour, badged with the tool
- * in their hand.
- *
- * The badge takes its disc and glyph from `chipColorsFor`, which is the same
- * pair that keeps their name legible — so a bright identity colour gets a dark
- * glyph and a deep one gets a light glyph, without ever moving the arrow away
- * from the colour that identifies them. The white ring is what separates the
- * badge from whatever it happens to be sitting on.
- */
-const Arrow = ({
-  color,
-  colors,
-  tool,
-}: {
-  color: string;
-  colors: ChipColors;
-  tool: string | null;
-}) => (
+const Arrow = ({ colors, tool, weight }: { colors: ChipColors; tool: string | null; weight: number }) => (
   <svg
+    className="rc__arrow"
     width={CURSOR_SIZE}
     height={CURSOR_SIZE}
     viewBox={`0 0 ${CURSOR_SIZE} ${CURSOR_SIZE}`}
     fill="none"
-    // Offset *and* blur, so the arrow separates from content of any colour —
-    // including content in exactly this colour.
-    style={{
-      display: 'block',
-      overflow: 'visible',
-      filter: 'drop-shadow(0 1.5px 3px rgba(0,0,0,0.38))',
-    }}
     aria-hidden="true"
   >
     <g transform={`scale(${ARROW_SCALE})`}>
-      <path d={ARROW_D} fill={color} stroke="#FFFFFF" strokeWidth={1.7} strokeLinejoin="round" />
+      <path d={ARROW_D} fill={colors.outline} stroke="#FFFFFF" strokeWidth={1.7 * weight} strokeLinejoin="round" />
     </g>
-    {/*
-      The same glyph table the local pointer reads, which is the whole claim
-      the README makes for this: "your own pointer wears a small glyph for the
-      tool in your hand; a collaborator's pointer wears the same glyph in their
-      colour, so nothing has to be learned twice."
-
-      That was false until now. There were two tables and the local cursor
-      consulted neither — it built its badge through a helper that hard-coded
-      `undefined` for the tool, so it only ever showed the *mode* glyph while a
-      collaborator watching the same tool saw the specific one. A rectangle and
-      a star were one pencil locally and two different shapes remotely.
-    */}
+    {/* The same glyph table the local pointer reads, so a tool looks the same
+        in your hand and in theirs. */}
     <ToolBadge tool={tool ?? undefined} fill={colors.fill} ink={colors.ink} />
   </svg>
 );
@@ -127,37 +71,21 @@ const Arrow = ({
 interface Registration {
   root: HTMLElement | null;
   chip: HTMLElement | null;
-  /** Measured once per label change; `placeChip` needs a real width to flip. */
   size: { width: number; height: number };
-  /** Last broadcast position and when it last actually changed. */
   lastX: number;
   lastY: number;
   movedAt: number;
+  compact: boolean;
 }
 
 export const RemoteCursors: React.FC = () => {
   const remotes = useCollaborators();
   const nodes = useRef(new Map<number, Registration>());
+  const { enhanced } = useContrast();
+  const weight = canvasChromeContrast(enhanced).strokeScale;
 
-  const [reducedMotion, setReducedMotion] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const sync = () => setReducedMotion(mq.matches);
-    sync();
-    mq.addEventListener('change', sync);
-    return () => mq.removeEventListener('change', sync);
-  }, []);
-
-  // Registered by ref rather than looked up with `querySelector` every frame:
-  // one DOM query per person per frame is a real cost at 60Hz, and it silently
-  // stops working the moment a wrapper element is added.
-  //
-  // Every registration goes through `ensure`, because **React runs ref
-  // callbacks child-first**. Having the chip's callback look up an entry the
-  // parent's callback had not created yet meant the chip was never registered,
-  // so its offset was never written and it sat directly on top of the arrow —
-  // hiding the pointer behind its own name tag. That is exactly the class of
-  // bug that only rendering it finds.
+  // Registrations go through `ensure` because React runs ref callbacks
+  // child-first: the chip's ref fires before its parent's.
   const ensure = useCallback((clientId: number): Registration => {
     let entry = nodes.current.get(clientId);
     if (!entry) {
@@ -168,6 +96,7 @@ export const RemoteCursors: React.FC = () => {
         lastX: NaN,
         lastY: NaN,
         movedAt: 0,
+        compact: false,
       };
       nodes.current.set(clientId, entry);
     }
@@ -201,15 +130,18 @@ export const RemoteCursors: React.FC = () => {
     return map;
   }, [remotes]);
 
-  /** Names that stay up regardless of stillness, because they carry a state. */
-  const persistentLabels = useMemo(() => {
+  /** Tags that stay up regardless of stillness, because they carry a state. */
+  const persistent = useMemo(() => {
     const set = new Set<number>();
-    for (const person of remotes) if (person.activity || person.away) set.add(person.clientId);
+    for (const person of remotes) if (person.activity || person.away || person.chat) set.add(person.clientId);
     return set;
   }, [remotes]);
 
   const labelSignature = remotes
-    .map((r) => `${r.clientId}:${r.name}:${r.activity ?? ''}:${r.away ? 1 : 0}`)
+    .map(
+      (r) =>
+        `${r.clientId}:${r.name}:${r.activity ?? ''}:${r.away ? 1 : 0}:${r.listening ?? ''}:${r.chat?.text ?? ''}:${r.chat?.open ? 1 : 0}`
+    )
     .join('|');
 
   const paint = useCallback(
@@ -217,8 +149,7 @@ export const RemoteCursors: React.FC = () => {
       const zoom = cameraSystem.zoom;
       const camX = cameraSystem.x;
       const camY = cameraSystem.y;
-      const showRulers = useStore.getState().showRulers;
-      const rulerInset = showRulers ? RULER_SIZE : 0;
+      const rulerInset = useStore.getState().showRulers ? RULER_SIZE : 0;
       const viewport = { width: window.innerWidth, height: window.innerHeight };
 
       for (const person of collaboratorStore.live()) {
@@ -230,13 +161,10 @@ export const RemoteCursors: React.FC = () => {
 
         const screenX = world.x * zoom + camX + rulerInset;
         const screenY = world.y * zoom + camY + rulerInset;
-        entry.root.style.transform = `translate3d(${screenX - HOTSPOT.x}px, ${
-          screenY - HOTSPOT.y
-        }px, 0)`;
+        entry.root.style.transform = `translate3d(${screenX - HOTSPOT.x}px, ${screenY - HOTSPOT.y}px, 0)`;
 
-        // Idle detection reads the *broadcast* position, not the smoothed one:
-        // smoothing is still converging for a moment after someone stops, and
-        // treating that as movement holds every label up permanently.
+        // Idle reads the broadcast position, not the smoothed one, which is
+        // still settling for a moment after someone stops.
         const target = person.cursor;
         if (target) {
           const moved =
@@ -253,17 +181,12 @@ export const RemoteCursors: React.FC = () => {
         const chip = entry.chip;
         if (!chip) continue;
 
-        // `placeChip` clamps a chip back inside the viewport so a name near an
-        // edge is never lost. For a pointer that is *fully* off screen that
-        // rescue becomes a lie: the arrow is clipped away by the overlay and
-        // the label alone slides into the corner, so the room appears to
-        // contain a floating name that belongs to nothing. Someone who is off
-        // screen is the edge markers' job.
+        // Someone fully off screen is the edge markers' job: a tag clamped
+        // into the corner with no arrow would label nothing.
         const onScreen =
-          screenX >= -40 && screenX <= viewport.width + 40 &&
-          screenY >= -40 && screenY <= viewport.height + 40;
+          screenX >= -40 && screenX <= viewport.width + 40 && screenY >= -40 && screenY <= viewport.height + 40;
         if (!onScreen) {
-          chip.style.opacity = '0';
+          chip.dataset.shown = '0';
           continue;
         }
 
@@ -274,30 +197,34 @@ export const RemoteCursors: React.FC = () => {
           }px, 0)`;
         }
 
-        // Defaults to shown. If frames never come — a throttled tab — every
-        // name simply stays up, which is the harmless failure. The opposite
-        // default would hide the room.
-        const holding = persistentLabels.has(person.clientId) || now - entry.movedAt < LABEL_HOLD_MS;
-        chip.style.opacity = holding ? '1' : '0';
+        const holds = persistent.has(person.clientId);
+        const shown = holds || now - entry.movedAt < LABEL_HOLD_MS;
+        const idle = now - entry.movedAt > IDLE_AFTER_MS;
+
+        // Hysteresis, so a pointer near the threshold does not flicker.
+        const speed = collaboratorStore.speedOf(person.clientId);
+        if (holds) entry.compact = false;
+        else if (!entry.compact && speed > COMPACT_ABOVE) entry.compact = true;
+        else if (entry.compact && speed < EXPAND_BELOW) entry.compact = false;
+
+        const set = (key: string, value: string) => {
+          if (chip.dataset[key] !== value) chip.dataset[key] = value;
+        };
+        set('shown', shown ? '1' : '0');
+        set('idle', idle ? '1' : '0');
+        set('compact', entry.compact ? '1' : '0');
         if (snap) chip.style.transitionDuration = '0ms';
         else if (chip.style.transitionDuration === '0ms') chip.style.transitionDuration = '';
       }
     },
-    [persistentLabels]
+    [persistent]
   );
 
-  /**
-   * Measure the chips and place everyone immediately.
-   *
-   * Before paint, so a cursor that has just mounted is already at its owner's
-   * position on the first frame it is visible, rather than appearing at the
-   * origin and sliding across the screen to where they actually are.
-   */
+  // Measure the tags and place everyone before paint, so a pointer that has
+  // just mounted is already where its owner is on its first visible frame.
   useLayoutEffect(() => {
     for (const [, entry] of nodes.current) {
-      if (entry.chip) {
-        entry.size = { width: entry.chip.offsetWidth, height: entry.chip.offsetHeight };
-      }
+      if (entry.chip) entry.size = { width: entry.chip.offsetWidth, height: entry.chip.offsetHeight };
     }
     paint(performance.now(), true);
   }, [labelSignature, remotes, paint]);
@@ -305,154 +232,80 @@ export const RemoteCursors: React.FC = () => {
   usePresenceFrame(() => paint(performance.now()));
 
   return ReactDOM.createPortal(
-    <div
-      aria-hidden="true"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        pointerEvents: 'none',
-        overflow: 'hidden',
-        // Above every panel. A pointer that renders behind the UI is a pointer
-        // that disappears exactly when someone reaches for a control.
-        zIndex: 999999999,
-      }}
-    >
-      {remotes.map((person) => {
-        const colors = palettes.get(person.clientId)!;
-        // Only the activities you cannot see for yourself get words. See
-        // `ACTIVITY_LABEL` for why drawing and moving are not among them.
-        const note = person.away ? 'Away' : person.activity ? ACTIVITY_LABEL[person.activity] : null;
-        const visible = !!person.cursor;
+    <>
+      <div className="rc-layer" aria-hidden="true">
+        {remotes.map((person) => {
+          const colors = palettes.get(person.clientId)!;
+          const activity = person.activity ? ACTIVITY_LABEL[person.activity] : null;
+          const note = person.away ? 'Away' : activity;
+          const typing = person.activity === 'typing';
+          const chat = person.chat;
+          const visible = !!person.cursor;
 
-        return (
-          <div
-            key={person.clientId}
-            ref={rootRef(person.clientId)}
-            style={{ position: 'absolute', top: 0, left: 0, willChange: 'transform' }}
-          >
-            {/* Position lives on the parent and appearance on this child, so a
-                per-frame translate never fights an enter/exit transition. */}
+          return (
             <div
-              style={{
-                opacity: visible ? (person.away ? 0.5 : 1) : 0,
-                transform: visible ? 'scale(1)' : 'scale(0.8)',
-                transformOrigin: `${HOTSPOT.x}px ${HOTSPOT.y}px`,
-                transitionProperty: 'opacity, transform',
-                transitionTimingFunction: EASE,
-                transitionDuration: reducedMotion ? '0ms' : `${visible ? ENTER_MS : EXIT_MS}ms`,
-                willChange: 'opacity, transform',
-              }}
+              key={person.clientId}
+              ref={rootRef(person.clientId)}
+              className="rc"
+              style={
+                {
+                  '--who': colors.outline,
+                  '--who-fill': colors.fill,
+                  '--who-ink': colors.ink,
+                } as React.CSSProperties
+              }
             >
-              <Arrow color={colors.outline} colors={colors} tool={person.tool} />
+              {/* Position on the parent, appearance on this child, so a per-frame
+                  translate never fights an enter or exit transition. */}
+              <div className="rc__body" data-visible={visible ? '1' : '0'} data-away={person.away ? '1' : '0'}>
+                <Arrow colors={colors} tool={person.tool} weight={weight} />
 
-              {person.reaction?.emoji && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    bottom: '100%',
-                    left: '50%',
-                    transform: 'translateX(-50%) translateY(-6px)',
-                    background: 'rgba(15, 23, 42, 0.88)',
-                    backdropFilter: 'blur(12px)',
-                    WebkitBackdropFilter: 'blur(12px)',
-                    border: `1.5px solid ${colors.outline}`,
-                    borderRadius: '20px',
-                    padding: '2px 8px',
-                    fontSize: '18px',
-                    lineHeight: 1.2,
-                    boxShadow: '0 6px 20px rgba(0,0,0,0.35)',
-                    pointerEvents: 'none',
-                    userSelect: 'none',
-                    zIndex: 10,
-                  }}
-                >
-                  {person.reaction.emoji}
-                </div>
-              )}
-
-              <div
-                ref={chipRef(person.clientId)}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  // Tight. The name and the state are one label; 8px on either
-                  // side of the hairline reads as two separate badges.
-                  gap: 'var(--space-1)',
-                  maxWidth: 220,
-                  padding: '3px var(--space-2)',
-                  // A tight radius, not a pill: this labels a precise point.
-                  borderRadius: 'var(--radius-md)',
-                  background: colors.fill,
-                  color: colors.ink,
-                  // Edged in the raw identity colour, which puts the true
-                  // colour back when the fill had to move to stay readable —
-                  // and, more importantly, is what separates the chip from the
-                  // canvas at all. `chipColorsFor` solves text-on-chip
-                  // contrast, so a deep colour is deepened further: Violet
-                  // becomes near-black, which on a dark board is a label you
-                  // cannot see the edges of. The raw colour is by definition
-                  // not near-black, so the ring carries that job. 1.5px,
-                  // because at 1px it reads as an artefact rather than a
-                  // border.
-                  boxShadow: `0 0 0 1.5px ${colors.outline}, 0 2px 8px rgba(0,0,0,0.35)`,
-                  fontFamily: 'var(--font-sans)',
-                  fontSize: 'var(--text-sm)',
-                  fontWeight: 'var(--weight-semibold)',
-                  lineHeight: 1.4,
-                  letterSpacing: '0.005em',
-                  whiteSpace: 'nowrap',
-                  transition: reducedMotion
-                    ? 'none'
-                    : `opacity 260ms ${EASE}`,
-                  willChange: 'transform, opacity',
-                }}
-              >
-                <span
-                  style={{
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    // A long name must not push the state out of the chip.
-                    maxWidth: note ? 120 : 200,
-                  }}
-                >
-                  {person.name}
-                </span>
-                {note && (
-                  <>
-                    {/* One chip with a hairline, not two stacked badges. Who
-                        they are and what they are doing is one fact. */}
-                    <span
-                      style={{
-                        width: 1,
-                        alignSelf: 'stretch',
-                        background: 'currentColor',
-                        opacity: 0.28,
-                      }}
-                    />
-                    <span
-                      style={{
-                        fontWeight: 'var(--weight-medium)',
-                        // Tinted down from the ink rather than set to gray, so
-                        // the chip stays one material.
-                        opacity: 0.72,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        maxWidth: 90,
-                      }}
-                    >
-                      {note}
-                    </span>
-                  </>
+                {person.reaction?.emoji && (
+                  <div key={person.reaction.timestamp} className="rc__reaction">
+                    {person.reaction.emoji}
+                  </div>
                 )}
+
+                <div
+                  ref={chipRef(person.clientId)}
+                  className="rc__chip"
+                  data-note={note ? '1' : '0'}
+                  data-chat={chat ? '1' : '0'}
+                  data-shown="1"
+                >
+                  <div className="rc__row">
+                    <span className="rc__name">{person.name}</span>
+                    {note && !chat && (
+                      <>
+                        <span className="rc__rule" />
+                        <span className="rc__note">
+                          {note}
+                          {typing && (
+                            <span className="rc__dots">
+                              <i />
+                              <i />
+                              <i />
+                            </span>
+                          )}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  {chat && (
+                    <div className="rc__said">
+                      {chat.text}
+                      {chat.open && <span className="rc__caret" />}
+                    </div>
+                  )}
+                  {!chat && person.listening && <div className="rc__listening">{person.listening}</div>}
+                </div>
               </div>
             </div>
-          </div>
-        );
-      })}
-    </div>,
+          );
+        })}
+      </div>
+      <CursorChatComposer />
+    </>,
     document.body
   );
 };

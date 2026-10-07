@@ -32,6 +32,8 @@ type Listener = () => void;
 
 const listeners = new Set<Listener>();
 let active: CropSnapshot | null = null;
+/** The chosen aspect preset id while cropping; `free` when unconstrained. */
+let aspectId = 'free';
 
 function emit() {
   listeners.forEach((fn) => fn());
@@ -47,6 +49,14 @@ export const cropMode = {
 
   isCropping: (nodeId: string) => active?.nodeId === nodeId,
 
+  getAspectId: (): string => aspectId,
+
+  setAspectId(id: string) {
+    if (id === aspectId) return;
+    aspectId = id;
+    emit();
+  },
+
   /**
    * Begin cropping, recording what to restore on cancel.
    *
@@ -57,6 +67,7 @@ export const cropMode = {
   enter(snapshot: CropSnapshot) {
     if (active?.nodeId === snapshot.nodeId) return;
     active = snapshot;
+    aspectId = 'free';
     emit();
   },
 

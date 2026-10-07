@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid';
 import { editor } from '../api/EditorAPI';
 import { applyNodePatches, nextZIndex, roomId } from '../document';
 import { useStore } from '../../hooks/useStore';
-import { API_BASE } from '../../utils/endpoints';
+import { API_BASE, roomRequestHeaders } from '../../utils/endpoints';
 import type { LinkNode } from '../model/schema';
 import { naturalLinkSize, resolveDisplay } from './linkLayout';
 import { parseLink, providerFor } from './linkProviders';
@@ -82,7 +82,7 @@ async function fetchPreview(url: string, timeoutMs = 22_000): Promise<PreviewRes
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(endpoint, { signal: controller.signal });
+    const res = await fetch(endpoint, { signal: controller.signal, headers: roomRequestHeaders() });
     const body = (await res.json().catch(() => ({}))) as PreviewResponse;
     // A 404 with no JSON error is a server that predates link previews, not a
     // missing page — the page's own 404 comes back as `{ error }`.

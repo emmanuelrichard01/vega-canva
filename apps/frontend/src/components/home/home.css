@@ -1,0 +1,624 @@
+/* ===========================================================================
+   THE LIBRARY — cards, groups, the template peek and the empty library.
+   Base card geometry (`.tcard`, `.bcard`, `.tgrid`) lives in index.css; this
+   file holds the dashboard's own behaviour on top of it.
+   =========================================================================== */
+
+/* ------------------------------------------------------------- board cards */
+
+/* The card is an article; its name is the one link, stretched over the card
+   so the whole card opens the board. The ⋯ button sits above the stretch. */
+.bcard { isolation: isolate; }
+
+.bcard__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  font: inherit;
+}
+
+.bcard__link {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  outline: none;
+}
+
+.bcard__link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: var(--radius-xl);
+}
+
+/* Keyboard focus rings the picture, which is what the eye is on. */
+.bcard:has(.bcard__link:focus-visible) .bcard__art {
+  box-shadow:
+    inset 0 0 0 1px var(--border-strong),
+    0 0 0 2px var(--surface-canvas),
+    0 0 0 4px var(--focus-ring-color);
+}
+
+.bcard__pin {
+  flex: none;
+  color: var(--text-tertiary);
+}
+
+.bcard__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Changed since this device last opened it: an ink dot, not an unread badge. */
+.bcard__fresh {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-primary);
+}
+
+/* A board the server no longer has keeps its card, quietly. */
+.bcard[data-missing] .bcard__art > .cover {
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+
+.bcard[data-missing] .bcard__meta { color: var(--text-secondary); }
+
+/* The menu door. Over the picture's corner in a grid, at the row's end in a
+   list. Revealed on hover and focus; always shown where there is no hover. */
+.bcard__more {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  transition: opacity var(--motion-hover), background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.bcard:hover .bcard__more,
+.bcard:focus-within .bcard__more,
+.bcard[data-open] .bcard__more { opacity: 1; }
+
+.bcard__more:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.bcard__more:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+@media (hover: none) {
+  .bcard__more { opacity: 1; }
+}
+
+/* Who is in the board right now, in the picture's lower corner. */
+.bcard__live {
+  position: absolute;
+  left: var(--space-2);
+  bottom: var(--space-2);
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.bcard__live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-online);
+}
+
+.bcard__faces {
+  display: inline-flex;
+  align-items: center;
+}
+
+.bcard__face {
+  box-shadow: 0 0 0 1.5px var(--surface-primary);
+}
+
+.bcard__face + .bcard__face { margin-left: -5px; }
+
+.bcard__more-faces {
+  margin-left: 4px;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The art has to position its corner pieces. */
+.bcard__art { position: relative; }
+
+/* Renaming in place: the same field grammar as the board's title. */
+.bcard__rename {
+  position: relative;
+  z-index: 3;
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  margin: -3px 0 -3px -6px;
+  padding: 0 6px;
+  border: 1px solid var(--focus-field-color);
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  outline: none;
+}
+
+/* The list: a row whose name runs long and whose dates line up. */
+.bcard--list .bcard__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.bcard--list .bcard__title { flex: 1; }
+
+.bcard--list .bcard__link::after { border-radius: 0; }
+
+.bcard--list:has(.bcard__link:focus-visible) {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.bcard--list:has(.bcard__link:focus-visible) .bcard__art { box-shadow: inset 0 0 0 1px var(--border-divider); }
+
+.bcard--list .bcard__meta { flex: none; justify-content: flex-end; }
+
+.bcard--list .bcard__more {
+  position: relative;
+  top: auto;
+  right: auto;
+  flex: none;
+  margin-left: var(--space-1);
+  box-shadow: none;
+  background: transparent;
+}
+
+/* ----------------------------------------------------------------- groups */
+
+.lgroup__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.005em;
+  text-transform: none;
+  color: var(--text-secondary);
+}
+
+.lgroup__head svg { color: var(--text-tertiary); }
+
+.lgroup__count {
+  padding: 0;
+  background: none;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------- template card */
+
+/* The template the peek is showing: ink round the picture, a selected state. */
+.tcard[data-peeking] .tcard__art {
+  box-shadow:
+    inset 0 0 0 1px var(--border-strong),
+    0 0 0 2px var(--surface-canvas),
+    0 0 0 4px var(--text-primary);
+}
+
+.tcard:focus-visible .tcard__art {
+  box-shadow:
+    inset 0 0 0 1px var(--border-strong),
+    0 0 0 2px var(--surface-canvas),
+    0 0 0 4px var(--focus-ring-color);
+}
+
+/* -------------------------------------------------------------- the peek */
+
+.lstage { --peek-w: min(400px, calc(100vw - 2 * var(--space-3))); }
+
+/* Wide enough, the gallery steps aside rather than being covered. */
+@media (min-width: 1100px) {
+  .lstage--peek .lstage__inner {
+    padding-right: calc(var(--peek-w) + var(--space-8));
+    transition: padding-right 220ms var(--ease-settle);
+  }
+}
+
+.tpeek {
+  position: fixed;
+  top: var(--space-3);
+  right: var(--space-3);
+  bottom: var(--space-3);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: var(--peek-w);
+  border-radius: var(--radius-2xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-overlay);
+  overflow: hidden;
+  animation: tpeek-in 240ms var(--ease-settle) both;
+}
+
+@keyframes tpeek-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: none; }
+}
+
+.tpeek__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
+}
+
+.tpeek__nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tpeek__pos {
+  min-width: 64px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.tpeek__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.tpeek__icon:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.tpeek__icon:disabled { color: var(--text-disabled); cursor: default; }
+
+.tpeek__icon:focus-visible,
+.tpeek__alt:focus-visible,
+.tpeek__use:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+.tpeek__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--space-5) var(--space-5);
+}
+
+.tpeek__art {
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border-radius: var(--radius-xl);
+  background: var(--surface-secondary);
+  box-shadow: inset 0 0 0 1px var(--border-divider);
+  animation: tpeek-art 260ms var(--ease-settle) both;
+}
+
+.tpeek__art .cover { width: 100%; height: 100%; }
+
+@keyframes tpeek-art {
+  from { opacity: 0.4; transform: scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+.tpeek__titles { margin-top: var(--space-5); }
+
+.tpeek__title {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+  color: var(--text-primary);
+}
+
+.tpeek__category {
+  margin: 4px 0 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+}
+
+.tpeek__blurb {
+  margin: var(--space-3) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-md);
+  line-height: 1.55;
+}
+
+.tpeek__section {
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-divider);
+}
+
+.tpeek__subhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.tpeek__total {
+  color: var(--text-tertiary);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.tpeek__kinds {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tpeek__kind {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.tpeek__kind-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-tertiary);
+}
+
+.tpeek__kind-count {
+  flex: none;
+  min-width: 2.2ch;
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.tpeek__kind-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tpeek__teaches {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.tpeek__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+  border-top: 1px solid var(--border-divider);
+}
+
+.tpeek__use {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--control-h-lg);
+  border: none;
+  border-radius: var(--radius-lg);
+  background: var(--accent);
+  color: var(--accent-on);
+  font-family: inherit;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: background-color var(--motion-hover);
+}
+
+.tpeek__use:hover { background: var(--accent-hover); }
+
+.tpeek__use kbd,
+.qstart__primary kbd {
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent-on) 14%, transparent);
+  color: inherit;
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  line-height: 18px;
+}
+
+.tpeek__alt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--control-h-md);
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.tpeek__alt:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+/* Narrow, the peek is a sheet from the bottom. */
+@media (max-width: 720px) {
+  .tpeek {
+    top: auto;
+    left: var(--space-2);
+    right: var(--space-2);
+    bottom: var(--space-2);
+    width: auto;
+    max-height: 78vh;
+    animation-name: tpeek-up;
+  }
+}
+
+@keyframes tpeek-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ------------------------------------------------------- the empty library */
+
+.qstart {
+  max-width: none;
+}
+
+.qstart__intro { max-width: 560px; }
+
+.qstart__go {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-6);
+}
+
+.qstart__go .qstart__primary { margin-top: 0; }
+
+.qstart__go .qstart__alt {
+  padding: 0 var(--space-2);
+  color: var(--text-secondary);
+}
+
+.qstart__starters {
+  margin-top: clamp(var(--space-8), 8vh, 88px);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border-divider);
+}
+
+.qstart__starters-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.qstart__starters-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.015em;
+}
+
+.tgrid--starters { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); max-width: 1180px; }
+
+/* --------------------------------------------------------------- odds */
+
+.stage__error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.stage__error-x {
+  display: inline-flex;
+  flex: none;
+  padding: 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.stage__error-x:hover { color: var(--text-primary); background: var(--surface-hover); }
+.stage__error-x:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 1px; }
+
+/* Forget, confirmed in the row it acts on. */
+.shelf__row[data-confirming] { background: var(--surface-hover); }
+
+.shelf__ask {
+  flex: 2;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.shelf__act--danger { color: var(--status-danger); font-weight: var(--weight-semibold); }
+.shelf__act--danger:hover { background: color-mix(in srgb, var(--status-danger) 10%, transparent); color: var(--status-danger); }
+
+@media (prefers-reduced-motion: reduce) {
+  .tpeek,
+  .tpeek__art { animation: none; }
+  .lstage--peek .lstage__inner { transition: none; }
+}
+
+/* Theme and contrast, as a panel off the account menu. */
+.appearance-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 264px;
+  padding: var(--space-3);
+}

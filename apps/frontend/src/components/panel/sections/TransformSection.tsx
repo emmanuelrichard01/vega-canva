@@ -1,7 +1,6 @@
 import React from 'react';
-import { Lock, Move, Unlock } from 'lucide-react';
-import { Accordion } from '../panelPrimitives';
-import { NumberStepper } from '../../ui/NumberStepper';
+import { FlipHorizontal2, FlipVertical2, Lock, RotateCw, Unlock } from 'lucide-react';
+import { IconToggle, NumberField, PairRow, Section } from '../grammar';
 import type { AnyNode } from '../../../engine/model/schema';
 import type { Shared } from '../../../engine/model/selection';
 
@@ -22,8 +21,19 @@ interface TransformSectionProps {
     max?: number
   ) => void;
   shared: <T>(read: (node: AnyNode) => T) => Shared<T>;
+  flipped: { x: boolean; y: boolean; mixedX: boolean; mixedY: boolean };
+  onFlip: (axis: 'x' | 'y') => void;
+  /** Grid-slot or frame membership, shown under the geometry. */
+  children?: React.ReactNode;
 }
 
+/**
+ * Layout: where the object is and how big. First after the subject, as in
+ * every design tool, because it is the most-read block in the panel.
+ *
+ * Every field scrubs by its letter. Values are written once per edit (Enter,
+ * an arrow, or the end of a drag), so a scrub is one undo step.
+ */
 export const TransformSection: React.FC<TransformSectionProps> = ({
   bounds,
   node,
@@ -36,102 +46,110 @@ export const TransformSection: React.FC<TransformSectionProps> = ({
   set,
   nudgeEach,
   shared,
+  flipped,
+  onFlip,
+  children,
 }) => {
+  const skewX = shared((n) => n.skewX ?? 0);
+  const skewY = shared((n) => n.skewY ?? 0);
   return (
-    <Accordion title="Transform" icon={<Move size={13} />}>
-      {/*
-        Three inline grids became one class.
-
-        They declared the same `1fr 28px 1fr` three times over, which is three
-        places to change one column and three chances to change two of them.
-        The middle track is the aspect lock's, and the empty span above it is
-        what keeps X and Y on the same rail as W and H — that alignment is the
-        whole reason the position row carries a gap it does not use.
-      */}
-      <div className="prop-grid prop-grid--linked">
-        <NumberStepper value={Math.round(bounds?.x ?? node.x)} onChange={(v: number) => setOrigin('x', v)} label="X" suffix="px" />
-        <span aria-hidden />
-        <NumberStepper value={Math.round(bounds?.y ?? node.y)} onChange={(v: number) => setOrigin('y', v)} label="Y" suffix="px" />
-      </div>
-      <div className="prop-grid prop-grid--linked">
-        <div style={{ minWidth: 0 }}>
-          <NumberStepper
-            value={Math.round(bounds?.width ?? node.width)}
-            onChange={(v: number) => resizeSelection('width', v)}
-            label="W"
-            suffix="px"
-            min={1}
-            disabledReason={resizeBlockedReason}
-          />
-        </div>
-        {/* Sized to the column it sits in. It was a default 32px `.btn-icon`
-            inside a 26px track, so it overhung its own column by six pixels
-            and crowded the height field beside it. */}
-        <button
-          className="btn-icon btn-icon--sm"
-          onClick={() => setAspectLocked((v) => !v)}
-          data-tooltip={aspectLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
-          aria-pressed={aspectLocked}
-          style={{
-            alignSelf: 'center',
-            color: aspectLocked ? 'var(--text-primary)' : 'var(--text-tertiary)',
-            background: aspectLocked ? 'var(--surface-hover)' : 'transparent',
-          }}
-        >
-          {aspectLocked ? <Lock size={14} /> : <Unlock size={14} />}
-        </button>
-        <div style={{ minWidth: 0 }}>
-          <NumberStepper
-            value={Math.round(bounds?.height ?? node.height)}
-            onChange={(v: number) => resizeSelection('height', v)}
-            label="H"
-            suffix="px"
-            min={1}
-            disabledReason={resizeBlockedReason}
-          />
-        </div>
-      </div>
-      {/*
-        Rotation and skew on one line, which is what they are.
-
-        Rotation sat alone in a two-column grid with an empty second half — a
-        row deliberately half-blank, which reads as a control that failed to
-        render rather than as a layout. All three are angles about the centre,
-        so they belong together and the row says so by holding them.
-
-        Rotation keeps the 15° step: it is the one angle people want on the
-        eighths, and Shift already takes ten of them. Skew steps by 5, because
-        a slant past about twenty degrees stops being a slant.
-      */}
-      <div className="prop-grid prop-grid--thirds">
-        <NumberStepper
-          value={Math.round(rotationShared.value ?? 0)}
-          mixed={rotationShared.mixed}
-          onChange={(v: number) => set({ rotation: v })}
-          onNudge={(d: number) => nudgeEach('rotation', d)}
-          label="R"
-          suffix="deg"
-          step={15}
+    <Section id="layout" title="Layout">
+      <PairRow linked>
+        <NumberField
+          label="X position"
+          glyph="X"
+          unit="px"
+          value={Math.round(bounds?.x ?? node.x)}
+          onChange={(v) => setOrigin('x', v)}
         />
-        {(['skewX', 'skewY'] as const).map((axis) => {
-            const s = shared((n) => n[axis] ?? 0);
-            return (
-              <NumberStepper
-                key={axis}
-                value={Math.round(s.value ?? 0)}
-                mixed={s.mixed}
-                onChange={(v: number) => set({ [axis]: v === 0 ? undefined : v } as Partial<AnyNode>)}
-                onNudge={(d: number) => nudgeEach(axis, d)}
-                /* `S` for skew, with its axis — `X` alone beside `R` would be
-                   the position field's letter on a row about angles. */
-                label={axis === 'skewX' ? 'SX' : 'SY'}
-                suffix="deg"
-                min={-89} max={89}
-                step={5}
-              />
-            );
-        })}
+        <span aria-hidden />
+        <NumberField
+          label="Y position"
+          glyph="Y"
+          unit="px"
+          value={Math.round(bounds?.y ?? node.y)}
+          onChange={(v) => setOrigin('y', v)}
+        />
+      </PairRow>
+      <PairRow linked>
+        <NumberField
+          label="Width"
+          glyph="W"
+          unit="px"
+          min={1}
+          value={Math.round(bounds?.width ?? node.width)}
+          disabledReason={resizeBlockedReason}
+          onChange={(v) => resizeSelection('width', v)}
+        />
+        <IconToggle
+          label={aspectLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
+          pressed={aspectLocked}
+          onClick={() => setAspectLocked((v) => !v)}
+        >
+          {aspectLocked ? <Lock size={13} /> : <Unlock size={13} />}
+        </IconToggle>
+        <NumberField
+          label="Height"
+          glyph="H"
+          unit="px"
+          min={1}
+          value={Math.round(bounds?.height ?? node.height)}
+          disabledReason={resizeBlockedReason}
+          onChange={(v) => resizeSelection('height', v)}
+        />
+      </PairRow>
+      <div className="pg-rotation-row">
+        <NumberField
+          label="Rotation"
+          glyph={<RotateCw size={12} />}
+          unit="deg"
+          step={15}
+          value={rotationShared.mixed ? 'mixed' : Math.round(rotationShared.value ?? 0)}
+          onNudge={(d) => nudgeEach('rotation', d)}
+          onChange={(v) => set({ rotation: v })}
+        />
+        <IconToggle
+          label="Flip horizontal"
+          pressed={flipped.x}
+          mixed={flipped.mixedX}
+          onClick={() => onFlip('x')}
+        >
+          <FlipHorizontal2 size={14} />
+        </IconToggle>
+        <IconToggle
+          label="Flip vertical"
+          pressed={flipped.y}
+          mixed={flipped.mixedY}
+          onClick={() => onFlip('y')}
+        >
+          <FlipVertical2 size={14} />
+        </IconToggle>
       </div>
-    </Accordion>
+      <PairRow>
+        <NumberField
+          label="Skew horizontal"
+          glyph="SX"
+          unit="deg"
+          step={5}
+          min={-89}
+          max={89}
+          value={skewX.mixed ? 'mixed' : Math.round(skewX.value ?? 0)}
+          onNudge={(d) => nudgeEach('skewX', d)}
+          onChange={(v) => set({ skewX: v === 0 ? undefined : v } as Partial<AnyNode>)}
+        />
+        <NumberField
+          label="Skew vertical"
+          glyph="SY"
+          unit="deg"
+          step={5}
+          min={-89}
+          max={89}
+          value={skewY.mixed ? 'mixed' : Math.round(skewY.value ?? 0)}
+          onNudge={(d) => nudgeEach('skewY', d)}
+          onChange={(v) => set({ skewY: v === 0 ? undefined : v } as Partial<AnyNode>)}
+        />
+      </PairRow>
+      {children}
+    </Section>
   );
 };

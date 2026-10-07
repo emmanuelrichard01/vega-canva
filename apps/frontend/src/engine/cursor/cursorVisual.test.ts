@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   chromeVisual,
   CURSOR_SIZE,
   cursorVisual,
   HAND_CLOSED,
+  HAND_CLOSED_FOLDS,
   HAND_OPEN,
   PRECISION_REACH,
   moveVisual,
@@ -161,8 +164,10 @@ describe('the hotspot', () => {
     // `text` is deliberately absent: it is an I-beam in a box, not an arrow,
     // because a text click lands *between two characters* and an arrow
     // occludes the gap it is aimed into. See the type-pointer tests below.
+    // `comment` is absent too: it is the pin it is about to drop, hot at the
+    // pin's point. See the tool-set tests below.
     const tip = cursorVisual('pointer', 'select', ACCENT);
-    for (const mode of ['draw', 'note', 'comment', 'place'] as const) {
+    for (const mode of ['draw', 'note', 'place'] as const) {
       const v = cursorVisual(mode, undefined, ACCENT);
       expect({ x: v.offsetX, y: v.offsetY }, mode).toEqual({
         x: tip.offsetX,
@@ -177,22 +182,33 @@ describe('the hotspot', () => {
     }
   });
 
-  it('is the nib for the eraser, not the middle of its block', () => {
-    const e = cursorVisual('erase', 'eraser', ACCENT);
-    expect(e.offsetX).not.toBe(-14);
-    // And it is a real eraser now, not the tightened crosshair it used to be —
-    // which was a shape that says "aim here" for a tool whose whole point is
-    // that it has a width.
-    expect(e.svg).not.toContain('cursor-hand');
-    expect(e.svg).toContain('19.6');
+  it('is the centre of the eraser ring, which is the width it takes out', () => {
+    const e = cursorVisual('erase', 'eraser', ACCENT, false, { eraserSize: 30 });
+    const box = e.size ?? CURSOR_SIZE;
+    expect({ x: -e.offsetX, y: -e.offsetY }).toEqual({ x: box / 2, y: box / 2 });
+    expect(e.svg).toContain('r="15"');
   });
 });
 
 describe('the hand closes on press', () => {
-  it('carries both hands so CSS can choose without a render', () => {
+  it('draws only the open hand at rest, never both hands overlaid', () => {
+    // A url() cursor is a standalone image: page CSS cannot hide half of it,
+    // so art carrying both hands showed both at once.
     const pan = cursorVisual('pan', 'hand', ACCENT).svg;
-    expect(pan).toContain('cursor-hand-open');
-    expect(pan).toContain('cursor-hand-closed');
+    expect(pan).toContain(HAND_OPEN);
+    expect(pan).not.toContain(HAND_CLOSED);
+    expect(pan).not.toContain(HAND_CLOSED_FOLDS);
+  });
+
+  it('draws only the closed hand while pressed', () => {
+    const grab = cursorVisual('grab', 'hand', ACCENT).svg;
+    expect(grab).toContain(HAND_CLOSED);
+    expect(grab).not.toContain(HAND_OPEN);
+  });
+
+  it('closes by swapping CSS values, which is the only way a url() cursor can change', () => {
+    const css = fs.readFileSync(path.resolve(__dirname, '../../index.css'), 'utf8');
+    expect(css).toMatch(/\[data-cursor-mode='pan'\]:active[^{]*\{[^}]*--cursor-grab/);
   });
 });
 
@@ -289,71 +305,55 @@ describe('the pointers outside the board', () => {
   });
 });
 
-describe('the hand has five digits', () => {
-  /**
-   * The one it replaces had three fingers. Its path is three arcs off the palm
-   * — at `8→12`, `12→16` and `16→20` — plus a column doing double duty as the
-   * thumb. At 28px nobody counts, but the silhouette of a three-fingered hand
-   * is wrong in a way people see without being able to name it, and it is the
-   * one cursor every competing tool draws the same way.
-   */
+describe('the hand', () => {
   const open = cursorVisual('pan', 'hand', ACCENT).svg;
+  const fist = cursorVisual('grab', 'hand', ACCENT).svg;
 
-  /**
-   * Fingertips, by their own radius.
-   *
-   * Both hands end at the wrist with an arc too, at radius `1.45` — so a
-   * pattern loose enough to match "any arc" counts five and a test asserting
-   * four fails on a hand that has exactly four fingers. The tips are `1.5`,
-   * and naming that is the difference between counting fingers and counting
-   * curves.
-   */
-  const fingertips = (d: string) => (d.match(/a1\.5 1\.5 0 0 1/g) ?? []).length;
+  /** Round tips, by arc command: one per finger, plus the thumb on the open hand. */
+  const tips = (d: string) => (d.match(/A1\.[0-9]+ 1\.[0-9]+ 0 0 1/g) ?? []).length;
 
-  it('draws four finger tips', () => {
-    /**
-     * Counted from `HAND_OPEN` itself, not from a coordinate.
-     *
-     * This matched the markup against a literal `M8.4 15.5`, so when the hand
-     * was redrawn — it opens `M6.5 13.2` now — the regex found nothing, the
-     * captured `d` was empty, and the test failed on its own first assertion
-     * rather than on the thing it is about. A test pinned to the first two
-     * numbers of a path breaks every time the art is touched, and says
-     * nothing useful when it does.
-     *
-     * Each fingertip is an arc command; the thumb is a curve, not an arc.
-     */
-    expect(open, 'the open hand should be in the markup').toContain(HAND_OPEN);
-    expect(fingertips(HAND_OPEN), 'four fingertips').toBe(4);
+  /** x coordinates of a path made of absolute commands (arc: end point only). */
+  const xs = (d: string) =>
+    [...d.matchAll(/[MLCQA]([^MLCQAZ]+)/g)].flatMap((m) => {
+      const nums = m[1].trim().split(/[ ,]+/).map(Number);
+      return m[0][0] === 'A' ? [nums[5]] : nums.filter((_, i) => i % 2 === 0);
+    });
+
+  it('has four fingertips and a thumb when open', () => {
+    expect(open).toContain(HAND_OPEN);
+    expect(tips(HAND_OPEN)).toBe(5);
   });
 
-  it('needs no knuckle lines, because the valleys separate the fingers', () => {
-    // The three-fingered version had them, and that is what they were
-    // compensating for.
-    expect(open).toContain('cursor-hand-open');
-    const openOnly = open.slice(open.indexOf('cursor-hand-open'), open.indexOf('cursor-hand-closed'));
-    expect(openOnly).not.toContain('opacity="0.55"');
-  });
-
-  it('curls the fingers on the fist rather than reusing the open hand', () => {
-    /**
-     * This asserted `opacity="0.55"`, which was the knuckle strokes the
-     * three-fingered fist needed to show where its fingers ended. The redrawn
-     * fist encodes the curl in `HAND_CLOSED` itself and the separate marks
-     * were removed with the art that needed them — so the only
-     * `opacity="0.55"` left in this module belongs to the **eraser**, and the
-     * assertion was one small edit away from passing for the wrong reason.
-     *
-     * What the fist actually promises is that it is a different hand from the
-     * open one, with its fingers stopped short. Both are checked against the
-     * path, which is where that fact lives.
-     */
-    const fist = cursorVisual('grab', 'hand', ACCENT).svg;
+  it('folds into four knuckles, with fold lines, when closed', () => {
     expect(fist).toContain(HAND_CLOSED);
     expect(fist).not.toContain(HAND_OPEN);
-    // Four fingers still, each one curled: the fist stops them above the
-    // knuckle line rather than reaching up the palm.
-    expect(fingertips(HAND_CLOSED), 'four fingertips').toBe(4);
+    expect(tips(HAND_CLOSED)).toBe(4);
+    expect(fist).toContain(HAND_CLOSED_FOLDS);
+  });
+
+  it('closes in place: same wrist, same outer edge, only the thumb tucks in', () => {
+    // Both paths start at the same wrist point and end on the same wrist edge.
+    expect(HAND_CLOSED.slice(0, 8)).toBe(HAND_OPEN.slice(0, 8));
+    expect(HAND_CLOSED.endsWith('17.3 22.7Z')).toBe(true);
+    expect(HAND_OPEN.endsWith('17.3 22.7Z')).toBe(true);
+    // The little finger's side of the palm stays within a unit.
+    expect(Math.abs(Math.max(...xs(HAND_OPEN)) - Math.max(...xs(HAND_CLOSED)))).toBeLessThan(1);
+    // The open thumb reaches out further than the fist; that is the only change.
+    expect(Math.min(...xs(HAND_OPEN))).toBeLessThan(Math.min(...xs(HAND_CLOSED)));
+  });
+
+  it('is white with a dark outline in both themes, like every native hand', () => {
+    for (const dark of [false, true]) {
+      const svg = cursorVisual('pan', 'hand', ACCENT, dark).svg;
+      expect(svg).toContain(`fill="${PAPER}" stroke="${INK}"`);
+    }
+  });
+
+  it('shares one hotspot between open and closed, so pressing never moves the point', () => {
+    const a = cursorVisual('pan', 'hand', ACCENT);
+    const b = cursorVisual('grab', 'hand', ACCENT);
+    expect({ x: a.offsetX, y: a.offsetY }).toEqual({ x: b.offsetX, y: b.offsetY });
+    expect(a.offsetX).toBe(-CURSOR_SIZE / 2);
   });
 });
 
@@ -372,10 +372,10 @@ describe('the art, as a real CSS cursor', () => {
     const arrow = cursorVisual('pointer', 'select', ACCENT);
     expect(cursorCss(arrow, 'default')).toContain(`") ${-arrow.offsetX} ${-arrow.offsetY},`);
 
-    const eraser = cursorVisual('erase', 'eraser', ACCENT);
-    const css = cursorCss(eraser, 'crosshair');
-    expect(css).toContain(`") ${-eraser.offsetX} ${-eraser.offsetY},`);
-    // The eraser's hotspot is its nib, so it must not be the centre.
+    const comment = cursorVisual('comment', 'comment', ACCENT);
+    const css = cursorCss(comment, 'copy');
+    expect(css).toContain(`") ${-comment.offsetX} ${-comment.offsetY},`);
+    // The comment's hotspot is the pin's point, not the middle of the bubble.
     expect(css).not.toContain('") 14 14,');
   });
 

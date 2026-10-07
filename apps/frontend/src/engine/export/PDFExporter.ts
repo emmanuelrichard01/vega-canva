@@ -3,6 +3,7 @@ import { type PdfPage } from './pdfWriter';
 import { buildPdfWithWorker, encodeCanvasWithWorker } from './exportWorkerClient';
 import { frameExportBounds } from './bounds';
 import { descendantsOfFrame } from '../model/frames';
+import { compareStacking } from '../model/stacking';
 import { useStore } from '../../hooks/useStore';
 import { FORMAT_SPECS, type Exporter, type ExportFormat, type ExportOptions } from './ExportTypes';
 
@@ -62,7 +63,7 @@ export class PDFExporter implements Exporter {
           .filter((n) => n.type === 'frame' && !n.hidden)
           // Board order, so the document reads in the order the frames were
           // made rather than in whatever order the map happens to iterate.
-          .sort((a, b) => a.zIndex - b.zIndex);
+          .sort(compareStacking);
 
     const pages: PdfPage[] =
       frames.length > 0

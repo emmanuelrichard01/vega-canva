@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CLOSE_RADIUS_SCREEN,
   commitPath,
+  continuationFrom,
   constrainToAngle,
   isClosable,
   isHandleDrag,
@@ -174,5 +175,29 @@ describe('isClosable', () => {
 
   it('will not close a path of one anchor onto itself', () => {
     expect(isClosable([{ x: 0, y: 0 }], { x: 0, y: 0 }, 1)).toBe(false);
+  });
+});
+
+describe('continuationFrom', () => {
+  const path = [
+    { x: 0, y: 0, outX: 20, outY: -10 },
+    { x: 100, y: 0, inX: 80, inY: -10 },
+  ];
+
+  it('continues from the last anchor, in world space', () => {
+    const out = continuationFrom(path, { x: 10, y: 5 }, { x: 110, y: 5 }, 1);
+    expect(out).not.toBeNull();
+    expect(out![1]).toMatchObject({ x: 110, y: 5, inX: 90, inY: -5 });
+  });
+
+  it('reverses the path when pressed on the first anchor, swapping handle sides', () => {
+    const out = continuationFrom(path, { x: 0, y: 0 }, { x: 1, y: 1 }, 1);
+    expect(out).not.toBeNull();
+    expect(out![0]).toMatchObject({ x: 100, y: 0, outX: 80, outY: -10 });
+    expect(out![1]).toMatchObject({ x: 0, y: 0, inX: 20, inY: -10 });
+  });
+
+  it('ignores a press away from both ends', () => {
+    expect(continuationFrom(path, { x: 0, y: 0 }, { x: 50, y: 0 }, 1)).toBeNull();
   });
 });

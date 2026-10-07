@@ -1,0 +1,917 @@
+/* ===========================================================================
+   TABLE TOOLS — the formula bar, the column caret, the fill handle, the
+   summary footer, frozen bands, the choice picker, the filter panel, tag
+   colours, and the properties panel's table section.
+   =========================================================================== */
+
+/* --- tag colours (chrome) ------------------------------------------------------
+
+   A select option's colour as the menus and pickers show it. These are app
+   chrome, so they follow the theme; the table on the board draws the same
+   eight hues as fixed content colours (`TAG_PAINTS` in tableTypes.ts). Each
+   paper/ink pair holds its label at 4.5:1 or better (tableTags.test.ts reads
+   this file and checks). */
+:root {
+  --tag-1-paper: #F1F5F9; --tag-1-ink: #334155;
+  --tag-2-paper: #DBEAFE; --tag-2-ink: #1E40AF;
+  --tag-3-paper: #DCFCE7; --tag-3-ink: #166534;
+  --tag-4-paper: #FEF3C7; --tag-4-ink: #92400E;
+  --tag-5-paper: #FEE2E2; --tag-5-ink: #991B1B;
+  --tag-6-paper: #EDE9FE; --tag-6-ink: #5B21B6;
+  --tag-7-paper: #FCE7F3; --tag-7-ink: #9D174D;
+  --tag-8-paper: #CCFBF1; --tag-8-ink: #115E59;
+}
+
+.dark-theme {
+  --tag-1-paper: #334155; --tag-1-ink: #E2E8F0;
+  --tag-2-paper: #1E3A8A; --tag-2-ink: #DBEAFE;
+  --tag-3-paper: #14532D; --tag-3-ink: #DCFCE7;
+  --tag-4-paper: #78350F; --tag-4-ink: #FEF3C7;
+  --tag-5-paper: #7F1D1D; --tag-5-ink: #FEE2E2;
+  --tag-6-paper: #4C1D95; --tag-6-ink: #EDE9FE;
+  --tag-7-paper: #831843; --tag-7-ink: #FCE7F3;
+  --tag-8-paper: #134E4A; --tag-8-ink: #CCFBF1;
+}
+
+.tbl-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 20px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--tag-1-paper);
+  color: var(--tag-1-ink);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tbl-tag[data-tag='1'] { background: var(--tag-2-paper); color: var(--tag-2-ink); }
+.tbl-tag[data-tag='2'] { background: var(--tag-3-paper); color: var(--tag-3-ink); }
+.tbl-tag[data-tag='3'] { background: var(--tag-4-paper); color: var(--tag-4-ink); }
+.tbl-tag[data-tag='4'] { background: var(--tag-5-paper); color: var(--tag-5-ink); }
+.tbl-tag[data-tag='5'] { background: var(--tag-6-paper); color: var(--tag-6-ink); }
+.tbl-tag[data-tag='6'] { background: var(--tag-7-paper); color: var(--tag-7-ink); }
+.tbl-tag[data-tag='7'] { background: var(--tag-8-paper); color: var(--tag-8-ink); }
+
+.tbl-tag--removable { cursor: pointer; }
+.tbl-tag--removable span { opacity: 0.7; }
+.tbl-tag--removable:hover span { opacity: 1; }
+
+/* --- the formula bar ------------------------------------------------------------ */
+
+.tbled-fx {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 8px;
+  border-top: 1px solid var(--border-divider);
+}
+
+.tbled-fx__name,
+.tbled-fx__input {
+  height: var(--control-h-sm);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.tbled-fx__name {
+  flex: none;
+  width: 76px;
+  padding: 0 8px;
+  font-weight: var(--weight-semibold);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.tbled-fx__input {
+  flex: 1;
+  min-width: 0;
+  padding: 0 10px;
+}
+
+.tbled-fx__name:focus-visible,
+.tbled-fx__input:focus-visible {
+  outline: 1.5px solid var(--focus-field-color);
+  outline-offset: 0;
+}
+
+.tbled-fx__input::placeholder { color: var(--text-tertiary); }
+
+.tbled-fx__mark {
+  flex: none;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-style: italic;
+  font-weight: var(--weight-semibold);
+}
+
+/* A paste a sorted or filtered view cannot hold, waiting for a decision. */
+.tbled-paste {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border-divider);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  white-space: normal;
+}
+
+.tbled-paste span { flex: 1 1 200px; }
+
+.tbled-paste button {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tbled-paste button:hover { background: var(--surface-hover); }
+
+.tbled-paste .tbled-paste__go {
+  border-color: var(--text-primary);
+  background: var(--text-primary);
+  color: var(--surface-primary);
+}
+
+.tbled-paste .tbled-paste__go:hover { background: var(--text-secondary); }
+
+.tbled-tool__caret { color: var(--text-tertiary); }
+
+.tbled-menu--swatches { grid-template-columns: repeat(6, 22px); }
+
+.tbled-menu__custom {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-divider);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.tbled-menu--panel { padding: 0; }
+
+/* --- column letters: the caret that opens the column menu ----------------------- */
+
+.tbled__colhead { overflow: visible; }
+
+.tbled__letter { pointer-events: none; }
+
+.tbled__mark {
+  position: absolute;
+  top: 50%;
+  left: calc(6px * var(--inv, 1));
+  width: calc(5px * var(--inv, 1));
+  height: calc(5px * var(--inv, 1));
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.tbled__caret {
+  position: absolute;
+  top: 50%;
+  right: calc(6px * var(--inv, 1));
+  display: grid;
+  place-items: center;
+  width: calc(16px * var(--inv, 1));
+  height: calc(16px * var(--inv, 1));
+  padding: 0;
+  border: 0;
+  border-radius: calc(4px * var(--inv, 1));
+  background: transparent;
+  color: var(--text-secondary);
+  opacity: 0;
+  transform: translateY(-50%);
+  cursor: pointer;
+  transition: opacity var(--motion-hover), background-color var(--motion-hover);
+}
+
+.tbled__caret svg {
+  width: calc(12px * var(--inv, 1));
+  height: calc(12px * var(--inv, 1));
+}
+
+.tbled__colhead:hover .tbled__caret,
+.tbled__colhead[data-selected] .tbled__caret,
+.tbled__caret:focus-visible { opacity: 1; }
+
+.tbled__caret:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.tbled__caret:focus-visible {
+  outline: calc(2px * var(--inv, 1)) solid var(--focus-ring-color);
+  outline-offset: 0;
+}
+
+@media (hover: none) {
+  .tbled__caret { opacity: 1; }
+}
+
+/* A frozen track's gutter wears a quiet rule on its far edge. */
+.tbled__colhead[data-frozen] {
+  box-shadow:
+    0 0 0 calc(1px * var(--inv, 1)) var(--border-strong) inset,
+    inset calc(-2px * var(--inv, 1)) 0 0 var(--text-tertiary);
+}
+
+.tbled__rowhead[data-frozen] {
+  box-shadow:
+    0 0 0 calc(1px * var(--inv, 1)) var(--border-strong) inset,
+    inset 0 calc(-2px * var(--inv, 1)) 0 0 var(--text-tertiary);
+}
+
+/* Hidden columns: a small eye on the boundary they were folded into. */
+.tbled__unhide {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: calc(18px * var(--inv, 1));
+  height: calc(18px * var(--inv, 1));
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+}
+
+.tbled__unhide svg {
+  width: calc(11px * var(--inv, 1));
+  height: calc(11px * var(--inv, 1));
+}
+
+.tbled__unhide:focus-visible {
+  outline: calc(2px * var(--inv, 1)) solid var(--focus-ring-color);
+  outline-offset: calc(2px * var(--inv, 1));
+}
+
+/* Drag a row's bottom edge to give it more height; double-click to fit. */
+.tbled__rowhead { overflow: visible; }
+
+.tbled__rowresize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(-4px * var(--inv, 1));
+  z-index: 1;
+  height: calc(8px * var(--inv, 1));
+  cursor: row-resize;
+}
+
+.tbled__rowresize::after {
+  content: '';
+  position: absolute;
+  left: calc(3px * var(--inv, 1));
+  right: calc(3px * var(--inv, 1));
+  top: calc(3px * var(--inv, 1));
+  height: calc(2px * var(--inv, 1));
+  border-radius: 1px;
+  background: transparent;
+  transition: background-color var(--motion-hover);
+}
+
+.tbled__rowresize:hover::after { background: var(--text-secondary); }
+
+/* --- cells: the editor's own marks over the drawn table -------------------------- */
+
+.tbled__cell[data-kind='checkbox'],
+.tbled__cell[data-kind='rating'] { cursor: pointer; }
+
+/* A formula cell, in the editor only: a small fold at its top-left. Content
+   space, so fixed ink — the cells are always light. */
+.tbled__ftick {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  border-top: calc(5px * var(--inv, 1)) solid #94A3B8;
+  border-right: calc(5px * var(--inv, 1)) solid transparent;
+  pointer-events: none;
+}
+
+/* A choice cell says it opens a list, on hover. */
+.tbled__chev {
+  position: absolute;
+  top: 50%;
+  right: calc(6px * var(--inv, 1));
+  width: calc(6px * var(--inv, 1));
+  height: calc(6px * var(--inv, 1));
+  border-right: calc(1.5px * var(--inv, 1)) solid #64748B;
+  border-bottom: calc(1.5px * var(--inv, 1)) solid #64748B;
+  opacity: 0;
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+  transition: opacity var(--motion-hover);
+}
+
+.tbled__cell:hover .tbled__chev { opacity: 1; }
+
+/* The summary footer: each cell a button that picks its aggregation. */
+.tbled__foot {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tbled__foot:hover { background: rgb(30 41 59 / 6%); }
+
+.tbled__foot:focus-visible {
+  outline: calc(2px * var(--inv, 1)) solid #1E293B;
+  outline-offset: calc(-2px * var(--inv, 1));
+}
+
+.tbled__foot-add {
+  color: #475569;
+  font-size: 0.82em;
+  opacity: 0;
+  transition: opacity var(--motion-hover);
+}
+
+.tbled__foot:hover .tbled__foot-add,
+.tbled__foot:focus-visible .tbled__foot-add { opacity: 1; }
+
+/* Wrapped text edits in a box that grows downward, as the row will. */
+.tbled__input[data-wrap] {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The fill handle: a small ink square at the selection's corner, screen-sized. */
+.tbled__fill {
+  position: absolute;
+  z-index: 2;
+  width: calc(8px * var(--inv, 1));
+  height: calc(8px * var(--inv, 1));
+  border: calc(1.5px * var(--inv, 1)) solid #FFFFFF;
+  background: #1E293B;
+  transform: translate(-50%, -50%);
+  cursor: crosshair;
+}
+
+.tbled__fill::before {
+  content: '';
+  position: absolute;
+  inset: calc(-6px * var(--inv, 1));
+}
+
+.tbled__fillpreview {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  border: calc(1.5px * var(--inv, 1)) dashed #1E293B;
+  pointer-events: none;
+}
+
+/* --- frozen bands ----------------------------------------------------------------
+
+   Frozen rows (or columns) pinned to the top (or left) of the free board while
+   the table runs past it. One elevation: a shadow, no border. */
+.tbled-band {
+  position: fixed;
+  z-index: var(--z-canvas-overlay);
+  overflow: hidden;
+  background: #FFFFFF;
+  box-shadow: 0 6px 14px -8px rgb(15 23 42 / 40%);
+  cursor: cell;
+}
+
+.tbled-band svg { display: block; }
+
+/* --- the choice picker ------------------------------------------------------------ */
+
+.tblpick {
+  position: fixed;
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 16px));
+  max-height: min(360px, 60vh);
+  padding: 6px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float), var(--shadow-lg);
+  font-size: var(--text-sm);
+  animation: tbled-settle 120ms var(--ease-settle);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tblpick { animation: none; }
+}
+
+.tblpick__chosen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 2px 6px;
+}
+
+.tblpick__input {
+  height: var(--control-h-md);
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.tblpick__input:focus-visible { outline: 1.5px solid var(--focus-field-color); outline-offset: 0; }
+.tblpick__input::placeholder { color: var(--text-tertiary); }
+
+.tblpick__list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.tblpick__opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 8px;
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.tblpick__opt[data-active] { background: var(--surface-hover); }
+
+.tblpick__detail {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.tblpick__tick {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  margin-left: auto;
+  color: var(--text-primary);
+}
+
+.tblpick__detail + .tblpick__tick { margin-left: 4px; }
+
+.tblpick__opt--create { color: var(--text-secondary); }
+.tblpick__opt--create b { color: var(--text-primary); font-weight: var(--weight-semibold); }
+
+.tblpick__person {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tblpick__avatar {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+}
+
+.tblpick__empty {
+  margin: 6px 8px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+/* --- the filter panel ------------------------------------------------------------ */
+
+.tblfilter {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 268px;
+  padding: 10px;
+  font-size: var(--text-sm);
+}
+
+.tblfilter__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tblfilter__title {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tblfilter__clear,
+.tblfilter__bulk button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.tblfilter__clear:hover,
+.tblfilter__bulk button:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.tblfilter__bulk { display: flex; gap: 2px; }
+
+.tblfilter__search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--control-h-sm);
+  padding: 0 8px;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-tertiary);
+}
+
+.tblfilter__search:focus-within { outline: 1.5px solid var(--focus-field-color); }
+
+.tblfilter__search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.tblfilter__search input:focus-visible { outline: none; }
+
+.tblfilter__list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.tblfilter__opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tblfilter__opt:hover { background: var(--surface-hover); }
+.tblfilter__opt:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: -2px; }
+
+.tblfilter__check {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--surface-primary);
+}
+
+.tblfilter__opt[aria-selected='true'] .tblfilter__check {
+  border-color: var(--text-primary);
+  background: var(--text-primary);
+}
+
+.tblfilter__value,
+.tblfilter__blank {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tblfilter__blank { color: var(--text-tertiary); font-style: italic; }
+
+.tblfilter__count {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.tblfilter__query {
+  height: var(--control-h-md);
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.tblfilter__query:focus-visible { outline: 1.5px solid var(--focus-field-color); outline-offset: 0; }
+
+.tblfilter__note,
+.tblfilter__none {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  white-space: normal;
+}
+
+/* --- the properties panel's table section --------------------------------------- */
+
+.tblpanel-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin: 6px 0 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.tblpanel-status__notice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+}
+
+.tblpanel-status__notice button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tblpanel-status__notice button:hover { background: var(--surface-hover); }
+
+.tblpanel-cols {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.tblpanel-col {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--control-h-sm);
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tblpanel-col:hover { background: var(--surface-hover); }
+.tblpanel-col:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: -2px; }
+.tblpanel-col[data-hidden] .tblpanel-col__name { color: var(--text-tertiary); }
+
+.tblpanel-col__letter {
+  flex: none;
+  width: 18px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  text-align: center;
+}
+
+.tblpanel-col__icon { display: grid; flex: none; color: var(--text-secondary); }
+.tblpanel-col__icon svg { width: 14px; height: 14px; }
+
+.tblpanel-col__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tblpanel-col__flag { flex: none; color: var(--text-secondary); }
+
+.tblpanel-col__type {
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.tblpanel-col__caret { flex: none; color: var(--text-tertiary); }
+
+.tblpanel-link {
+  align-self: flex-start;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.tblpanel-link:hover { color: var(--text-primary); text-decoration-color: currentColor; }
+.tblpanel-link--inline { display: inline; padding: 0; }
+
+.tblpanel-input {
+  width: 100%;
+  height: var(--control-h-sm);
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.tblpanel-input--mono { font-family: var(--font-mono); font-size: var(--text-xs); }
+.tblpanel-input:focus-visible { outline: 1.5px solid var(--focus-field-color); outline-offset: 0; }
+
+.tblpanel-filter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tblpanel-filter__body {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: var(--control-h-sm);
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tblpanel-filter__body:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 0; }
+.tblpanel-filter__col { font-weight: var(--weight-medium); white-space: nowrap; }
+
+.tblpanel-filter__what {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Conditional colour entries: flat rows separated by a rule, not cards. */
+.pg-section .tblrule {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+  border-radius: 0;
+  background: none;
+}
+
+.pg-section .tblrule + .tblrule { border-top: 1px solid var(--border-divider); }
+
+.tblrule__top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tblrule__top > * { min-width: 0; }
+.tblrule__top > .pg-select { flex: 1; }
+
+.tblrule__kind {
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.tblrule__row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.tblrule__ramp {
+  display: block;
+  width: 26px;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px rgb(15 23 42 / 14%);
+}
+
+/* The way into the cells: the section's one primary action, full width. */
+.tblpanel-edit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: var(--control-h-md);
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.tblpanel-edit:hover { background: var(--surface-hover); }
+.tblpanel-edit:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 1px; }
+.tblpanel-edit svg { color: var(--text-secondary); }
+
+
+.tblpanel-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 6px;
+}
+
+.tblpanel-actions__end {
+  display: inline-flex;
+  margin-left: auto;
+}
+
+.tblpanel-data {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+}

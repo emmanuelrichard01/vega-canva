@@ -3,13 +3,14 @@ import { notify } from '../engine/ui/notices';
 import { nanoid } from 'nanoid';
 import { editor } from '../engine/api/EditorAPI';
 import { cameraSystem } from '../engine/CameraSystem';
-import { doc, localAuthor, updateNode } from '../engine/document';
+import { doc, localAuthor } from '../engine/document';
 import { calculateOptimalAudioWidth } from '../engine/model/audioPlayback';
-import { mediaUploadUrl } from '../utils/endpoints';
-import { hydratePendingMedia, processOfflineMediaQueue, queueOfflineMedia } from '../utils/offlineMediaQueue';
-import { localSrcFor, registerLocalMedia, releaseLocalMedia } from '../utils/pendingMedia';
+import { hydratePendingMedia, processOfflineMediaQueue } from '../utils/offlineMediaQueue';
+import { localSrcFor, registerLocalMedia } from '../utils/pendingMedia';
 import { cellAtPoint, freeCellsFrom, gridAtPoint, placeImageInCell } from '../engine/grid/gridSlotApply';
 import { importSvg } from '../engine/clipboard/svgImport';
+import { uploadMedia } from '../engine/media/upload';
+import { layoutDroppedImages, type DropRect } from '../engine/media/dropLayout';
 
 const IMAGE_PLACE_MAX = 800;
 const MULTI_PLACE_STEP = 24;
@@ -71,7 +72,9 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
        * first picture placed would otherwise change what the second one found
        * underneath it.
        */
-      slot?: { gridId: string; cell: number }
+      slot?: { gridId: string; cell: number },
+      /** Where a picture goes when several were dropped together (see `dropLayout.ts`). */
+      rect?: DropRect
     ) => {
       const viewCenter = at ?? cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
 
@@ -130,13 +133,23 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
         height = Math.max(1, Math.round(measured.height * fit));
       }
 
+      const placed =
+        rect && type === 'image'
+          ? rect
+          : {
+              x: viewCenter.x - width / 2 + index * MULTI_PLACE_STEP,
+              y: viewCenter.y - height / 2 + index * MULTI_PLACE_STEP,
+              width,
+              height,
+            };
+
       const objId = editor.createNode({
         id: nanoid(),
         type,
-        x: viewCenter.x - width / 2 + index * MULTI_PLACE_STEP,
-        y: viewCenter.y - height / 2 + index * MULTI_PLACE_STEP,
-        width,
-        height,
+        x: placed.x,
+        y: placed.y,
+        width: placed.width,
+        height: placed.height,
         /**
          * `local:<id>`, never the blob URL.
          *
@@ -168,74 +181,25 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
       );
 
       /**
-       * Uploading, and saying so when it does not work.
-       *
-       * The object is already on the board, drawn from a local blob URL, so
-       * every failure below *looks* like success until the page is reloaded
-       * and the picture is gone. That is the worst shape a failure can take,
-       * and this had two of them: `if (data.url)` had no `else`, so a server
-       * rejection -- a 413 over the room's storage quota, a refused file type
-       * -- did nothing at all, and the network `catch` queued the file for
-       * later without a word.
-       *
-       * Which of the two matters is the distinction the messages draw. A
-       * queued upload is fine and needs reassurance, not an alarm. A rejection
-       * is permanent for this file and the person has to know now, while they
-       * still remember what they dropped.
+       * Upload in the background and say so only when something needs the
+       * reader. A queued upload is reassurance; a refusal is permanent for
+       * this file, so the picture keeps its local bytes and offers Retry
+       * (see `engine/media/upload.ts`).
        */
-      try {
-        const formData = new FormData();
-        formData.append('media', file);
-        const res = await fetch(mediaUploadUrl(roomId), {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (!res.ok) {
-          // The server's own words where it gave any: it knows whether this
-          // was a quota, a file type or a rate limit, and a generic
-          // "upload failed" would throw that away.
-          const reason = await res
-            .json()
-            .then((body) => (typeof body?.error === 'string' ? body.error : null))
-            .catch(() => null);
-          notify({
-            tone: 'warning',
-            message: reason ?? `${fileLabel(file)} could not be uploaded.`,
-          });
-          return;
-        }
-
-        const data = await res.json();
-        if (!data?.url) {
-          notify({
-            tone: 'warning',
-            message: `${fileLabel(file)} was not saved. It will disappear when you reload.`,
-          });
-          return;
-        }
-
-        updateNode(objId, { src: data.url });
-        // After the write, not before: releasing first blanks the picture for
-        // as long as the document takes to come back round.
-        releaseLocalMedia(uploadId);
-      } catch (err) {
-        console.warn('Network upload failed, queuing offline media for sync...', err);
-        queueOfflineMedia({
-          // The same id the `local:` src already names, so a reload can find
-          // these bytes from the node alone.
-          id: uploadId,
-          objectId: objId,
-          roomId,
-          fileBlob: file,
-          fileName: file.name,
-          fileType: file.type,
-          mediaType: type as 'image' | 'audio',
-        });
-        // `info`, not `warning`: nothing is lost and nothing is required of
-        // the reader. It is the quietest tone that still answers "did that
-        // work?", which is the question an unexplained pause creates.
+      const outcome = await uploadMedia({
+        uploadId,
+        objectId: objId,
+        roomId,
+        file,
+        mediaType: type as 'image' | 'audio',
+      });
+      if (outcome === 'queued') {
         notify({ tone: 'info', message: `${fileLabel(file)} will upload when you are back online.` });
+      } else if (outcome === 'failed') {
+        notify({
+          tone: 'warning',
+          message: `${fileLabel(file)} could not be uploaded. Select it to see why and try again.`,
+        });
       }
     },
     [roomId, setSelectedIds]
@@ -265,6 +229,32 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
       const freeCells =
         grid && startCell !== null ? freeCellsFrom(grid.id, startCell) : [];
 
+      /**
+       * Several raster images dropped on open board arrive as a justified
+       * photo grid around the drop point, measured up front so every picture
+       * keeps its own aspect ratio. SVGs become vectors and are left out.
+       */
+      const rasters = usable.filter(
+        (f) => f.type.startsWith('image/') && f.type !== 'image/svg+xml' && !f.name.toLowerCase().endsWith('.svg')
+      );
+      const rects = new Map<File, DropRect>();
+      if (!grid && rasters.length > 1) {
+        const sizes = await Promise.all(
+          rasters.map(async (f) => {
+            const url = URL.createObjectURL(f);
+            try {
+              const m = await measureImage(url);
+              const fit = Math.min(IMAGE_PLACE_MAX / m.width, IMAGE_PLACE_MAX / m.height, 1);
+              return { width: m.width * fit, height: m.height * fit };
+            } finally {
+              URL.revokeObjectURL(url);
+            }
+          })
+        );
+        const center = at ?? cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
+        layoutDroppedImages(sizes, center).forEach((r, i) => rects.set(rasters[i], r));
+      }
+
       let slotted = 0;
       for (let i = 0; i < usable.length; i++) {
         const isImage = usable[i].type.startsWith('image/');
@@ -274,7 +264,8 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
           usable[i],
           at,
           i,
-          grid && cell !== undefined ? { gridId: grid.id, cell } : undefined
+          grid && cell !== undefined ? { gridId: grid.id, cell } : undefined,
+          rects.get(usable[i])
         );
       }
     },

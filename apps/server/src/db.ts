@@ -1,58 +1,14 @@
-import { Pool } from "pg";
 import * as Y from "yjs";
 import { readConfig } from "./config";
+import { createPool } from "./pool";
 import { migrate } from "./migrations";
+import { MAX_UPDATES_PER_ROOM } from "./retention";
 
 const config = readConfig();
 
-export const pool = new Pool({
-  user: config.db.user,
-  password: config.db.password,
-  host: config.db.host,
-  port: config.db.port,
-  database: config.db.database,
-  max: config.db.poolMax,
-  ssl: config.db.ssl ? { rejectUnauthorized: false } : undefined,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
-});
+export const pool = createPool(config.db);
 
-pool.on("error", (err) => {
-  console.error("Unexpected error on idle PostgreSQL client:", err);
-});
-
-/**
- * Retention for the Time Travel update log.
- *
- * `room_updates` is append-only — one row per document transaction — and had
- * no retention at all: a single room in development had already accumulated
- * 1,723 rows. Left alone it grows without bound for the life of the
- * deployment, and every replay has to read all of it.
- *
- * The room *snapshot* is the canonical recovery state, so this log is purely
- * for scrubbing recent authoring history and can be trimmed freely.
- */
-/**
- * How much authoring history a replay scrubs through.
- *
- * **2000 was chosen when the log was the only record and was far too many.**
- * Applying Yjs updates gets slower as the document accumulates them — measured
- * in Chrome on a real room: the first two hundred took 489ms and the *next*
- * two hundred took 1,856ms, for the same count. The cost is superlinear, so
- * two thousand is not ten times the first two hundred, it is the tens of
- * seconds of frozen tab that Time Travel was reported for.
- *
- * A smaller window is only safe because of `replay_base`. Before that, trimming
- * discarded the object creations and a trimmed room replayed as an empty board,
- * so the log had to be long enough to reach back to the start of the session —
- * which no fixed number can guarantee anyway. With a baseline, the window is
- * just how far back you can *scrub*: everything before it is still on screen,
- * it simply is not steppable.
- *
- * 400 keeps the load comfortably inside a second and still covers a
- * substantial working session.
- */
-export const MAX_UPDATES_PER_ROOM = 400;
+export { MAX_UPDATES_PER_ROOM } from "./retention";
 const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
 
 /**

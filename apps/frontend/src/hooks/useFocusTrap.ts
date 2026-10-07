@@ -24,6 +24,13 @@ export function useFocusTrap(
   onEscape?: () => void
 ): React.RefObject<HTMLDivElement | null> {
   const containerRef = useRef<HTMLDivElement>(null);
+  // Held in a ref so the trap is set up once per opening. Callers pass inline
+  // closures, which change identity on every parent render; with the callback
+  // in the effect's dependencies, any re-render (a collaborator's edit is
+  // enough) tore the trap down and rebuilt it, pulling focus out of whatever
+  // field the user was typing in.
+  const onEscapeRef = useRef(onEscape);
+  onEscapeRef.current = onEscape;
 
   useEffect(() => {
     if (!active) return;
@@ -43,10 +50,11 @@ export function useFocusTrap(
     initial?.focus();
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && onEscape) {
+      const escape = onEscapeRef.current;
+      if (e.key === 'Escape' && escape) {
         e.preventDefault();
         e.stopPropagation();
-        onEscape();
+        escape();
         return;
       }
 
@@ -78,7 +86,7 @@ export function useFocusTrap(
       document.removeEventListener('keydown', onKeyDown, true);
       previouslyFocused?.focus?.();
     };
-  }, [active, onEscape]);
+  }, [active]);
 
   return containerRef;
 }

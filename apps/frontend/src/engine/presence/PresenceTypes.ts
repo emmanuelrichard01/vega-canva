@@ -75,4 +75,6 @@ export interface PresenceState {
    * on everyone else's screen for the rest of the session.
    */
   spotlight?: { at: number } | null;
+  /** Cursor chat: a short line shown beside the pointer. Never persisted. */
+  chat?: { text: string; open: boolean; at: number } | null;
 }

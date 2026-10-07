@@ -184,6 +184,19 @@
         }
       })();
     </script>
+    <!-- Increase contrast, decided before first paint. Mirrors
+         `resolveContrast` in src/engine/ui/contrast.ts; keep the two in step. -->
+    <script>
+      (function () {
+        var pref = 'system';
+        try { pref = localStorage.getItem('vega_contrast') || 'system'; } catch (e) {}
+        var more = pref === 'on';
+        if (pref !== 'on' && pref !== 'off' && window.matchMedia) {
+          more = matchMedia('(prefers-contrast: more)').matches || matchMedia('(forced-colors: active)').matches;
+        }
+        if (more) document.documentElement.setAttribute('data-contrast', 'more');
+      })();
+    </script>
     <style>
       /* Inline, and only these. The stylesheet this page needs is a module
          import, so it arrives with the bundle -- too late to be what the first
@@ -217,6 +230,38 @@
     <div id="root">
       <div id="boot" aria-hidden="true"><i></i></div>
     </div>
+    <!-- If the app never mounts, say so.
+
+         An error while the bundle is first evaluated happens before React --
+         and so before any error boundary -- exists, and a chunk that fails to
+         download raises no error the page can see at all. Either way the
+         boot mark would pulse forever. An uncaught error while the shell is
+         still showing replaces it at once; otherwise a timeout does. React
+         replacing `#root` is what disarms both. -->
+    <script>
+      (function () {
+        var shown = false;
+        function fail() {
+          var boot = document.getElementById('boot');
+          if (shown || !boot) return;
+          shown = true;
+          boot.removeAttribute('aria-hidden');
+          boot.setAttribute('role', 'alert');
+          boot.innerHTML =
+            '<div style="max-width:360px;padding:24px;font:14px/1.55 system-ui,sans-serif;color:inherit;text-align:center">' +
+            '<p style="margin:0 0 8px;font-weight:600;font-size:16px">Vega Studio could not start</p>' +
+            '<p style="margin:0 0 16px;opacity:.75">Your boards are safe. Reloading usually fixes this; if it does not, check that this site is allowed to run scripts and store data.</p>' +
+            '<button type="button" onclick="location.reload()" style="font:inherit;padding:8px 16px;border-radius:8px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer">Reload</button>' +
+            '</div>';
+        }
+        window.addEventListener('error', function () { fail(); });
+        setTimeout(fail, 20000);
+      })();
+    </script>
+    <style>
+      body.dark-theme #boot { color: #F4F4F5; }
+      #boot { color: #18181B; }
+    </style>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

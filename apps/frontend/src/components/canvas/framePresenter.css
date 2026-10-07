@@ -1,0 +1,143 @@
+/*
+ * Presenting frames. The letterbox is a fixed dark ground in both themes: a
+ * slide reads best on black, whatever the app chrome is wearing.
+ */
+
+.fp-root {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-popover, 9200);
+  pointer-events: none;
+}
+
+.fp-mask {
+  position: fixed;
+  background: #0b0c0e;
+  pointer-events: auto;
+}
+
+.fp-slide {
+  position: fixed;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  pointer-events: auto;
+  cursor: var(--cursor-arrow, default);
+}
+
+.fp-slide:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 4px;
+}
+
+.fp-hud {
+  position: fixed;
+  white-space: nowrap;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+  padding: 0 6px;
+  border-radius: 20px;
+  background: rgba(24, 25, 28, 0.92);
+  color: #f2f3f5;
+  font: 500 var(--text-sm, 12px) / 1 var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  pointer-events: auto;
+  opacity: 0.35;
+  transition: opacity var(--motion-hover, 120ms ease);
+}
+
+/* Quiet until reached for, so it never sits on top of the slide's content. */
+.fp-hud:hover,
+.fp-hud:focus-within {
+  opacity: 1;
+}
+
+.fp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 15px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.fp-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.fp-btn:disabled {
+  color: rgba(242, 243, 245, 0.35);
+  background: transparent;
+  cursor: default;
+}
+
+.fp-btn:focus-visible {
+  outline: 2px solid #c9ccd1;
+  outline-offset: 1px;
+}
+
+.fp-count {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 0 8px;
+  white-space: nowrap;
+  color: rgba(242, 243, 245, 0.7);
+}
+
+.fp-count strong {
+  color: #f2f3f5;
+  font-weight: 600;
+}
+
+.fp-title {
+  max-width: 240px;
+  margin-left: 8px;
+  overflow: hidden;
+  color: #f2f3f5;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.fp-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.fp-notice {
+  position: fixed;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  z-index: var(--z-popover, 9200);
+  padding: 10px 14px;
+  border-radius: var(--radius-lg, 8px);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text-primary);
+  font: 500 var(--text-base, 13px) / 1.4 var(--font-sans);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .fp-hud {
+    animation: fp-rise 200ms var(--ease-settle, ease-out);
+  }
+}
+
+@keyframes fp-rise {
+  from {
+    transform: translate(-50%, 8px);
+  }
+}

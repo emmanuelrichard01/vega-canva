@@ -1,15 +1,19 @@
 import React, { useSyncExternalStore } from 'react';
 import Konva from 'konva';
-import { Circle, Group, Image as KonvaImage, Line, Rect } from 'react-konva';
+import { Circle, Group, Image as KonvaImage, Line, Rect, Text } from 'react-konva';
 import useImage from 'use-image';
 import { updateNode } from '../../engine/document';
 import { useStore } from '../../hooks/useStore';
 import { cropMode } from '../../engine/interaction/cropMode';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import {
+  CROP_ASPECTS,
   CROP_HANDLES,
   canCrop,
+  cropToAspect,
   dragCropHandle,
+  dragCropHandleLocked,
+  resolveCropAspect,
   packCrop,
   panCropWindow,
   readCrop,
@@ -18,6 +22,12 @@ import {
   type CropState,
 } from '../../engine/model/imageCrop';
 import { claimCursor } from '../../engine/cursor/cursorOverride';
+import { useCameraZoom } from '../../engine/useCameraZoom';
+
+const PLATE = 'rgba(17, 19, 22, 0.82)';
+const CHIP_ON = '#FFFFFF';
+const INK_ON_CHIP = '#16181B';
+const INK = '#FFFFFF';
 
 /** Where each handle sits on the crop rectangle, as a fraction of its box. */
 const HANDLE_AT: Record<CropHandle, { fx: number; fy: number }> = {
@@ -67,6 +77,9 @@ export const CropOverlay: React.FC = () => {
   const node = useStore((s) => (snapshot ? s.objects[snapshot.nodeId] : undefined));
   const src = node?.type === 'image' ? node.src : '';
   const [image] = useImage(src, 'anonymous');
+  const aspectId = useSyncExternalStore(cropMode.subscribe, cropMode.getAspectId, cropMode.getAspectId);
+  const zoom = useCameraZoom() || 1;
+  const px = (n: number) => n / zoom;
 
   if (!snapshot || !node || node.type !== 'image') return null;
 
@@ -81,6 +94,8 @@ export const CropOverlay: React.FC = () => {
   if (!canCrop(state, natural)) return null;
 
   const source = sourceBoxInWorld(state, natural);
+  const preset = CROP_ASPECTS.find((a) => a.id === aspectId) ?? CROP_ASPECTS[0];
+  const lockedAspect = resolveCropAspect(preset.ratio, natural);
 
   /** Write a new state through the one write path, keeping the two in step. */
   const apply = (next: CropState) => {
@@ -104,7 +119,12 @@ export const CropOverlay: React.FC = () => {
     const at = HANDLE_AT[handle];
     const homeX = state.node.x + state.node.width * at.fx;
     const homeY = state.node.y + state.node.height * at.fy;
-    apply(dragCropHandle(state, natural, handle, { x: target.x() - homeX, y: target.y() - homeY }));
+    const delta = { x: target.x() - homeX, y: target.y() - homeY };
+    apply(
+      lockedAspect
+        ? dragCropHandleLocked(state, natural, handle, delta, lockedAspect)
+        : dragCropHandle(state, natural, handle, delta)
+    );
     target.position({ x: homeX, y: homeY });
   };
 
@@ -160,7 +180,7 @@ export const CropOverlay: React.FC = () => {
       />
 
       {thirds.map((line, i) => (
-        <Line key={i} points={line.points} stroke="rgba(255,255,255,0.5)" strokeWidth={1} listening={false} />
+        <Line key={i} points={line.points} stroke="rgba(255,255,255,0.5)" strokeWidth={px(1)} listening={false} />
       ))}
 
       {/* The boundary, in two passes: a dark hairline under a light one, so it
@@ -172,7 +192,7 @@ export const CropOverlay: React.FC = () => {
         width={state.node.width}
         height={state.node.height}
         stroke="rgba(0,0,0,0.55)"
-        strokeWidth={3}
+        strokeWidth={px(3)}
         listening={false}
       />
       <Rect
@@ -181,7 +201,7 @@ export const CropOverlay: React.FC = () => {
         width={state.node.width}
         height={state.node.height}
         stroke="#FFFFFF"
-        strokeWidth={1.5}
+        strokeWidth={px(1.5)}
         listening={false}
       />
 
@@ -192,19 +212,108 @@ export const CropOverlay: React.FC = () => {
             key={handle}
             x={state.node.x + state.node.width * at.fx}
             y={state.node.y + state.node.height * at.fy}
-            radius={6}
+            radius={px(6)}
             fill="#FFFFFF"
             stroke="rgba(0,0,0,0.55)"
-            strokeWidth={1}
+            strokeWidth={px(1)}
             /* The hit area is larger than the dot. A 6px target is unusable
                with a mouse and impossible with a finger. */
-            hitStrokeWidth={18}
+            hitStrokeWidth={px(18)}
             draggable
             onDragMove={handleDrag(handle)}
             onDragEnd={handleDrag(handle)}
             onMouseEnter={setCursor(CURSOR_FOR[handle])}
             onMouseLeave={setCursor('')}
           />
+        );
+      })}
+
+      <CropAspectBar
+        x={state.node.x + state.node.width / 2}
+        y={state.node.y - px(14)}
+        px={px}
+        activeId={preset.id}
+        onPick={(id) => {
+          cropMode.setAspectId(id);
+          const chosen = CROP_ASPECTS.find((a) => a.id === id);
+          const ratio = chosen ? resolveCropAspect(chosen.ratio, natural) : null;
+          if (ratio) apply(cropToAspect(state, natural, ratio));
+        }}
+      />
+    </Group>
+  );
+};
+
+/**
+ * Aspect presets, as a row of chips centred above the crop window and drawn
+ * at a constant screen size. Picking one reframes at once and locks the
+ * handles to that shape; Free releases them.
+ */
+const CropAspectBar: React.FC<{
+  x: number;
+  y: number;
+  px: (n: number) => number;
+  activeId: string;
+  onPick: (id: string) => void;
+}> = ({ x, y, px, activeId, onPick }) => {
+  const fontSize = px(12);
+  const chipH = px(24);
+  const gap = px(2);
+  const pad = px(3);
+  const widths = CROP_ASPECTS.map((a) => a.label.length * fontSize * 0.6 + px(16));
+  const total = widths.reduce((sum, w) => sum + w, 0) + gap * (widths.length - 1) + pad * 2;
+  let cursor = pad;
+  return (
+    <Group x={x - total / 2} y={y - chipH - pad * 2}>
+      {/* The hairline is what separates the plate from a dark board; on a light
+          one it disappears into the plate, which is the intent. */}
+      <Rect
+        width={total}
+        height={chipH + pad * 2}
+        cornerRadius={(chipH + pad * 2) / 2}
+        fill={PLATE}
+        stroke="rgba(255,255,255,0.16)"
+        strokeWidth={px(1)}
+      />
+      {CROP_ASPECTS.map((a, i) => {
+        const at = cursor;
+        cursor += widths[i] + gap;
+        const on = a.id === activeId;
+        return (
+          <Group
+            key={a.id}
+            x={at}
+            y={pad}
+            onClick={(e) => {
+              e.cancelBubble = true;
+              onPick(a.id);
+            }}
+            onTap={(e) => {
+              e.cancelBubble = true;
+              onPick(a.id);
+            }}
+            onMouseEnter={() => claimCursor('crop-aspect', 'pointer')}
+            onMouseLeave={() => claimCursor('crop-aspect', null)}
+          >
+            <Rect
+              width={widths[i]}
+              height={chipH}
+              cornerRadius={chipH / 2}
+              fill={on ? CHIP_ON : 'rgba(255,255,255,0.001)'}
+            />
+            <Text
+              width={widths[i]}
+              height={chipH}
+              align="center"
+              verticalAlign="middle"
+              text={a.label}
+              fontSize={fontSize}
+              fontFamily="Inter, system-ui, sans-serif"
+              fontStyle={on ? '600' : '500'}
+              fill={on ? INK_ON_CHIP : INK}
+              listening={false}
+            />
+          </Group>
         );
       })}
     </Group>

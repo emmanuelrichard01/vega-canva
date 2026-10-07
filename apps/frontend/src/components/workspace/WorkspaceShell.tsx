@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { Suspense, lazy, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useRoomState } from '../../hooks/useSync';
 import { CollaborationLayer } from './CollaborationLayer';
 import {
@@ -6,11 +6,10 @@ import {
   Check,
   ChevronDown,
   CloudOff,
-  Command,
   Download,
   EyeOff,
   Grid3x3,
-  HelpCircle,
+  Headphones,
   History,
   Keyboard,
   LayoutPanelTop,
@@ -20,11 +19,11 @@ import {
   Moon,
   MousePointerClick,
   PanelLeft,
+  PanelRight,
   PencilLine,
   Redo2,
   Ruler,
   Search,
-  Settings2,
   Share2,
   Sparkles,
   Undo2,
@@ -38,18 +37,67 @@ import { Logo } from '../ui/Logo';
 import { RoleBadge } from './RoleBadge';
 import { Menu } from '../menu/Menu';
 import { tidy, type MenuEntry } from '../menu/menuModel';
-import { SHORTCUTS, menuShortcut, withShortcut } from '../menu/shortcuts';
+import { SHORTCUTS, withShortcut } from '../menu/shortcuts';
 import { useUndoAvailability } from '../../hooks/useUndoAvailability';
 import { notify } from '../../engine/ui/notices';
 import { tourState } from '../../engine/learn/tourState';
+import { ZoomControl } from './ZoomControl';
+import { musicSlot } from './musicSlot';
+import { contrastMenuItem } from '../ui/contrastMenu';
+import { useContrast } from '../../engine/ui/contrast';
+import './shell.css';
 
 /**
- * One glyph size for the whole bar. Mixed sizes in one row of icons make the
- * row appear to bow; 16 is the chrome's size and lands Lucide on whole pixels.
+ * The board's two headers, in the Figma UI3 arrangement.
+ *
+ * There is no bar across the top. The left panel opens with *which board is
+ * this and is it safe* — the mark, the name with its menu, the save state —
+ * and the right panel opens with *who is here and how does work leave* —
+ * people, comments, undo and history, zoom, and Share, the one accent fill on
+ * the screen. When a panel is collapsed, or the window is narrow, its header
+ * shrinks to a pill in that top corner and the board runs edge to edge
+ * underneath.
+ *
+ * Everything else is one level down on the board menu, hung from the name:
+ * Export (also Mod+Shift+E, and a tab in Share), View (Alt+Shift+V), Music,
+ * Help and shortcuts (also ?), the tour, and the way home.
  */
+
+/** One glyph size for both headers; 16 lands Lucide on whole pixels. */
 const ICON = 16;
 
-interface Props {
+/** The music player, fetched the first time someone asks for it. */
+const MusicHeaderSlot = lazy(() => import('./MusicHeaderSlot'));
+
+/** What a board created a moment ago is called until someone names it. */
+export const UNTITLED_BOARD = 'Untitled board';
+
+/** Whether the header is a panel's top or a pill floating in its corner. */
+export type HeaderVariant = 'panel' | 'pill';
+
+/**
+ * Whether the headers are standing back while something is being dragged, from
+ * the same veil the floating rail reads. Its release is settled here because
+ * these headers are always mounted while a board is.
+ */
+function useReceded(): boolean {
+  const receded = useSyncExternalStore(railVeil.subscribe, railVeil.getSnapshot, railVeil.getSnapshot);
+  useEffect(() => {
+    const settle = () => { railVeil.settle(textEditing.getSnapshot()); };
+    window.addEventListener('pointerup', settle, true);
+    window.addEventListener('pointercancel', settle, true);
+    return () => {
+      window.removeEventListener('pointerup', settle, true);
+      window.removeEventListener('pointercancel', settle, true);
+    };
+  }, []);
+  return receded;
+}
+
+/* ===================================================================== left */
+
+interface LeftProps {
+  variant: HeaderVariant;
   localTitle: string;
   setLocalTitle: (title: string) => void;
   onTitleSave: (title: string) => void;
@@ -60,52 +108,18 @@ interface Props {
   onHelpClick?: () => void;
   onHideUi: () => void;
   onToggleTimeline: () => void;
-  onToggleComments: () => void;
-  /** Unresolved threads with something you have not read. */
-  commentUnread: number;
-  /** Shown only once the side panels become overlays (below the compact breakpoint). */
-  onTogglePanels?: () => void;
   /** Opens search and commands, the palette behind Ctrl+K. */
   onOpenCommands?: () => void;
-  /** Whether the comments inbox is open, so its button can say so. */
-  commentsOpen?: boolean;
-  /** Whether history replay is running, so its button can say so. */
+  /** Whether history replay is running, so its menu row can say so. */
   timelineOpen?: boolean;
+  /** Open the left panel from its pill. */
+  onExpand?: () => void;
 }
 
 type OpenMenu = { which: 'board' | 'view'; rect: DOMRect; keyboard: boolean } | null;
 
-/**
- * The board's header.
- *
- * ## What it is for
- *
- * Three questions, left to right: *which board is this and is it safe* (the
- * mark, the name, the save state), *what can I do across the whole board*
- * (history, search, view), and *who is here and how does work leave* (people,
- * comments, export, share). The middle stays empty on purpose — it is the most
- * valuable strip on the screen and it belongs to the board.
- *
- * ## What changed
- *
- * - **The board has a menu.** FigJam and Miro both hang one off the file name:
- *   rename, copy the link, share, export, view settings, help, and the way
- *   home, in one predictable place. Here none of that existed except as
- *   scattered buttons, and "copy a link to this board" existed nowhere.
- * - **View settings are a real menu**, built on the same engine as the
- *   right-click menu — arrow keys, type-ahead, checkmarks that say what is on —
- *   instead of a hand-rolled popover of switches with its own dismissal rules.
- *   Toggles keep it open, because a visit there is often for two changes.
- * - **Undo and Redo know when there is nothing to do.** They were always lit.
- * - **Search and commands has a door.** Ctrl+K opened a palette that nothing on
- *   screen mentioned — folklore, in the word this file already used once for
- *   Focus mode. A compact search field with its shortcut beside it is how
- *   Linear, FigJam and Miro all make theirs findable.
- * - **Buttons for panels say whether the panel is open.** Comments and History
- *   toggle something; a toggle that does not look pressed while its panel is
- *   up gives no hint that pressing it again closes it.
- */
-export const WorkspaceShell: React.FC<Props> = ({
+const BoardHeaderLeftInner: React.FC<LeftProps> = ({
+  variant,
   localTitle,
   setLocalTitle,
   onTitleSave,
@@ -116,12 +130,9 @@ export const WorkspaceShell: React.FC<Props> = ({
   onHelpClick,
   onHideUi,
   onToggleTimeline,
-  onToggleComments,
-  commentUnread,
-  onTogglePanels,
   onOpenCommands,
-  commentsOpen = false,
   timelineOpen = false,
+  onExpand,
 }) => {
   const { status, synced } = useRoomState();
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -137,15 +148,13 @@ export const WorkspaceShell: React.FC<Props> = ({
   const setShowRulers = useStore((state) => state.setShowRulers);
   const showGrid = useStore((state) => state.showGrid);
   const setShowGrid = useStore((state) => state.setShowGrid);
-  const { canUndo, canRedo } = useUndoAvailability();
+  const contrast = useContrast();
+  const receded = useReceded();
   const [menu, setMenu] = useState<OpenMenu>(null);
 
   /**
-   * Saved, saving, offline — and only the last two always speak.
-   *
-   * The resting state is a tick with the word folded away; the word appears
-   * for a few seconds each time a save lands, which is the moment it is worth
-   * reading and the moment somebody learns what the tick means.
+   * Saved, saving, offline — and only the last two always speak. The resting
+   * state is a tick; the word appears for a few seconds each time a save lands.
    */
   const syncStatus =
     status !== 'connected'
@@ -172,32 +181,49 @@ export const WorkspaceShell: React.FC<Props> = ({
   }, [justSaved]);
   const showLabel = syncStatus.tone !== 'idle' || justSaved;
 
-  /**
-   * Whether the bar is standing back while something is being manipulated,
-   * from the same veil the floating rail reads — one definition of "you are
-   * dragging something" in the app, with the same release floor.
-   */
-  const receded = useSyncExternalStore(railVeil.subscribe, railVeil.getSnapshot, railVeil.getSnapshot);
-  useEffect(() => {
-    const settle = () => { railVeil.settle(textEditing.getSnapshot()); };
-    window.addEventListener('pointerup', settle, true);
-    window.addEventListener('pointercancel', settle, true);
-    return () => {
-      window.removeEventListener('pointerup', settle, true);
-      window.removeEventListener('pointercancel', settle, true);
-    };
-  }, []);
-
   const startRename = () => {
     titleBeforeEditRef.current = localTitle;
     setIsEditingTitle(true);
   };
 
   /**
-   * The menu closes itself on any outside press, in the capture phase — which
+   * A board made a moment ago opens with its name ready to type over.
+   *
+   * The dashboard adds `?new=1` when it creates a board. This reads it, takes
+   * it off the address (keeping the rest of it) so a reload or a copied link
+   * does not reopen the rename, and opens the name with "Untitled board"
+   * selected. Escape puts back exactly that.
+   */
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('new') !== '1') return;
+    url.searchParams.delete('new');
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+    const current = localTitle.trim();
+    const start = !current || /^untitled/i.test(current) ? UNTITLED_BOARD : localTitle;
+    setLocalTitle(start);
+    titleBeforeEditRef.current = start;
+    setIsEditingTitle(true);
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** The board's name and chevron, which both of its menus hang from. */
+  const docRef = useRef<HTMLDivElement>(null);
+  /** Alt+Shift+V (see `useRoomShortcuts`) opens View under the board's name. */
+  useEffect(() => {
+    const open = () => {
+      const from = docRef.current;
+      if (from) setMenu({ which: 'view', rect: from.getBoundingClientRect(), keyboard: true });
+    };
+    window.addEventListener('vega:open-view-menu', open);
+    return () => window.removeEventListener('vega:open-view-menu', open);
+  }, []);
+
+  /**
+   * The menu closes itself on any outside press, in the capture phase, which
    * includes a press on the button that opened it. Remembering which menu that
-   * press just closed is what lets the button close its own menu instead of
-   * reopening it on the click that follows.
+   * press closed lets the button close its own menu instead of reopening it.
    */
   const justClosed = useRef<{ which: 'board' | 'view'; at: number } | null>(null);
 
@@ -207,9 +233,9 @@ export const WorkspaceShell: React.FC<Props> = ({
       justClosed.current = null;
       return;
     }
-    // The board menu hangs from the whole name, start-aligned, so it reads as
-    // belonging to the board rather than to a 20px chevron.
-    const from = which === 'board' ? e.currentTarget.parentElement ?? e.currentTarget : e.currentTarget;
+    // Hung from the whole name, so it reads as the board's menu rather than a
+    // 20px chevron's.
+    const from = docRef.current ?? e.currentTarget;
     setMenu({ which, rect: from.getBoundingClientRect(), keyboard: e.detail === 0 });
   };
 
@@ -227,6 +253,9 @@ export const WorkspaceShell: React.FC<Props> = ({
       { kind: 'separator', id: 's2' },
       { kind: 'heading', id: 'h-look', label: 'How you are looking at it' },
       { kind: 'item', id: 'dark', label: 'Dark theme', icon: <Moon size={15} />, checked: isDarkTheme, keepOpen: true, onSelect: () => setIsDarkTheme(!isDarkTheme) },
+      // Its advertised Mod+Alt+C is Copy style while something is selected, so
+      // the row shows no key until the contrast toggle has one of its own.
+      { ...contrastMenuItem(contrast.enhanced), shortcut: undefined },
       { kind: 'item', id: 'focus', label: 'Focus mode', icon: <EyeOff size={15} />, shortcut: '\\', detail: 'Hide everything but the board', onSelect: onHideUi },
     ]);
 
@@ -250,104 +279,239 @@ export const WorkspaceShell: React.FC<Props> = ({
       { kind: 'separator', id: 's1' },
       { kind: 'submenu', id: 'view', label: 'View', icon: <LayoutPanelTop size={15} />, entries: viewEntries() },
       { kind: 'item', id: 'history', label: 'Replay history', icon: <History size={15} />, checked: timelineOpen ? true : undefined, onSelect: onToggleTimeline },
+      { kind: 'item', id: 'music', label: 'Music…', icon: <Headphones size={15} />, detail: 'Stations or Spotify while you work', onSelect: () => musicSlot.request() },
       { kind: 'separator', id: 's2' },
       onOpenCommands && { kind: 'item', id: 'commands', label: 'Search and commands…', icon: <Search size={15} />, shortcut: 'Mod+K', onSelect: onOpenCommands },
-      { kind: 'item', id: 'shortcuts', label: 'Keyboard shortcuts', icon: <Keyboard size={15} />, shortcut: '?', onSelect: () => onHelpClick?.() },
+      { kind: 'item', id: 'shortcuts', label: 'Help and shortcuts', icon: <Keyboard size={15} />, shortcut: '?', onSelect: () => onHelpClick?.() },
       { kind: 'item', id: 'tour', label: 'Take the tour', icon: <Sparkles size={15} />, onSelect: () => tourState.start() },
       { kind: 'separator', id: 's3' },
       { kind: 'item', id: 'home', label: 'Back to your boards', icon: <ArrowLeft size={15} />, onSelect: () => { window.location.href = '/'; } },
     ]);
 
   return (
-    <header className="workspace-header" data-receded={receded || undefined} style={{ opacity: receded ? 0.6 : 1 }}>
-      {/* ------------------------------------------------- the document */}
-      <div className="hdr-zone hdr-zone--start">
-        {onTogglePanels && (
-          <button className="btn-icon panel-toggle" onClick={onTogglePanels} data-tooltip="Panels" data-tooltip-pos="bottom" aria-label="Toggle panels">
-            <PanelLeft size={ICON} />
+    <div className={`board-head board-head--left board-head--${variant}`} data-receded={receded || undefined}>
+      {/* The mark is the door home: identity at rest, "back" under the
+          pointer. An anchor, so middle-click and Cmd-click work. */}
+      <a href="/" className="hdr-home" data-tooltip="Your boards" data-tooltip-pos="bottom" aria-label="Your boards">
+        <span className="hdr-home__face hdr-home__face--mark" aria-hidden>
+          <Logo size={22} />
+        </span>
+        <span className="hdr-home__face hdr-home__face--back" aria-hidden>
+          <ArrowLeft size={17} strokeWidth={2.25} />
+        </span>
+      </a>
+
+      {/* The name and its menu, one control with two targets: the words
+          rename, the chevron opens the board's menu. */}
+      <div ref={docRef} className={`hdr-doc${menu ? ' is-open' : ''}`}>
+        {isEditingTitle ? (
+          <input
+            autoFocus
+            value={localTitle}
+            maxLength={60}
+            aria-label="Board name"
+            onFocus={(e) => e.currentTarget.select()}
+            onChange={(e) => setLocalTitle(e.target.value)}
+            onBlur={() => { setIsEditingTitle(false); onTitleSave(localTitle); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                setIsEditingTitle(false);
+                onTitleSave(localTitle);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                setLocalTitle(titleBeforeEditRef.current);
+                setIsEditingTitle(false);
+              }
+            }}
+            className="hdr-title hdr-title--editing"
+          />
+        ) : (
+          <button type="button" className="hdr-title hdr-title--button" onClick={startRename} data-tooltip="Rename this board" data-tooltip-pos="bottom">
+            {localTitle}
           </button>
         )}
-
-        {/* The mark is the door home: identity at rest, "back" under the
-            pointer. An anchor, so middle-click and Cmd-click work. */}
-        <a href="/" className="hdr-home" data-tooltip="Your boards" data-tooltip-pos="bottom" aria-label="Your boards">
-          <span className="hdr-home__face hdr-home__face--mark" aria-hidden>
-            <Logo size={24} />
-          </span>
-          <span className="hdr-home__face hdr-home__face--back" aria-hidden>
-            <ArrowLeft size={18} strokeWidth={2.25} />
-          </span>
-        </a>
-
-        {/* The name and its menu, one control with two targets: the words
-            rename, the chevron opens the board's menu. */}
-        <div className={`hdr-doc${menu?.which === 'board' ? ' is-open' : ''}`}>
-          {isEditingTitle ? (
-            <input
-              autoFocus
-              value={localTitle}
-              maxLength={60}
-              aria-label="Board name"
-              onFocus={(e) => e.currentTarget.select()}
-              onChange={(e) => setLocalTitle(e.target.value)}
-              onBlur={() => { setIsEditingTitle(false); onTitleSave(localTitle); }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  setIsEditingTitle(false);
-                  onTitleSave(localTitle);
-                } else if (e.key === 'Escape') {
-                  e.preventDefault();
-                  setLocalTitle(titleBeforeEditRef.current);
-                  setIsEditingTitle(false);
-                }
-              }}
-              className="hdr-title hdr-title--editing"
-            />
-          ) : (
-            <button type="button" className="hdr-title hdr-title--button" onClick={startRename} data-tooltip="Rename this board" data-tooltip-pos="bottom">
-              {localTitle}
-            </button>
-          )}
-          <button
-            type="button"
-            className="hdr-doc__menu"
-            aria-label="Board menu"
-            aria-haspopup="menu"
-            aria-expanded={menu?.which === 'board'}
-            data-tooltip={menu ? undefined : 'Board menu'}
-            data-tooltip-pos="bottom"
-            onClick={openMenu('board')}
-          >
-            <ChevronDown size={14} strokeWidth={2.25} aria-hidden />
-          </button>
-        </div>
-
-        <span
-          className={`sync-pip sync-pip--${syncStatus.tone}`}
-          data-said={showLabel || undefined}
-          data-tooltip={syncStatus.text}
+        <button
+          type="button"
+          className="hdr-doc__menu"
+          aria-label="Board menu: share, export, view, music and help"
+          aria-haspopup="menu"
+          aria-expanded={menu?.which === 'board'}
+          data-tour="help"
+          data-tooltip={menu ? undefined : 'Board menu'}
           data-tooltip-pos="bottom"
-          role="status"
-          aria-live="polite"
-          aria-label={syncStatus.text}
+          onClick={openMenu('board')}
         >
-          <span className="sync-pip__mark" aria-hidden>
-            {syncStatus.tone === 'idle' ? (
-              <Check size={13} strokeWidth={2.75} />
-            ) : syncStatus.tone === 'offline' ? (
-              <CloudOff size={13} />
-            ) : (
-              <span className="sync-pip__dot" />
-            )}
-          </span>
-          {showLabel && <span className="sync-pip__label">{syncStatus.label}</span>}
-        </span>
+          <ChevronDown size={14} strokeWidth={2.25} aria-hidden />
+        </button>
       </div>
 
-      {/* --------------------------------------- the room, and what leaves it */}
-      <div className="hdr-zone hdr-zone--end">
-        <RoleBadge />
+      <span
+        className={`sync-pip sync-pip--${syncStatus.tone}`}
+        data-said={(showLabel && variant === 'panel') || undefined}
+        data-tooltip={syncStatus.text}
+        data-tooltip-pos="bottom"
+        role="status"
+        aria-live="polite"
+        aria-label={syncStatus.text}
+      >
+        <span className="sync-pip__mark" aria-hidden>
+          {syncStatus.tone === 'idle' ? (
+            <Check size={13} strokeWidth={2.75} />
+          ) : syncStatus.tone === 'offline' ? (
+            <CloudOff size={13} />
+          ) : (
+            <span className="sync-pip__dot" />
+          )}
+        </span>
+        {showLabel && variant === 'panel' && <span className="sync-pip__label">{syncStatus.label}</span>}
+      </span>
 
+      <span className="board-head__fill" />
+
+      {onOpenCommands && (
+        <button
+          type="button"
+          className="btn-icon"
+          onClick={onOpenCommands}
+          aria-label="Search and commands"
+          aria-keyshortcuts="Control+K Meta+K"
+          data-tooltip={withShortcut('Search and commands', 'Mod+K')}
+          data-tooltip-pos="bottom"
+        >
+          <Search size={ICON} />
+        </button>
+      )}
+
+      {variant === 'pill' && onExpand && (
+        <button
+          type="button"
+          className="btn-icon"
+          onClick={onExpand}
+          aria-label="Show layers"
+          data-tooltip={withShortcut('Show panels', 'Mod+\\')}
+          data-tooltip-pos="bottom"
+        >
+          <PanelLeft size={ICON} />
+        </button>
+      )}
+
+      {menu && (
+        <Menu
+          key={menu.which}
+          label={menu.which === 'board' ? 'Board menu' : 'View settings'}
+          entries={menu.which === 'board' ? boardEntries() : viewEntries()}
+          anchor={{ kind: 'rect', rect: menu.rect, prefer: 'below', align: 'start' }}
+          focusFirst={menu.keyboard}
+          onClose={() => {
+            justClosed.current = { which: menu.which, at: performance.now() };
+            setMenu(null);
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+export const BoardHeaderLeft = React.memo(BoardHeaderLeftInner);
+
+/* ==================================================================== right */
+
+interface RightProps {
+  variant: HeaderVariant;
+  onShareClick: () => void;
+  onToggleTimeline: () => void;
+  onToggleComments: () => void;
+  /** Unresolved threads with something you have not read. */
+  commentUnread: number;
+  /** Whether the comments inbox is open, so its button can say so. */
+  commentsOpen?: boolean;
+  /** Whether history replay is running, so its button can say so. */
+  timelineOpen?: boolean;
+  /** Open the right panel from its pill. Absent when there is no panel to open. */
+  onExpand?: () => void;
+}
+
+const BoardHeaderRightInner: React.FC<RightProps> = ({
+  variant,
+  onShareClick,
+  onToggleTimeline,
+  onToggleComments,
+  commentUnread,
+  commentsOpen = false,
+  timelineOpen = false,
+  onExpand,
+}) => {
+  const { canUndo, canRedo } = useUndoAvailability();
+  const receded = useReceded();
+  /** Once the player has been opened, its button keeps a seat here for the session. See `musicSlot`. */
+  const musicRequested = useSyncExternalStore(musicSlot.subscribe, musicSlot.getSnapshot, musicSlot.getSnapshot);
+
+  const share = (
+    <button className="hdr-btn hdr-btn--primary" onClick={onShareClick} aria-label="Share this board" data-tour="share">
+      <Share2 size={ICON} aria-hidden /> <span className="hdr-share-text">Share</span>
+    </button>
+  );
+
+  const comments = (
+    <button
+      className={`btn-icon hdr-comments${commentsOpen ? ' is-on' : ''}`}
+      onClick={onToggleComments}
+      aria-pressed={commentsOpen}
+      data-tooltip={commentUnread > 0 ? `${commentUnread} unread ${commentUnread === 1 ? 'comment' : 'comments'}` : 'Comments'}
+      data-tooltip-pos="bottom"
+      aria-label={commentUnread > 0 ? `Comments, ${commentUnread} unread` : 'Comments'}
+    >
+      <MessageSquare size={ICON} />
+      {commentUnread > 0 && (
+        <span className="hdr-badge" aria-hidden="true">
+          {commentUnread > 9 ? '9+' : commentUnread}
+        </span>
+      )}
+    </button>
+  );
+
+  const music = musicRequested && (
+    <Suspense fallback={null}>
+      <MusicHeaderSlot />
+    </Suspense>
+  );
+
+  if (variant === 'pill') {
+    return (
+      <div className="board-head board-head--right board-head--pill" data-receded={receded || undefined}>
+        <RoleBadge />
+        <CollaborationLayer />
+        {music}
+        {comments}
+        <ZoomControl compact />
+        {share}
+        {onExpand && (
+          <button
+            type="button"
+            className="btn-icon"
+            onClick={onExpand}
+            aria-label="Show properties"
+            data-tooltip={withShortcut('Show panels', 'Mod+\\')}
+            data-tooltip-pos="bottom"
+          >
+            <PanelRight size={ICON} />
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="board-head board-head--right board-head--panel" data-receded={receded || undefined}>
+      <div className="board-head__row">
+        <RoleBadge />
+        <CollaborationLayer />
+        <span className="board-head__fill" />
+        {music}
+        {comments}
+        {share}
+      </div>
+      <div className="board-head__row board-head__row--tools">
         <div className="hdr-cluster" role="group" aria-label="History">
           <button className="btn-icon" onClick={() => editor.undo()} disabled={!canUndo} data-tooltip={withShortcut('Undo', 'Mod+Z')} data-tooltip-pos="bottom" aria-label="Undo">
             <Undo2 size={ICON} />
@@ -366,83 +530,11 @@ export const WorkspaceShell: React.FC<Props> = ({
             <History size={ICON} />
           </button>
         </div>
-
-        {onOpenCommands && (
-          <button type="button" className="hdr-search" onClick={onOpenCommands} aria-label="Search and commands" aria-keyshortcuts="Control+K Meta+K">
-            <Search size={14} aria-hidden />
-            <span className="hdr-search__text">Search</span>
-            <kbd className="hdr-search__key">
-              {menuShortcut('Mod+K').includes('⌘') ? <Command size={11} aria-hidden /> : 'Ctrl'}
-              <span>K</span>
-            </kbd>
-          </button>
-        )}
-
-        <button
-          className={`btn-icon${menu?.which === 'view' ? ' is-on' : ''}`}
-          onClick={openMenu('view')}
-          data-tooltip={menu ? undefined : 'View and board settings'}
-          data-tooltip-pos="bottom"
-          aria-label="View settings"
-          aria-haspopup="menu"
-          aria-expanded={menu?.which === 'view'}
-        >
-          <Settings2 size={ICON} />
-        </button>
-
-        <CollaborationLayer />
-
-        <button
-          className={`btn-icon hdr-comments${commentsOpen ? ' is-on' : ''}`}
-          onClick={onToggleComments}
-          aria-pressed={commentsOpen}
-          data-tooltip={commentUnread > 0 ? `${commentUnread} unread ${commentUnread === 1 ? 'comment' : 'comments'}` : 'Comments'}
-          data-tooltip-pos="bottom"
-          aria-label={commentUnread > 0 ? `Comments, ${commentUnread} unread` : 'Comments'}
-        >
-          <MessageSquare size={ICON} />
-          {commentUnread > 0 && (
-            <span className="hdr-badge" aria-hidden="true">
-              {commentUnread > 9 ? '9+' : commentUnread}
-            </span>
-          )}
-        </button>
-
-        <button
-          className="btn-icon"
-          onClick={() => onHelpClick?.()}
-          aria-label="Keyboard shortcuts and help"
-          data-tour="help"
-          data-tooltip="Shortcuts and help (?)"
-          data-tooltip-pos="bottom"
-        >
-          <HelpCircle size={ICON} />
-        </button>
-
-        <span className="hdr-divider" role="separator" aria-orientation="vertical" />
-
-        <button className="hdr-btn hdr-btn--quiet" onClick={() => onExportClick?.()} aria-label="Export">
-          <Download size={ICON} aria-hidden /> <span className="hdr-share-text">Export</span>
-        </button>
-
-        <button className="hdr-btn hdr-btn--strong" onClick={onShareClick} aria-label="Share workspace" data-tour="share">
-          <Share2 size={ICON} aria-hidden /> <span className="hdr-share-text">Share</span>
-        </button>
+        <span className="board-head__fill" />
+        <ZoomControl compact />
       </div>
-
-      {menu && (
-        <Menu
-          key={menu.which}
-          label={menu.which === 'board' ? 'Board menu' : 'View settings'}
-          entries={menu.which === 'board' ? boardEntries() : viewEntries()}
-          anchor={{ kind: 'rect', rect: menu.rect, prefer: 'below', align: menu.which === 'board' ? 'start' : 'end' }}
-          focusFirst={menu.keyboard}
-          onClose={() => {
-            justClosed.current = { which: menu.which, at: performance.now() };
-            setMenu(null);
-          }}
-        />
-      )}
-    </header>
+    </div>
   );
 };
+
+export const BoardHeaderRight = React.memo(BoardHeaderRightInner);

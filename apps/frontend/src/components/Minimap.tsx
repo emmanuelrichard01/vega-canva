@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Radar as RadarIcon, Minus, Plus, Maximize2, ChevronDown, ScanEye } from 'lucide-react';
+import { Radar as RadarIcon, Maximize2, ChevronDown, ScanEye } from 'lucide-react';
 import { RadarEngine } from '../engine/presence/RadarEngine';
 import { useCollaborators } from '../engine/presence/useCollaborators';
 import { ACTIVITY_LABEL } from '../engine/presence/collaborators';
@@ -7,7 +7,8 @@ import { followMode } from '../engine/presence/followMode';
 import { viewportCenter } from '../engine/presence/PresenceTypes';
 import { useStore } from '../hooks/useStore';
 import { cameraSystem } from '../engine/CameraSystem';
-import { engineEvents } from '../engine/EventBus';
+import { storageGet, storageSet } from '../utils/safeStorage';
+import { BoardFoot } from './workspace/BoardFoot';
 
 /**
  * The Radar — the whole board at a glance, with everyone on it.
@@ -20,10 +21,8 @@ import { engineEvents } from '../engine/EventBus';
  * - **Collapsed, it still shows who is here.** Putting the radar away used to
  *   cost you the only ambient answer to "is anyone else in this room?", which
  *   made collapsing it feel like leaving.
- * - **The zoom control lives here.** Until now the app had no visible zoom
- *   indicator anywhere: the only ways to change zoom were the wheel, a pinch,
- *   and a command-palette entry, and the only way to know what zoom you were
- *   at was to guess. This is the surface that is already about "where am I".
+ * - **The zoom control lives here**, on the surface that is already about
+ *   "where am I", together with help. See `BoardFoot`.
  */
 
 const COLLAPSED_KEY = 'vega_radar_collapsed';
@@ -40,15 +39,17 @@ const COLLAPSED_KEY = 'vega_radar_collapsed';
  */
 interface MinimapProps {
   onCollapse?: () => void;
+  /** Open help and shortcuts, from the foot's `?`. */
+  onHelp?: () => void;
 }
 
-export const Minimap: React.FC<MinimapProps> = ({ onCollapse }) => {
+export const Minimap: React.FC<MinimapProps> = ({ onCollapse, onHelp }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<RadarEngine | null>(null);
 
   const [collapsed, setCollapsed] = useState(() => {
     try {
-      return localStorage.getItem(COLLAPSED_KEY) === '1';
+      return storageGet(COLLAPSED_KEY) === '1';
     } catch {
       return false;
     }
@@ -59,20 +60,6 @@ export const Minimap: React.FC<MinimapProps> = ({ onCollapse }) => {
   // Counted, not the map itself: subscribing to `objects` would re-render the
   // radar shell on every drag frame, and the canvas paints from its own loop.
   const objectCount = useStore((s) => Object.keys(s.objects).length);
-
-  // The zoom readout is the one thing here that has to re-render, and it does
-  // so at camera rate — so it is rounded to a whole percent first, which turns
-  // a stream of continuous pinch deltas into a handful of state updates.
-  const [zoomPercent, setZoomPercent] = useState(() => Math.round(cameraSystem.zoom * 100));
-  useEffect(() => {
-    const sync = () => setZoomPercent((prev) => {
-      const next = Math.round(cameraSystem.zoom * 100);
-      return next === prev ? prev : next;
-    });
-    sync();
-    engineEvents.on('CameraChanged', sync);
-    return () => engineEvents.off('CameraChanged', sync);
-  }, []);
 
   const navigate = useCallback((x: number, y: number, zoom?: number) => {
     window.dispatchEvent(
@@ -105,7 +92,7 @@ export const Minimap: React.FC<MinimapProps> = ({ onCollapse }) => {
 
   useEffect(() => {
     try {
-      localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0');
+      storageSet(COLLAPSED_KEY, collapsed ? '1' : '0');
     } catch {
       /* private mode; the panel just forgets between sessions */
     }
@@ -113,11 +100,6 @@ export const Minimap: React.FC<MinimapProps> = ({ onCollapse }) => {
 
   const zoomBy = (factor: number) =>
     cameraSystem.zoomBy(factor, cameraSystem.width / 2, cameraSystem.height / 2);
-
-  const resetZoom = () => {
-    const centre = cameraSystem.screenToWorld(cameraSystem.width / 2, cameraSystem.height / 2);
-    navigate(centre.x, centre.y, 1);
-  };
 
   /**
    * Pan and zoom from the keyboard.
@@ -389,33 +371,7 @@ export const Minimap: React.FC<MinimapProps> = ({ onCollapse }) => {
         )}
 
         <div className="radar-foot">
-          <button
-            type="button"
-            className="btn-icon"
-            style={{ padding: 5 }}
-            onClick={() => zoomBy(1 / 1.25)}
-            aria-label="Zoom out"
-          >
-            <Minus size={13} />
-          </button>
-          <button
-            type="button"
-            className="radar-zoom"
-            onClick={resetZoom}
-            aria-label={`Zoom ${zoomPercent} percent. Reset to 100 percent.`}
-            data-tooltip="Reset zoom"
-          >
-            {zoomPercent}%
-          </button>
-          <button
-            type="button"
-            className="btn-icon"
-            style={{ padding: 5 }}
-            onClick={() => zoomBy(1.25)}
-            aria-label="Zoom in"
-          >
-            <Plus size={13} />
-          </button>
+          <BoardFoot bare onHelp={() => onHelp?.()} />
         </div>
       </div>
     </div>

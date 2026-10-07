@@ -27,6 +27,12 @@ vi.mock('../../hooks/useStore', () => ({
   useStore: { getState: () => ({ objects }) },
 }));
 
+// The index is the candidate source; here it simply offers every object, and
+// the adapter's own viewport check is what is under test.
+vi.mock('../SpatialIndex', () => ({
+  spatialIndex: { query: () => Object.values(objects) },
+}));
+
 /**
  * `guides` reaches the real Y.Doc, which reaches the provider and `window`.
  * The adapter only needs to know *whether* there are guides, so the module is
@@ -119,6 +125,23 @@ describe('snapDraggedBox', () => {
     clearSnapGuides();
     camera.zoom = 0.1;
     expect(drag()).not.toBe(240);
+  });
+
+  it('aligns against a rotated object as drawn', () => {
+    // 200x20 centred on (100, 10), turned on end: it spans x 90..110.
+    objects = { bar: node('bar', 0, 0, { width: 200, height: 20, rotation: 90 }) };
+    const result = snapDraggedBox('moving', { x: 113, y: 300, width: 100, height: 100 });
+    expect(result.x).toBe(110);
+  });
+
+  it('keeps the nearest candidates when too many are in view', () => {
+    // 300 decoys far away, inserted first, and one neighbour right beside the
+    // drag: insertion order must not decide which ones survive the cap.
+    objects = {};
+    for (let i = 0; i < 300; i++) objects[`d${i}`] = node(`d${i}`, 2000 + (i % 10) * 3, 2500, { width: 7, height: 7 });
+    objects.near = node('near', 200, 0);
+    const result = snapDraggedBox('moving', { x: 203, y: 0, width: 100, height: 100 });
+    expect(result.x).toBe(200);
   });
 
   it('folds an object scale into the box it aligns against', () => {

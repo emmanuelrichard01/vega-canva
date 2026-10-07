@@ -151,7 +151,17 @@ export interface ParsedChartData {
  * first reading.
  */
 export function parseChartData(text: string): ParsedChartData {
-  const rows = parseDelimited(text).filter((r) => r.some((c) => c.trim() !== ''));
+  return parseChartGrid(parseDelimited(text));
+}
+
+/**
+ * The same reading as `parseChartData`, from rows already split into cells.
+ *
+ * `hasHeader` forces the decision when the caller knows it, as a table with a
+ * header row does; absent, the header is detected as described above.
+ */
+export function parseChartGrid(grid: string[][], hasHeader?: boolean): ParsedChartData {
+  const rows = grid.filter((r) => r.some((c) => c.trim() !== ''));
   if (rows.length === 0) return { categories: [], series: [] };
 
   const width = Math.max(...rows.map((r) => r.length));
@@ -160,7 +170,7 @@ export function parseChartData(text: string): ParsedChartData {
   const first = pad(rows[0]);
   // A header row is one whose value cells are not numbers.
   const looksLikeHeader =
-    width > 1 && first.slice(1).some((c) => c.trim() !== '' && parseNumber(c) === null);
+    hasHeader ?? (width > 1 && first.slice(1).some((c) => c.trim() !== '' && parseNumber(c) === null));
 
   const header = looksLikeHeader ? first : null;
   const body = (looksLikeHeader ? rows.slice(1) : rows).map(pad);

@@ -94,11 +94,12 @@ describe('a measure that cannot be drawn is no measure', () => {
 describe('the snap edges', () => {
   const frame = { x: 1000, y: 500, width: 1200, height: 800 };
 
-  it('offers both sides of every track, in world coordinates', () => {
+  it('offers both sides and the centre of every track, in world coordinates', () => {
     const edges = guideEdges(frame, { columns: DEFAULT_COLUMNS });
-    expect(edges.x).toHaveLength(24);
+    expect(edges.x).toHaveLength(36);
     expect(edges.x[0]).toBe(1048);
-    expect(edges.x[1]).toBe(1118);
+    expect(edges.x[1]).toBe(1083);
+    expect(edges.x[2]).toBe(1118);
   });
 
   it('keeps the two axes apart', () => {
@@ -106,8 +107,8 @@ describe('the snap edges', () => {
     // block's left side to a horizontal band, which is nonsense that would
     // look like a bug in the snapper rather than in the guide.
     const edges = guideEdges(frame, { columns: DEFAULT_COLUMNS, rows: DEFAULT_ROWS });
-    expect(edges.x.length).toBe(24);
-    expect(edges.y.length).toBe(16);
+    expect(edges.x.length).toBe(36);
+    expect(edges.y.length).toBe(24);
     expect(edges.y[0]).toBe(500);
   });
 

@@ -1,4 +1,5 @@
 import type { Tool, ToolContext } from './Tool';
+import { isCoasting, isFlick, momentumStep, prefersReducedMotion } from '../cameraMotion';
 
 export class HandTool implements Tool {
   id = 'hand';
@@ -40,72 +41,38 @@ export class HandTool implements Tool {
     }
   }
 
-  // The grab/grabbing swap used to be done here, by writing
-  // `container.style.cursor` on pointer down and up. That is an inline style
-  // on the same element React owns, so the two fought on every re-render, and
-  // it only covered a press that started on the stage.
-  //
-  // Both pointers now do it without being told, and neither needs a render:
-  // the native one through `[data-cursor-mode="pan"]:active` in `index.css`,
-  // the drawn one by carrying both hands and choosing with `[data-pressed]`.
-  // That also catches Space-pan, which this never did — and it is why the
-  // `grab` mode has no caller: the gesture lives in a ref, and a ref cannot
-  // drive a render, so the closed hand had to be reachable without one.
+  // The open and closed hand need no code here: the native cursor switches
+  // through `[data-cursor-mode="pan"]:active` in index.css, and the drawn one
+  // carries both hands and chooses with `[data-pressed]`, which also covers
+  // Space-pan.
   onPointerUp(ctx: ToolContext, _e: any) {
     this.isDragging = false;
+    // A drag that paused before release has no speed left to carry.
+    if (performance.now() - this.lastTime > 50) this.velocity = { x: 0, y: 0 };
 
-    /**
-     * Momentum, decayed by elapsed time rather than by frame.
-     *
-     * This applied a flat `velocity *= 0.92` once per frame and advanced the
-     * camera by an assumed 16ms — so the decay was tied to the refresh rate,
-     * not to time. On a 144Hz display the same flick received 2.4× as many
-     * multiplications per second and died in roughly a third of the distance;
-     * on a throttled tab it sailed. Two people flicking identically got
-     * different results for no reason either could see.
-     *
-     * `RETAINED_PER_SECOND` is the fraction of speed surviving one second, so
-     * `pow(retained, seconds)` gives the same curve at any frame rate. The
-     * value matches what 0.92-per-frame felt like at 60Hz, so the tuning that
-     * was already there is preserved.
-     */
-    const RETAINED_PER_SECOND = 0.0063;
-    const STOP_BELOW = 0.05;
+    // Coasting is motion the person did not make; under reduced motion a pan
+    // stops where the pointer let go.
+    if (prefersReducedMotion() || !isFlick(this.velocity)) return;
+
     let lastFrame = performance.now();
-
-    const applyMomentum = () => {
+    const coast = () => {
       if (this.isDragging) return;
-
       const now = performance.now();
-      // Clamped: a backgrounded tab returns with a gap of seconds, and an
-      // unclamped step would teleport the camera on the frame it resumes.
-      const dt = Math.min(0.05, Math.max(0.001, (now - lastFrame) / 1000));
+      const step = momentumStep(this.velocity, (now - lastFrame) / 1000);
       lastFrame = now;
-
-      const decay = Math.pow(RETAINED_PER_SECOND, dt);
-      this.velocity.x *= decay;
-      this.velocity.y *= decay;
-
-      if (Math.abs(this.velocity.x) > STOP_BELOW || Math.abs(this.velocity.y) > STOP_BELOW) {
-        // Velocity is in px per ms, so the step is velocity × elapsed ms.
-        ctx.camera.panBy(this.velocity.x * dt * 1000, this.velocity.y * dt * 1000);
-        this.animationFrameId = requestAnimationFrame(applyMomentum);
+      this.velocity = step.velocity;
+      if (isCoasting(this.velocity)) {
+        ctx.camera.panBy(step.dx, step.dy);
+        this.animationFrameId = requestAnimationFrame(coast);
       } else {
         this.animationFrameId = null;
       }
     };
-
-    if (Math.abs(this.velocity.x) > 0.1 || Math.abs(this.velocity.y) > 0.1) {
-      this.animationFrameId = requestAnimationFrame(applyMomentum);
-    }
+    this.animationFrameId = requestAnimationFrame(coast);
   }
 
   onDeactivate() {
-    // A flick-pan's inertia keeps calling camera.panBy() every frame via
-    // requestAnimationFrame regardless of which tool is active — switching
-    // to another tool (e.g. a keyboard shortcut) right after a flick didn't
-    // stop it, so the canvas kept visibly drifting out from under whatever
-    // tool you'd just switched to until the momentum decayed on its own.
+    // Switching tool stops any coasting, so the board does not drift under the next tool.
     this.isDragging = false;
     if (this.animationFrameId) {
       cancelAnimationFrame(this.animationFrameId);

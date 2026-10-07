@@ -168,3 +168,32 @@ describe('CRDT convergence', () => {
     expect(a.objects.has('s1')).toBe(false);
   });
 });
+
+describe('migrateDoc writes only what differs', () => {
+  it('leaves keys that are already right untouched, so it cannot revert a concurrent edit', () => {
+    const { doc, objects, metadata } = makeDoc(LEGACY_ROOM);
+    const s1 = objects.get('s1')!;
+    const written = new Set<string>();
+    s1.observe((event) => event.keysChanged.forEach((k) => written.add(k)));
+
+    migrateDoc(doc, objects, metadata);
+
+    // `x` and `y` were already canonical; rewriting them would put a
+    // migration write on top of anyone moving the shape at the same moment.
+    expect(written.has('x')).toBe(false);
+    expect(written.has('y')).toBe(false);
+    expect(written.size).toBeGreaterThan(0);
+  });
+
+  it('never replaces a nested Y type with a plain snapshot of it', () => {
+    const { doc, objects, metadata } = makeDoc({
+      n1: { ...LEGACY_ROOM.n1, metadata: { authorName: 'Ada' } },
+    });
+    const reactions = new Y.Map<unknown>();
+    doc.transact(() => objects.get('n1')!.set('reactions', reactions));
+
+    migrateDoc(doc, objects, metadata);
+
+    expect(objects.get('n1')!.get('reactions')).toBe(reactions);
+  });
+});

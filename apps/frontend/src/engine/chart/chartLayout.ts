@@ -38,6 +38,7 @@ import {
   type Domain,
 } from './scales';
 import { monotoneSplinePoints } from './monotoneSpline';
+import { layoutCombo } from './chartCombo';
 import { integrateStreamline } from './streamline';
 import { linearRegression, optimalBinCount, kernelDensityEstimation } from './chartStats';
 import { compileCurves, samplePlot, sampleParametric, samplePolar } from './chartPlot';
@@ -81,6 +82,7 @@ import {
   sortSpec,
   toPercentStack,
   toStaircase,
+  usesCombo,
   type ChartSpec,
 } from './chartTypes';
 import type { MathPlotMeta } from './chartTrace';
@@ -246,6 +248,12 @@ export interface ChartLabel {
   width: number;
   align: 'left' | 'center' | 'right';
   fontSize: number;
+  /**
+   * Degrees, negative turning counter-clockwise. A turned label is anchored at
+   * the right end of its top edge, `(x + width, y)`, and turns about it, so a
+   * category name slants down and away from its tick.
+   */
+  rotation?: number;
 }
 
 export interface ChartGridLine {
@@ -287,6 +295,10 @@ export interface ChartLegendEntry {
   swatch: number;
   textX: number;
   fontSize: number;
+  /** The spec series this entry names, for legend toggles. Absent on category legends. */
+  seriesIndex?: number;
+  /** Shown only while the chart is selected, so the series can be turned back on. */
+  hidden?: boolean;
 }
 
 export interface ChartPolarRing {
@@ -406,6 +418,10 @@ export interface ChartLayout {
   reference: ChartReference | null;
   /** The resolved value-axis domain, exposed for tests and the panel. */
   domain: Domain;
+  /** A combo chart's right-hand axis, when any series reads against it. */
+  rightDomain?: Domain;
+  /** The categories in the order drawn: after bucketing, sorting and reversal. */
+  categoryNames?: string[];
   /** Math plot analytical and evaluation metadata for interactive tracing */
   mathPlot?: MathPlotMeta;
   /** Trendline (linear regression) for scatter and bubble plots */
@@ -446,9 +462,17 @@ export const PAD = 18;
 const TITLE_SIZE = 16;
 /** The gap under the title: a full step, so the title owns a band of its own. */
 const TITLE_GAP = 14;
-export const LABEL_SIZE = 11;
-const LEGEND_SIZE = 11;
-const LEGEND_SWATCH = 10;
+/**
+ * Text sizes. `let` rather than `const` because `textSize` scales them for the
+ * duration of one synchronous `layoutChart` call, which sets them and puts them
+ * back; every helper reads them at call time, and importers see the live
+ * binding.
+ */
+export let LABEL_SIZE = 11;
+let LEGEND_SIZE = 11;
+let LEGEND_SWATCH = 10;
+/** The same scale, for the furniture sized by literal: subtitle, footnote, axis titles. */
+let TEXT_K = 1;
 /**
  * Between a tick and the thing it labels.
  *
@@ -465,11 +489,116 @@ export const TICK_GAP = 8;
  * group or an SVG `<g>` with no further transform — which is what keeps the
  * two painters honest.
  */
+/** How the chart is being looked at, as opposed to what it is. */
+export interface ChartView {
+  /**
+   * Keep hidden series in the legend, marked, so they can be turned back on.
+   * The board passes this while the chart is selected; exports never do.
+   */
+  showHidden?: boolean;
+}
+
+const TEXT_SCALE: Record<'s' | 'm' | 'l', number> = { s: 0.88, m: 1, l: 1.22 };
+
 export function layoutChart(
   rawSpec: ChartSpec,
   width: number,
   height: number,
-  measure: Measure = approximateMeasure
+  measure: Measure = approximateMeasure,
+  view: ChartView = {}
+): ChartLayout {
+  const k = TEXT_SCALE[rawSpec.textSize ?? 'm'] ?? 1;
+  if (k === 1) return layoutSeries(rawSpec, width, height, measure, view);
+  const saved = { label: LABEL_SIZE, legend: LEGEND_SIZE, swatch: LEGEND_SWATCH, k: TEXT_K };
+  LABEL_SIZE = Math.round(11 * k * 2) / 2;
+  LEGEND_SIZE = Math.round(11 * k * 2) / 2;
+  LEGEND_SWATCH = Math.round(10 * k);
+  TEXT_K = k;
+  try {
+    return layoutSeries(rawSpec, width, height, measure, view);
+  } finally {
+    LABEL_SIZE = saved.label;
+    LEGEND_SIZE = saved.legend;
+    LEGEND_SWATCH = saved.swatch;
+    TEXT_K = saved.k;
+  }
+}
+
+/**
+ * Hidden series and reversed categories: two views on the data, applied here
+ * so every kind gets them and the per-kind layouts never see either.
+ *
+ * A hidden series is left out before layout, with every remaining series'
+ * colour pinned to its original palette slot so nothing changes colour when a
+ * neighbour is hidden. Marks come back carrying the spec's own series index.
+ */
+function layoutSeries(
+  rawSpec: ChartSpec,
+  width: number,
+  height: number,
+  measure: Measure,
+  view: ChartView
+): ChartLayout {
+  let spec = rawSpec;
+  let origin: number[] | null = null;
+  let legend: LegendOverride | undefined;
+
+  if (!isPlot(rawSpec.kind) && !legendNamesCategories(rawSpec.kind) && rawSpec.series.length > 0) {
+    const resolved = resolveChartOptions(rawSpec);
+    const palette = resolved.palette;
+    const anyHidden = rawSpec.series.some((s) => s.hidden);
+    const colourOf = (i: number) => seriesColor(rawSpec.series[i], i, palette);
+    if (anyHidden) {
+      origin = [];
+      rawSpec.series.forEach((s, i) => {
+        if (!s.hidden) origin!.push(i);
+      });
+      spec = { ...rawSpec, series: origin.map((i) => ({ ...rawSpec.series[i], color: colourOf(i) })) };
+    }
+    legend = {
+      showLegend: resolved.showLegend,
+      items: rawSpec.series
+        .map((s, i) => ({ label: s.name || `Series ${i + 1}`, color: colourOf(i), seriesIndex: i, hidden: Boolean(s.hidden) }))
+        .filter((e) => view.showHidden || !e.hidden),
+    };
+  }
+
+  if (rawSpec.reverseCategories && !isPlot(rawSpec.kind) && !isSampleKind(rawSpec.kind)) {
+    spec = {
+      ...spec,
+      categories: [...spec.categories].reverse(),
+      series: spec.series.map((s) => ({ ...s, values: [...s.values].reverse() })),
+    };
+  }
+
+  const layout = layoutChartCore(spec, width, height, measure, legend);
+  if (!origin) return layout;
+
+  const map = (si: number) => (si >= 0 && si < origin!.length ? origin![si] : si);
+  return {
+    ...layout,
+    bars: layout.bars.map((b) => ({ ...b, seriesIndex: map(b.seriesIndex) })),
+    runs: layout.runs.map((r) => ({ ...r, seriesIndex: map(r.seriesIndex) })),
+    areas: layout.areas.map((a) => ({ ...a, seriesIndex: map(a.seriesIndex) })),
+    dots: layout.dots.map((d) => ({ ...d, seriesIndex: map(d.seriesIndex) })),
+    columns: layout.columns.map((c) => ({
+      ...c,
+      entries: c.entries.map((e) => ({ ...e, seriesIndex: map(e.seriesIndex) })),
+    })),
+  };
+}
+
+interface LegendOverride {
+  showLegend: boolean;
+  items: Array<{ label: string; color: string; seriesIndex: number; hidden: boolean }>;
+}
+
+function layoutChartCore(
+  rawSpec: ChartSpec,
+  width: number,
+  height: number,
+  measure: Measure,
+  legendOverride?: LegendOverride
 ): ChartLayout {
   /**
    * A histogram is bucketed *before* normalisation, and the order matters.
@@ -543,6 +672,9 @@ export function layoutChart(
       ? rawSpec
       : sortSpec(normalizeSpec(aggregated));
   let opts = resolveChartOptions(spec);
+  if (legendOverride) {
+    opts = { ...opts, showLegend: legendOverride.showLegend, legendItems: legendOverride.items };
+  }
 
   const empty: ChartLayout = {
     plot: { x: 0, y: 0, width: 0, height: 0 },
@@ -581,7 +713,7 @@ export function layoutChart(
 
   let subtitle: ChartLabel | null = null;
   if (spec.subtitle) {
-    const size = 11;
+    const size = Math.round(11 * TEXT_K);
     subtitle = {
       text: spec.subtitle,
       x: PAD,
@@ -596,7 +728,7 @@ export function layoutChart(
   let footnote: ChartLabel | null = null;
   let footnoteReserved = 0;
   if (spec.footnote) {
-    const size = 9;
+    const size = Math.round(9 * TEXT_K);
     footnoteReserved = size + 6;
     footnote = {
       text: spec.footnote,
@@ -693,6 +825,8 @@ export function layoutChart(
     ? layoutField(spec, opts, usable, height, top, bottomReserved, title, measure, empty)
     : isPlot(spec.kind)
     ? layoutPlot(spec, opts, usable, height, top, bottomReserved, title, measure, empty)
+    : usesCombo(spec)
+    ? layoutCombo(spec, opts, usable, height, top, bottomReserved, title, measure, empty)
     : (() => {
         let prepared = spec;
         if (isPercentStacked(spec.kind)) {
@@ -709,7 +843,7 @@ export function layoutChart(
       y: layout.plot.y + layout.plot.height + 22,
       width: layout.plot.width,
       align: 'center',
-      fontSize: 11,
+      fontSize: Math.round(11 * TEXT_K),
     };
   }
 
@@ -721,7 +855,7 @@ export function layoutChart(
       y: layout.plot.y + layout.plot.height / 2,
       width: layout.plot.height,
       align: 'center',
-      fontSize: 11,
+      fontSize: Math.round(11 * TEXT_K),
     };
   }
 
@@ -792,6 +926,7 @@ export function layoutChart(
     xAxisTitle,
     yAxisTitle,
     toleranceBand: layout.toleranceBand ?? toleranceBand,
+    categoryNames: spec.categories,
   };
 }
 
@@ -856,12 +991,15 @@ function layoutCartesian(
    * value ticks run along the bottom. Measuring the wrong set is how a
    * horizontal chart ends up with its category names clipped.
    */
-  const bottomBand = LABEL_SIZE + TICK_GAP;
   const measureGutter = () => {
     const leftTexts = transposed ? spec.categories : tickTexts;
     return PAD + Math.max(...leftTexts.map((t) => measure(t, LABEL_SIZE)), 0) + TICK_GAP;
   };
   let gutterLeft = measureGutter();
+  const labelPlan = transposed
+    ? { angle: 0 as const, every: spec.labelEvery ?? 1, extra: 0, room: 0 }
+    : categoryLabelPlan(spec, spec.categories, Math.max(1, width - gutterLeft - PAD), height, measure);
+  const bottomBand = LABEL_SIZE + TICK_GAP + labelPlan.extra;
 
   const plot: Rect = {
     x: gutterLeft,
@@ -962,25 +1100,22 @@ function layoutCartesian(
         : { x1: plot.x, y1: zeroValue, x2: plot.x + plot.width, y2: zeroValue }
       : null;
 
-  const categoryLabels: ChartLabel[] = spec.categories.map((text, i) =>
-    transposed
-      ? {
-          text,
-          x: PAD,
-          y: band.centre(i) - LABEL_SIZE / 2,
-          width: gutterLeft - PAD - TICK_GAP,
-          align: 'right',
-          fontSize: LABEL_SIZE,
-        }
-      : {
-          text,
-          x: band.centre(i) - band.step / 2,
-          y: plot.y + plot.height + TICK_GAP,
-          width: band.step,
-          align: 'center',
-          fontSize: LABEL_SIZE,
-        }
-  );
+  const categoryLabels: ChartLabel[] = transposed
+    ? spec.categories
+        .map((text, i): ChartLabel | null =>
+          i % labelPlan.every === 0
+            ? {
+                text,
+                x: PAD,
+                y: band.centre(i) - LABEL_SIZE / 2,
+                width: gutterLeft - PAD - TICK_GAP,
+                align: 'right',
+                fontSize: LABEL_SIZE,
+              }
+            : null
+        )
+        .filter((l): l is ChartLabel => l !== null)
+    : categoryLabelsFor(spec.categories, labelPlan, band, plot.y + plot.height + TICK_GAP, measure);
 
   const bars: ChartBar[] = [];
   const runs: ChartRun[] = [];
@@ -3229,12 +3364,18 @@ export function buildLegend(
   // A pie's and a funnel's legend name their *categories*: both draw one
   // series whose points are the things being compared. Everything else names
   // its series.
-  const entries = legendNamesCategories(spec.kind)
-    ? spec.categories.map((label, i) => ({
-        label,
-        color: seriesColor({ name: '', values: [], color: spec.series[0]?.color }, i, opts.palette),
-      }))
-    : spec.series.map((s, i) => ({ label: s.name || `Series ${i + 1}`, color: seriesColor(s, i, opts.palette) }));
+  const entries: Array<{ label: string; color: string; seriesIndex?: number; hidden?: boolean }> =
+    opts.legendItems ??
+    (legendNamesCategories(spec.kind)
+      ? spec.categories.map((label, i) => ({
+          label,
+          color: seriesColor({ name: '', values: [], color: spec.series[0]?.color }, i, opts.palette),
+        }))
+      : spec.series.map((s, i) => ({
+          label: s.name || `Series ${i + 1}`,
+          color: seriesColor(s, i, opts.palette),
+          seriesIndex: i,
+        })));
 
   if (entries.length === 0) return [];
 
@@ -3273,6 +3414,8 @@ export function buildLegend(
         swatch: LEGEND_SWATCH,
         textX: box.x + LEGEND_SWATCH + 5,
         fontSize: LEGEND_SIZE,
+        ...(e.seriesIndex !== undefined ? { seriesIndex: e.seriesIndex } : {}),
+        ...(e.hidden ? { hidden: true } : {}),
       });
       y += LEGEND_SIZE + 6;
     }
@@ -3303,6 +3446,8 @@ export function buildLegend(
       swatch: LEGEND_SWATCH,
       textX: x + LEGEND_SWATCH + 5,
       fontSize: LEGEND_SIZE,
+      ...(e.seriesIndex !== undefined ? { seriesIndex: e.seriesIndex } : {}),
+      ...(e.hidden ? { hidden: true } : {}),
     });
     x += entryWidth + GAP;
   }
@@ -3319,15 +3464,15 @@ export function buildLegend(
  * nothing like the same width. Binary search rather than a walk, because a
  * legend of twenty entries measures a lot of substrings otherwise.
  */
-function truncateTo(text: string, room: number, measure: Measure): string {
-  if (measure(text, LEGEND_SIZE) <= room) return text;
+function truncateTo(text: string, room: number, measure: Measure, size = LEGEND_SIZE): string {
+  if (measure(text, size) <= room) return text;
 
   const ellipsis = '…';
   let lo = 0;
   let hi = text.length;
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2);
-    if (measure(text.slice(0, mid) + ellipsis, LEGEND_SIZE) <= room) lo = mid;
+    if (measure(text.slice(0, mid) + ellipsis, size) <= room) lo = mid;
     else hi = mid - 1;
   }
   // Nothing fits: one character and the mark, which still says a series is
@@ -3357,8 +3502,9 @@ function legendWidth(
   measure: Measure
 ): number {
   if (!opts.showLegend) return 0;
-  const labels =
-    legendNamesCategories(spec.kind)
+  const labels = opts.legendItems
+    ? opts.legendItems.map((e) => e.label)
+    : legendNamesCategories(spec.kind)
       ? spec.categories
       : spec.series.map((series, i) => series.name || `Series ${i + 1}`);
   if (labels.length === 0) return 0;
@@ -3367,4 +3513,79 @@ function legendWidth(
 
 function clamp(value: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, value));
+}
+
+/**
+ * How the category names fit along a horizontal axis.
+ *
+ * Names that fit their band stay level. Names that would collide turn 45
+ * degrees, which buys roughly half again the room per name, and if even that
+ * collides only every nth name is written. Either can be fixed in the spec
+ * (`labelAngle`, `labelEvery`). Turned names may take at most 30% of the
+ * chart's height; past that they are cut with an ellipsis rather than eating
+ * the plot.
+ */
+export interface CategoryLabelPlan {
+  angle: 0 | 45 | 90;
+  every: number;
+  /** Height the turned names need below the axis, beyond one line. */
+  extra: number;
+  /** How long a name may run, along its own direction. */
+  room: number;
+}
+
+export function categoryLabelPlan(
+  spec: ChartSpec,
+  categories: string[],
+  plotWidth: number,
+  height: number,
+  measure: Measure
+): CategoryLabelPlan {
+  const n = Math.max(1, categories.length);
+  const step = plotWidth / n;
+  const widest = Math.max(0, ...categories.map((c) => measure(c, LABEL_SIZE)));
+  const fits = widest <= step * 0.92;
+  const angle: 0 | 45 | 90 = spec.labelAngle ?? (fits ? 0 : 45);
+  const maxBand = Math.max(LABEL_SIZE * 2, height * 0.3);
+
+  if (angle === 0) {
+    const every = spec.labelEvery ?? (fits ? 1 : Math.max(1, Math.ceil((widest * 1.08) / step)));
+    return { angle, every, extra: 0, room: step * every };
+  }
+  const sin = angle === 45 ? Math.SQRT1_2 : 1;
+  const room = Math.max(LABEL_SIZE * 2, Math.min(widest, maxBand / sin));
+  const pitch = LABEL_SIZE * (angle === 45 ? 1.45 : 1.25);
+  const every = spec.labelEvery ?? Math.max(1, Math.ceil(pitch / Math.max(step, 1e-6)));
+  return { angle, every, extra: Math.ceil(room * sin), room };
+}
+
+/** Category names for a horizontal axis, following a plan. */
+export function categoryLabelsFor(
+  categories: string[],
+  plan: CategoryLabelPlan,
+  band: { centre: (i: number) => number; step: number },
+  y: number,
+  measure: Measure
+): ChartLabel[] {
+  const out: ChartLabel[] = [];
+  categories.forEach((text, i) => {
+    if (i % plan.every !== 0) return;
+    const c = band.centre(i);
+    if (plan.angle === 0) {
+      const w = band.step * plan.every;
+      out.push({ text, x: c - w / 2, y, width: w, align: 'center', fontSize: LABEL_SIZE });
+      return;
+    }
+    const shown = truncateTo(text, plan.room, measure, LABEL_SIZE);
+    out.push({
+      text: shown,
+      x: c - plan.room,
+      y: y - 2,
+      width: plan.room,
+      align: 'right',
+      fontSize: LABEL_SIZE,
+      rotation: -plan.angle,
+    });
+  });
+  return out;
 }

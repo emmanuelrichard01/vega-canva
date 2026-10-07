@@ -1,4 +1,6 @@
 import React from 'react';
+import { GridDropHighlight, GridEditOverlay, useGridEditEntry } from './GridEditOverlay';
+import { useGridEditMode } from '../../../engine/grid/gridEditMode';
 import { Ellipse, Group, Line, Path, Rect, Text } from 'react-konva';
 import type { GridNode } from '../../../engine/model/schema';
 import { gridCellsOf } from '../../../engine/grid/gridNode';
@@ -133,8 +135,11 @@ export const GridRenderer: React.FC<Props> = React.memo(({ node }) => {
   );
 
   const { opacity } = grid.style;
+  const editing = useGridEditMode().gridId === node.id;
+  const enterEdit = useGridEditEntry(node);
 
   return (
+    <>
     <Group opacity={opacity}>
       {/**
        * The grid's hit area is its **box**, not its modules.
@@ -161,6 +166,8 @@ export const GridRenderer: React.FC<Props> = React.memo(({ node }) => {
         // nothing and is hit everywhere.
         fill="rgba(0,0,0,0)"
         perfectDrawEnabled={false}
+        onDblClick={enterEdit}
+        onDblTap={enterEdit}
       />
       {cells.map((cell) => (
         <Cell key={cell.index} cell={cell} style={grid.style} />
@@ -191,6 +198,10 @@ export const GridRenderer: React.FC<Props> = React.memo(({ node }) => {
           );
         })}
     </Group>
+    {/* Chrome sits outside the opacity group so it reads at full strength. */}
+    <GridDropHighlight node={node} cells={cells} />
+    {editing && <GridEditOverlay node={node} cells={cells} />}
+    </>
   );
 });
 

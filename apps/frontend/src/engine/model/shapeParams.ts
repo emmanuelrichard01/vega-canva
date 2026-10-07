@@ -147,6 +147,14 @@ export const SHAPE_PARAMS: Partial<Record<ShapeKind, ShapeParamGroup>> = {
     PERCENT('rimRatio', 'Rim', [0.05, 0.4, 0.05], 0.15, 'How much of an ellipse each disk reads as'),
   ] },
   document: { label: 'Document', params: [PERCENT('waveHeight', 'Wave', [0.05, 0.35, 0.02], 0.15, 'Amplitude of the torn bottom edge')] },
+  multi_document: { label: 'Documents', params: [PERCENT('waveHeight', 'Wave', [0.05, 0.35, 0.02], 0.15, 'Amplitude of the front sheet\'s torn edge')] },
+  punched_tape: { label: 'Punched tape', params: [PERCENT('waveHeight', 'Wave', [0.05, 0.25, 0.01], 0.12, 'How far the edges rise and fall')] },
+  off_page: { label: 'Off-page connector', params: [PERCENT('indent', 'Point', [0.1, 0.5, 0.05], 0.3, 'How much of the height the point takes')] },
+  card: { label: 'Card', params: [PERCENT('indent', 'Corner cut', [0.05, 0.5, 0.05], 0.25, 'The cut corner, against the shorter side')] },
+  loop_limit: { label: 'Loop limit', params: [PERCENT('indent', 'Chamfer', [0.05, 0.5, 0.05], 0.25, 'The cut corners, against the shorter side')] },
+  stored_data: { label: 'Stored data', params: [PERCENT('indent', 'Curve', [0.05, 0.3, 0.05], 0.15, 'Depth of both curved ends, as a share of the width')] },
+  direct_access_storage: { label: 'Direct access storage', params: [PERCENT('rimRatio', 'End', [0.05, 0.3, 0.05], 0.15, 'Depth of the drum\'s ends, as a share of the width')] },
+  display: { label: 'Display', params: [PERCENT('indent', 'Ends', [0.05, 0.35, 0.05], 0.15, 'Depth of the point and the curve, as a share of the width')] },
   /**
    * The hole was two numbers: 50% here and 55% inside the geometry, which is
    * the one the board actually drew. The table wins on principle and the

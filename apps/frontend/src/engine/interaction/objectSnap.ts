@@ -8,6 +8,8 @@
  */
 
 import { cameraSystem } from '../CameraSystem';
+import { spatialIndex } from '../SpatialIndex';
+import { nodeBounds } from '../SceneGraph';
 import { readGuides } from '../document/guides';
 import { useStore } from '../../hooks/useStore';
 import { gridSnap } from './gridSnap';
@@ -33,8 +35,8 @@ const SNAP_PX = 6;
  *
  * Candidates are already limited to the viewport, so this only matters on a
  * board where hundreds of objects are visible at once — at which point the
- * nearest few are the only ones anybody can see a guide against anyway, and
- * comparing all of them is a per-frame cost with no per-frame benefit.
+ * nearest are the ones anybody can see a guide against, and comparing all of
+ * them is a per-frame cost with no per-frame benefit.
  */
 const MAX_CANDIDATES = 200;
 
@@ -49,49 +51,51 @@ const SETTLED = 0.01;
 /** The last position this returned, for the re-entrancy guard above. */
 let lastSnap: { x: number; y: number } | null = null;
 
-function boxOf(node: { x: number; y: number; width: number; height: number; scaleX?: number; scaleY?: number }): Box {
-  // Scale is folded in, because a flipped or scaled object's *visible* box is
-  // what the user is lining things up against.
-  const sx = Math.abs(node.scaleX ?? 1);
-  const sy = Math.abs(node.scaleY ?? 1);
-  return { x: node.x, y: node.y, width: node.width * sx, height: node.height * sy };
-}
-
 /**
- * Everything the moving object could sensibly line up with.
+ * Everything the moving object could sensibly line up with, nearest first.
  *
- * Restricted to the viewport, which is a correctness decision before it is a
- * performance one: snapping to an object you cannot see produces a jump with
- * an explanation drawn somewhere off-screen, which is worse than not snapping.
+ * Read from the spatial index rather than by walking every object on every
+ * pointer move, and restricted to the viewport, which is a correctness
+ * decision before it is a performance one: snapping to an object you cannot
+ * see produces a jump with an explanation drawn somewhere off-screen.
  *
- * Hidden and filtered-out objects are excluded for the same reason, and so are
- * the other members of a multi-object drag — an object cannot align to
- * something that is moving with it.
+ * Boxes are each object's outline as drawn — scale and rotation folded in —
+ * because that is what a person lines things up against. When more than
+ * `MAX_CANDIDATES` are in view, the nearest to the moving box are kept.
+ *
+ * Hidden objects and comment pins are excluded, and so are the other members
+ * of a multi-object drag — an object cannot align to something that is moving
+ * with it.
  */
-function candidatesFor(excluded: Set<string>): Box[] {
+function candidatesFor(excluded: Set<string>, moving: Box): Box[] {
   const objects = useStore.getState().objects;
-  // No overscan margin: the culling buffer exists so objects do not pop in at
-  // the edge, but an object one pixel off-screen is one you cannot see a guide
-  // against, which is the whole reason for restricting the set.
+  // No overscan margin: an object one pixel off-screen is one you cannot see a
+  // guide against, which is the whole reason for restricting the set.
   const view = cameraSystem.getViewportBounds(0);
+  const mx = moving.x + moving.width / 2;
+  const my = moving.y + moving.height / 2;
 
-  const boxes: Box[] = [];
-  for (const node of Object.values(objects)) {
-    if (excluded.has(node.id)) continue;
+  const found: Array<{ box: Box; d: number }> = [];
+  for (const indexed of spatialIndex.query(view)) {
+    const node = objects[indexed.id] ?? indexed;
+    if (!node || excluded.has(node.id)) continue;
     if (node.hidden) continue;
     // A comment pin is a 32px marker anchored to a point, not a shape anyone
     // aligns to; snapping to one is noise.
     if (node.type === 'comment') continue;
 
-    const box = boxOf(node);
-    const outside =
-      box.x > view.maxX || box.x + box.width < view.minX || box.y > view.maxY || box.y + box.height < view.minY;
-    if (outside) continue;
-
-    boxes.push(box);
-    if (boxes.length >= MAX_CANDIDATES) break;
+    const b = nodeBounds(node);
+    if (b.minX > view.maxX || b.maxX < view.minX || b.minY > view.maxY || b.maxY < view.minY) continue;
+    const box = { x: b.minX, y: b.minY, width: b.maxX - b.minX, height: b.maxY - b.minY };
+    const dx = box.x + box.width / 2 - mx;
+    const dy = box.y + box.height / 2 - my;
+    found.push({ box, d: dx * dx + dy * dy });
   }
-  return boxes;
+  if (found.length > MAX_CANDIDATES) {
+    found.sort((a, b) => a.d - b.d);
+    found.length = MAX_CANDIDATES;
+  }
+  return found.map((f) => f.box);
 }
 
 /**
@@ -202,7 +206,7 @@ export function snapDraggedBox(
   }
 
   const excluded = new Set<string>([nodeId, ...(alsoMoving ?? [])]);
-  const candidates = candidatesFor(excluded);
+  const candidates = candidatesFor(excluded, box);
   // A guide is the most deliberate alignment target on the board — somebody
   // put it there on purpose — so it snaps like any other edge. Expressed as a
   // zero-width box on its own axis, which is exactly what a guide is, rather

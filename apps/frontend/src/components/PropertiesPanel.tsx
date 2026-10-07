@@ -1,21 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import {
-  ArrowDown,
-  ArrowUp,
-  BarChart3,
-  BringToFront,
-  FlipHorizontal,
-  FlipVertical,
-  LayoutGrid,
-  LayoutTemplate,
-  PanelRightClose,
-  SendToBack,
-  StickyNote,
-} from 'lucide-react';
-import { applyNodePatches, localAuthorId, provider, updateNodes } from '../engine/document';
-import { restackSelection } from '../engine/model/restack';
+import { PanelRightClose } from 'lucide-react';
+import { localAuthorId, provider, updateNodes } from '../engine/document';
+import { restackSelection, type RestackOp } from '../engine/model/restack';
 import { useStore } from '../hooks/useStore';
+import { spatialIndex } from '../engine/SpatialIndex';
 import { APPEARANCE_TYPES } from '../engine/objects/appearanceTypes';
 import { resolveAffordances, type AffordanceId } from '../engine/selection/affordances';
 import { GridSection } from './panel/GridSection';
@@ -26,9 +15,9 @@ import { objectRegistry } from '../engine/objects';
 import {
   canResizeAsBox,
   intersectCapabilities,
+  nodeBounds,
   scaleSelection,
   selectionBounds,
-  selectionLabel,
   sharedValue,
   translateSelection,
   type Shared,
@@ -57,16 +46,13 @@ import {
 import { descendantsOfFrame, type FramePreset } from '../engine/model/frames';
 import { type LayoutGuide } from '../engine/model/layoutGuide';
 import { nodeLabel } from '../engine/model/nodeLabel';
-import { TagEditor } from './ui/TagEditor';
-import { THEMES } from '../engine/model/stickyThemes';
-import { STICKY_THEMES } from '../engine/model/schema';
 import { getColorForUser } from '../engine/presence/ColorPalette';
 import { CYCLE_PRESETS } from '../engine/text/colorCycle';
 import { packAdjustments, readAdjustments, type AdjustmentId } from '../engine/model/imageAdjustments';
-import { Accordion, Row } from './panel/panelPrimitives';
-import { TYPE_ICONS } from './panel/panelIcons';
+import { PanelSubjectContext, Section, writePatches } from './panel/grammar';
+import { PanelHeader, type Editor } from './panel/PanelHeader';
 import { TransformSection } from './panel/sections/TransformSection';
-import { FillAppearanceSection } from './panel/sections/FillAppearanceSection';
+import { AppearanceSection, FillSection } from './panel/sections/FillAppearanceSection';
 import { StrokeSection } from './panel/sections/StrokeSection';
 import { SketchSection } from './panel/sections/SketchSection';
 import { EffectsSection } from './panel/sections/EffectsSection';
@@ -75,7 +61,13 @@ import { ShapeGeometrySection } from './panel/sections/ShapeGeometrySection';
 import { ConnectorSection } from './panel/sections/ConnectorSection';
 import { ImageSection } from './panel/sections/ImageSection';
 import { PhysicsMaterialSection, MetadataSection } from './panel/sections/PhysicsMaterialSection';
+import { StickySection } from './panel/sections/StickySection';
+import { SelectionColorsSection } from './panel/sections/SelectionColorsSection';
+import { BoardSection } from './panel/sections/BoardSection';
 import { cornerRadiiOf } from '../engine/model/cornerRadii';
+import { FeatureBoundary } from './ui/FeatureBoundary';
+import { storageGet, storageSet } from '../utils/safeStorage';
+import './panel/panel.css';
 
 const DEFAULT_SHADOW: Shadow = {
   color: DEFAULT_SHADOW_COLOR,
@@ -95,6 +87,20 @@ const DEFAULT_INNER_SHADOW: Shadow = {
   opacity: 0.35,
 };
 
+export const PANEL_WIDTH_KEY = 'vega.panel.width';
+export const PANEL_MIN_W = 240;
+export const PANEL_MAX_W = 360;
+
+export function clampPanelWidth(w: number): number {
+  if (!Number.isFinite(w)) return 260;
+  return Math.round(Math.min(PANEL_MAX_W, Math.max(PANEL_MIN_W, w)));
+}
+
+function applyPanelWidth(w: number) {
+  if (typeof document === 'undefined') return;
+  document.documentElement.style.setProperty('--inspector-w', `${clampPanelWidth(w)}px`);
+}
+
 interface PropertiesPanelProps {
   selectedIds: string[];
   overrideObjects?: Record<string, AnyNode> | null;
@@ -112,11 +118,95 @@ function typographyOf(node: AnyNode): Typography | null {
   return null;
 }
 
-export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, overrideObjects, onCollapse }) => {
+/**
+ * The panel's left edge, dragged to set its width (240–360px). The width is
+ * remembered per browser; arrow keys move it by 8px for keyboard users.
+ */
+const WidthHandle: React.FC = () => {
+  const [width, setWidth] = useState(() => clampPanelWidth(Number(storageGet(PANEL_WIDTH_KEY) ?? 260)));
+  const drag = useRef<{ x: number; w: number } | null>(null);
+
+  useEffect(() => applyPanelWidth(width), [width]);
+
+  const commit = useCallback((w: number) => {
+    const next = clampPanelWidth(w);
+    setWidth(next);
+    storageSet(PANEL_WIDTH_KEY, String(next));
+  }, []);
+
+  return (
+    <div
+      className="panel-resize"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Panel width"
+      aria-valuemin={PANEL_MIN_W}
+      aria-valuemax={PANEL_MAX_W}
+      aria-valuenow={width}
+      tabIndex={0}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        drag.current = { x: e.clientX, w: width };
+        e.currentTarget.setPointerCapture(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        if (!drag.current) return;
+        setWidth(clampPanelWidth(drag.current.w + (drag.current.x - e.clientX)));
+      }}
+      onPointerUp={() => {
+        if (!drag.current) return;
+        drag.current = null;
+        commit(width);
+      }}
+      onPointerCancel={() => {
+        drag.current = null;
+      }}
+      onDoubleClick={() => commit(260)}
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          commit(width + 8);
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          commit(width - 8);
+        }
+      }}
+    />
+  );
+};
+
+/** Collaborators other than this tab who have any of `ids` selected. */
+function useEditors(ids: string[]): Editor[] {
+  const [editors, setEditors] = useState<Editor[]>([]);
+  const key = ids.join(',');
+  useEffect(() => {
+    const awareness = provider.awareness;
+    if (!awareness) return;
+    const read = () => {
+      const mine = awareness.clientID;
+      const next: Editor[] = [];
+      awareness.getStates().forEach((state: any, clientId: number) => {
+        if (clientId === mine || !state?.user || !Array.isArray(state.selection)) return;
+        if (!ids.some((id) => state.selection.includes(id))) return;
+        next.push({ name: state.user.name || 'Teammate', color: state.user.color || getColorForUser(String(clientId)) });
+      });
+      setEditors((prev) =>
+        prev.length === next.length && prev.every((p, i) => p.name === next[i].name && p.color === next[i].color) ? prev : next
+      );
+    };
+    read();
+    awareness.on('change', read);
+    return () => awareness.off('change', read);
+    // `key` stands in for `ids`: a new array with the same ids is the same selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return editors;
+}
+
+const PropertiesPanelInner: React.FC<PropertiesPanelProps> = ({ selectedIds, overrideObjects, onCollapse }) => {
   const storeNodes = useStore(
-    useShallow((state) =>
-      selectedIds.map((id) => state.objects[id]).filter((n): n is AnyNode => Boolean(n))
-    )
+    useShallow((state) => selectedIds.map((id) => state.objects[id]).filter((n): n is AnyNode => Boolean(n)))
   );
   const [aspectLocked, setAspectLocked] = useState(false);
 
@@ -125,73 +215,38 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
     return selectedIds.map((id) => overrideObjects[id]).filter((n): n is AnyNode => Boolean(n));
   }, [overrideObjects, selectedIds, storeNodes]);
 
+  const editors = useEditors(nodes.map((n) => n.id));
+
   const node: AnyNode | null = nodes[0] ?? null;
   const isMulti = nodes.length > 1;
 
   const shared = <T,>(read: (n: AnyNode) => T): Shared<T> => sharedValue(nodes, read);
 
-  /**
-   * Nothing selected.
-   *
-   * ## Why this stayed a message
-   *
-   * The first attempt filled the space with board properties -- a count per
-   * node type that selected its type on click, and the snap and theme toggles.
-   * Useful in isolation and redundant in this app: the Layers panel already
-   * lists and filters by type, and both settings already live in the View menu.
-   * A panel that repeats two other surfaces is not richer, it is a third place
-   * to keep in step, and the reader has to work out which one is authoritative.
-   *
-   * So the honest answer is that there is nothing to inspect, and the work goes
-   * into saying it well rather than into finding something to say.
-   *
-   * ## What "well" means here
-   *
-   * The old version was an icon and a line at `opacity: 0.7`. Fading a whole
-   * block is the visual language of a *disabled* control -- it reads as
-   * something that should be working and is not, which is the one impression an
-   * empty state must avoid. Full-strength type in the tertiary role says the
-   * same thing calmly, and lets the two lines take a deliberate hierarchy
-   * instead of both being dimmed equally.
-   *
-   * The mark is a marquee: the dashed rectangle the Select tool drags, at the
-   * moment it has caught nothing. It says which gesture fills this panel,
-   * which a slider glyph -- the previous icon, borrowed from "settings" -- did
-   * not.
-   */
   if (!node) {
     return (
-      <div className="props-empty">
-        {onCollapse && (
-          <div className="props-empty__bar">
-            <button
-              className="btn-icon"
-              onClick={onCollapse}
-              data-tooltip="Collapse panel"
-              aria-label="Collapse the properties panel"
-            >
-              <PanelRightClose size={15} />
-            </button>
+      <PanelSubjectContext.Provider value="none">
+        <div className="props-shell">
+          <WidthHandle />
+          <div className="props-panel custom-scrollbar">
+            <header className="panel-head">
+              <span className="panel-head__name">Board</span>
+              {onCollapse && (
+                <button
+                  type="button"
+                  className="pg-icon-btn"
+                  onClick={onCollapse}
+                  data-tooltip="Collapse panel"
+                  aria-label="Collapse the properties panel"
+                >
+                  <PanelRightClose size={15} aria-hidden="true" />
+                </button>
+              )}
+            </header>
+            <p className="props-panel__hint">Select something on the board to edit it here.</p>
+            <BoardSection />
           </div>
-        )}
-        <div className="props-empty__body">
-          <svg width="44" height="34" viewBox="0 0 44 34" fill="none" aria-hidden focusable="false">
-            {/* The marquee, mid-drag: three dashed sides and a cursor at the
-                corner it is being pulled from. Drawn rather than imported so it
-                matches the real marquee's dash rhythm. */}
-            <rect
-              x="1.5" y="1.5" width="33" height="25" rx="2.5"
-              stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 3"
-            />
-            <path
-              d="M30 20.5 L41 25.5 L36.2 27.4 L34.3 32.2 Z"
-              fill="var(--surface-primary)" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"
-            />
-          </svg>
-          <p className="props-empty__title">Nothing selected</p>
-          <p className="props-empty__hint">Pick an object on the board to edit it here.</p>
         </div>
-      </div>
+      </PanelSubjectContext.Provider>
     );
   }
 
@@ -199,13 +254,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
   const gridNode = gridNodeOf(nodes);
   const uniformType = !shared((n) => n.type).mixed;
   const uniformKind =
-    uniformType &&
-    !shared((n) => ((n as { geometry?: { kind?: string } }).geometry?.kind ?? null)).mixed;
+    uniformType && !shared((n) => ((n as { geometry?: { kind?: string } }).geometry?.kind ?? null)).mixed;
+  const subject = isMulti && !uniformType ? 'multi' : node.type;
 
   const capabilities = isMulti
-    ? intersectCapabilities(
-        nodes.map((n) => objectRegistry.get(n.type)?.capabilities ?? {})
-      )
+    ? intersectCapabilities(nodes.map((n) => objectRegistry.get(n.type)?.capabilities ?? {}))
     : objectRegistry.get(node.type)?.capabilities ?? {};
   const typography = typographyOf(node);
   const appearance = appearanceOf(node);
@@ -215,17 +268,16 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
   const affords = (id: AffordanceId) => offered.has(id);
 
   const sketchable = affords('sketch');
-  const allClosed =
-    nodes.length > 0 &&
-    nodes.every((n) => n.type === 'shape' && !isOpenShape(n.geometry.kind));
+  const allClosed = nodes.length > 0 && nodes.every((n) => n.type === 'shape' && !isOpenShape(n.geometry.kind));
   const hasConnector = nodes.some((n) => n.type === 'connector');
   const hasImage = nodes.some((n) => n.type === 'image');
 
   const flipX = shared((n) => n.scaleX < 0);
   const flipY = shared((n) => n.scaleY < 0);
   const flipped = { x: Boolean(flipX.value), mixedX: flipX.mixed, y: Boolean(flipY.value), mixedY: flipY.mixed };
-  /** The paper every selected note is on, or nothing when they disagree. */
   const pickedTheme = shared((n) => (n.type === 'sticky' ? n.theme : null));
+  const pinnedShared = shared((n) => (n.type === 'sticky' ? n.pinned : null));
+  const allLocked = nodes.every((n) => n.locked);
 
   const hasCorners = nodes.every((n) => {
     const paint = appearanceOf(n);
@@ -239,11 +291,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
 
   const hasEnds = nodes.every((n) => capApplies({ ...n, appearance: appearanceOf(n) }));
 
+  /** Every write from the panel goes through `writePatches`, so a scrub previews live and lands as one undo step. */
   const set = (updates: Partial<AnyNode>) =>
-    updateNodes(selectedIdsPresent, updates as Record<string, unknown>);
+    writePatches(selectedIdsPresent.map((id) => ({ id, changes: updates as Record<string, unknown> })));
 
   const patchEach = (build: (n: AnyNode) => Record<string, unknown> | null) =>
-    applyNodePatches(
+    writePatches(
       nodes
         .map((n) => {
           const changes = build(n);
@@ -283,29 +336,18 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
 
   const adjustments = readAdjustments(node.type === 'image' ? node.filters : undefined);
   const setAdjustment = (id: AdjustmentId, value: number) =>
-    patchEach((n) =>
-      n.type === 'image'
-        ? { filters: packAdjustments({ ...readAdjustments(n.filters), [id]: value }) }
-        : null
-    );
+    patchEach((n) => (n.type === 'image' ? { filters: packAdjustments({ ...readAdjustments(n.filters), [id]: value }) } : null));
 
   const setShadow = (patch: Partial<Shadow>) =>
     patchEach((n) => {
       const paint = appearanceOf(n);
-      return {
-        appearance: { ...(paint ?? {}), shadow: { ...(paint?.shadow ?? DEFAULT_SHADOW), ...patch } },
-      };
+      return { appearance: { ...(paint ?? {}), shadow: { ...(paint?.shadow ?? DEFAULT_SHADOW), ...patch } } };
     });
 
   const setInnerShadow = (patch: Partial<Shadow>) =>
     patchEach((n) => {
       const paint = appearanceOf(n);
-      return {
-        appearance: {
-          ...(paint ?? {}),
-          innerShadow: { ...(paint?.innerShadow ?? DEFAULT_INNER_SHADOW), ...patch },
-        },
-      };
+      return { appearance: { ...(paint ?? {}), innerShadow: { ...(paint?.innerShadow ?? DEFAULT_INNER_SHADOW), ...patch } } };
     });
 
   const setSafeArea = (edge: 'top' | 'right' | 'bottom' | 'left', value: number) =>
@@ -317,38 +359,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
       return { safeArea: empty ? undefined : next };
     });
 
-  /**
-   * Resize a frame to a named size, keeping its top-left corner.
-   *
-   * The corner rather than the centre, because a frame is a page on a desk and
-   * a page is placed by its corner — growing an A4 into an A3 from the middle
-   * would push it under whatever is above and to the left of it, which is
-   * usually the frame you laid out first.
-   *
-   * The preset's safe area comes with it, and replaces whatever was there.
-   * That is the honest reading of "make this an A4": the guides belong to the
-   * size, and keeping a story's 250/320 insets on a business card would leave
-   * a frame promising a safe area that means nothing.
-   */
+  /** Resize a frame to a named size, keeping its top-left corner; the preset's safe area comes with it. */
   const applyFramePreset = (preset: FramePreset) =>
-    patchEach((n) =>
-      n.type === 'frame'
-        ? { width: preset.width, height: preset.height, safeArea: preset.safeArea }
-        : null
-    );
+    patchEach((n) => (n.type === 'frame' ? { width: preset.width, height: preset.height, safeArea: preset.safeArea } : null));
 
-  /**
-   * Swap a frame's width and height.
-   *
-   * Operates on the frame's own numbers rather than looking up a preset, so it
-   * works on a custom size too — which is most frames after anybody has
-   * dragged one.
-   *
-   * The safe area is transposed with the box: top swaps with left, bottom with
-   * right. That is the operation `turnPreset` performs and, unlike a quarter
-   * rotation, it is its own inverse — so turning twice returns exactly what
-   * you started with rather than leaving the guides upside down.
-   */
+  /** Swap a frame's width and height, transposing the safe area so turning twice is the identity. */
   const turnFrame = () =>
     patchEach((n) => {
       if (n.type !== 'frame') return null;
@@ -356,45 +371,28 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
       return {
         width: n.height,
         height: n.width,
-        safeArea: inset
-          ? { top: inset.left, left: inset.top, right: inset.bottom, bottom: inset.right }
-          : undefined,
+        safeArea: inset ? { top: inset.left, left: inset.top, right: inset.bottom, bottom: inset.right } : undefined,
       };
     });
 
   /**
-   * Shrink a frame to the union of what it contains, plus a margin.
-   *
-   * Reads the frame's own membership — the containment it already maintains —
-   * rather than testing overlap, so an object that merely passes over a frame
-   * is not counted and one that belongs to it is, wherever it currently sits.
-   *
-   * Two things it deliberately does not do. It does not move the children:
-   * their world positions are what "fit" is measured *from*, and moving them
-   * would make the operation something you have to undo to see. And it does
-   * not grow — a frame smaller than its contents is clipping them on purpose
-   * as often as by accident, and quietly revealing what somebody cropped is a
-   * bigger surprise than leaving it.
+   * Shrink a frame to what it owns, plus a margin. Never moves the children
+   * and never grows: a frame smaller than its contents may be cropping them on
+   * purpose.
    */
   const fitFrameToContents = () => {
     const frame = nodes.find((n) => n.type === 'frame');
     if (!frame) return;
     const store = useStore.getState().objects;
     const childIds = descendantsOfFrame(frame.id, Object.values(store));
-    if (childIds.length === 0) return;
-
     const boxes = childIds.map((id) => store[id]).filter(Boolean);
     if (boxes.length === 0) return;
-
     const left = Math.min(...boxes.map((b) => b.x));
     const top = Math.min(...boxes.map((b) => b.y));
     const right = Math.max(...boxes.map((b) => b.x + b.width));
     const bottom = Math.max(...boxes.map((b) => b.y + b.height));
-
-    // A margin, so the fit does not put the frame's own hairline through the
-    // edge of whatever was furthest out.
     const margin = 24;
-    applyNodePatches([
+    writePatches([
       {
         id: frame.id,
         changes: {
@@ -407,31 +405,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
     ]);
   };
 
-  /**
-   * Set or clear a frame's column measure.
-   *
-   * Written whole rather than patched field by field, because a measure with
-   * no columns is not a measure — the normalizer drops one, so a control that
-   * could put the count to zero would silently delete the guide and leave the
-   * switch on.
-   */
   const setLayoutGuide = (guide: LayoutGuide | undefined) =>
     patchEach((n) => (n.type === 'frame' ? { layoutGuide: guide } : null));
 
-  /**
-   * What each end of the selected connector is attached to, by name.
-   *
-   * Resolved here rather than in the section, because the section is given one
-   * node and this needs the store — and a component that reaches into the
-   * store for a name is a component that re-renders on every unrelated edit.
-   *
-   * `nodeLabel` is the same function the Layers panel uses, so an object reads
-   * the same in both places: a box called "Retry" is "Retry" in the tree and
-   * "Retry" here, and one that has never been named falls back to its type in
-   * both.
-   */
+  /** The names of what each end of the selected connector is attached to, as Layers shows them. */
   const connectorBoundNames = (() => {
-    if (!node || node.type !== 'connector') return {};
+    if (node.type !== 'connector') return {};
     const objects = useStore.getState().objects;
     const name = (id?: string) => {
       const target = id ? objects[id] : undefined;
@@ -440,11 +419,17 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
     return { from: name(node.from.nodeId), to: name(node.to.nodeId) };
   })();
 
-  /** How many objects the selected frame owns, for the fit control's label. */
+  /**
+   * How many objects the selected frame owns, for the fit control's label.
+   * Candidates come from the spatial index around the frame rather than a
+   * scan of the board: what a frame owns sits on it.
+   */
   const frameChildCount = (() => {
     const frame = nodes.find((n) => n.type === 'frame');
     if (!frame) return 0;
-    return descendantsOfFrame(frame.id, Object.values(useStore.getState().objects)).length;
+    const b = nodeBounds(frame);
+    const nearby = spatialIndex.query({ minX: b.x, minY: b.y, maxX: b.x + b.width, maxY: b.y + b.height });
+    return descendantsOfFrame(frame.id, nearby).length;
   })();
 
   const setGeometry = (patch: Record<string, unknown>) =>
@@ -458,17 +443,9 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
   };
 
   /**
-   * Set the dash pattern, either by picking a style or by shaping one.
-   *
-   * One writer for both, because they produce the same thing: picking a style
-   * is choosing a ratio from `DASH_PRESET`, and shaping one is supplying it.
-   * Two paths writing `stroke.dash` would be two chances to forget
-   * `buildStroke`, which is the function that keeps a solid stroke from
-   * carrying a stale `dash` key.
-   *
-   * Shaping is applied **per node**, against each node's own weight, so a
-   * multi-selection of different weights all end up with the same *ratio*
-   * rather than the same array — which is the whole point of the ratio.
+   * Set the dash pattern, by style or by ratio. One writer for both, so
+   * `buildStroke` is never forgotten; applied per node against its own
+   * weight, so a mixed selection shares the ratio rather than the array.
    */
   const applyDash = (style: StrokeStyleId, ratio?: DashRatio) =>
     patchEach((n) => {
@@ -480,14 +457,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
         appearance: {
           ...(paint ?? {}),
           stroke: buildStroke(
-            {
-              color,
-              width,
-              align: current?.align,
-              join: current?.join,
-              miterLimit: current?.miterLimit,
-              cap: current?.cap,
-            },
+            { color, width, align: current?.align, join: current?.join, miterLimit: current?.miterLimit, cap: current?.cap },
             dashFor(style, width, ratio)
           ),
         },
@@ -495,30 +465,24 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
     });
 
   const setStrokeStyle = (style: StrokeStyleId) => applyDash(style);
-
   const setDashRatio = (ratio: DashRatio) => applyDash(styleOf(appearance?.stroke), ratio);
 
   const bounds = selectionBounds(nodes);
   const boxResizable = !isMulti || canResizeAsBox(nodes);
-  const resizeBlockedReason =
-    boxResizable ? undefined : 'Resize is unavailable while something in the selection is rotated';
+  const resizeBlockedReason = boxResizable ? undefined : 'Resize is unavailable while something in the selection is rotated';
 
   const setOrigin = (axis: 'x' | 'y', value: number) => {
     if (!isMulti) {
       set({ [axis]: value } as Partial<AnyNode>);
       return;
     }
-    if (bounds) applyNodePatches(translateSelection(nodes, bounds, axis, value));
+    if (bounds) writePatches(translateSelection(nodes, bounds, axis, value));
   };
 
-  const nudgeEach = (
-    key: 'x' | 'y' | 'rotation' | 'opacity' | 'skewX' | 'skewY',
-    delta: number,
-    min?: number,
-    max?: number
-  ) =>
+  const nudgeEach = (key: 'x' | 'y' | 'rotation' | 'opacity' | 'skewX' | 'skewY', delta: number, min?: number, max?: number) =>
     patchEach((n) => {
-      let next = ((n[key] as number | undefined) ?? 0) + delta;
+      const fallback = key === 'opacity' ? 1 : 0;
+      let next = Math.round((((n[key] as number | undefined) ?? fallback) + delta) * 10000) / 10000;
       if (min !== undefined) next = Math.max(min, next);
       if (max !== undefined) next = Math.min(max, next);
       return { [key]: next };
@@ -526,360 +490,209 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
 
   const resizeSelection = (axis: 'width' | 'height', value: number) => {
     if (!bounds || !boxResizable) return;
-
     if (!isMulti) {
       const other = axis === 'width' ? 'height' : 'width';
       const next = Math.max(1, value);
-      const scaled =
-        aspectLocked && node[axis] > 0 ? Math.round(next * (node[other] / node[axis])) : node[other];
+      const scaled = aspectLocked && node[axis] > 0 ? Math.round(next * (node[other] / node[axis])) : node[other];
       set({ [axis]: next, [other]: Math.max(1, scaled) } as Partial<AnyNode>);
       return;
     }
-
     const patches = scaleSelection(nodes, bounds, axis, value);
     if (!aspectLocked || bounds[axis] <= 0) {
-      applyNodePatches(patches);
+      writePatches(patches);
       return;
     }
-
     const factor = Math.max(1, value) / bounds[axis];
     const other = axis === 'width' ? 'height' : 'width';
     const merged = new Map<string, Record<string, unknown>>();
-    [...patches, ...scaleSelection(nodes, bounds, other, bounds[other] * factor)].forEach(
-      ({ id, changes }) => merged.set(id, { ...(merged.get(id) ?? {}), ...changes })
+    [...patches, ...scaleSelection(nodes, bounds, other, bounds[other] * factor)].forEach(({ id, changes }) =>
+      merged.set(id, { ...(merged.get(id) ?? {}), ...changes })
     );
-    applyNodePatches([...merged].map(([id, changes]) => ({ id, changes })));
+    writePatches([...merged].map(([id, changes]) => ({ id, changes })));
   };
 
-  const awarenessStates = provider.awareness?.getStates();
-  const myClientId = provider.awareness?.clientID;
-  const activeEditors: Array<{ name: string; color: string }> = [];
-  (awarenessStates ?? new Map()).forEach((state: any, clientId: number) => {
-    if (
-      clientId !== myClientId &&
-      state.user &&
-      Array.isArray(state.selection) &&
-      selectedIdsPresent.some((id) => state.selection.includes(id))
-    ) {
-      activeEditors.push({
-        name: state.user.name || 'Teammate',
-        color: state.user.color || getColorForUser(String(clientId)),
-      });
-    }
-  });
+  const restack = (op: RestackOp) => {
+    const patches = restackSelection(Object.values(useStore.getState().objects), selectedIds, op);
+    if (patches.length > 0) writePatches(patches);
+  };
+  const flip = (axis: 'x' | 'y') =>
+    patchEach((n) => (axis === 'x' ? { scaleX: -n.scaleX } : { scaleY: -n.scaleY }));
 
-  const createdByLabel =
-    String(node.createdBy) === localAuthorId() ? 'You' : node.createdByName || 'Unknown';
-  const updatedByLabel =
-    String(node.updatedBy) === localAuthorId() ? 'You' : node.updatedByName || 'Unknown';
+  const createdByLabel = String(node.createdBy) === localAuthorId() ? 'You' : node.createdByName || 'Unknown';
+  const updatedByLabel = String(node.updatedBy) === localAuthorId() ? 'You' : node.updatedByName || 'Unknown';
 
-  const sharedType = <T,>(read: (t: Typography) => T): Shared<T> =>
-    shared((n) => read(typographyOf(n) ?? DEFAULT_TYPOGRAPHY));
+  const sharedType = <T,>(read: (t: Typography) => T): Shared<T> => shared((n) => read(typographyOf(n) ?? DEFAULT_TYPOGRAPHY));
   const weight = sharedType((t) => t.fontWeight ?? 400);
   const isBold = (weight.value ?? 400) >= 600;
 
-  const sharedPaint = <T,>(read: (a: Appearance) => T): Shared<T> =>
-    shared((n) => read(appearanceOf(n) ?? {}));
+  const sharedPaint = <T,>(read: (a: Appearance) => T): Shared<T> => shared((n) => read(appearanceOf(n) ?? {}));
 
   const opacityShared = shared((n) => n.opacity);
   const rotationShared = shared((n) => n.rotation);
 
+  const noText = !isMulti && node.type === 'shape' && !(node.text ?? '').trim();
+  const startTyping = () => document.dispatchEvent(new CustomEvent('requestEditNode', { detail: { id: node.id } }));
+
   return (
-    <div className="custom-scrollbar" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto', overflowX: 'hidden', userSelect: 'none', background: 'var(--surface-primary)', paddingBottom: '24px' }}>
-      {/* HEADER */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px', borderBottom: '1px solid var(--border-divider)', background: 'var(--surface-elevated)', position: 'sticky', top: 0, zIndex: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', fontWeight: 500 }}>
-            {isMulti && !uniformType
-              ? <LayoutTemplate size={16} color="var(--text-secondary)" />
-              : TYPE_ICONS[node.type] ?? <LayoutTemplate size={16} color="var(--text-secondary)" />}
-            <span style={{ textTransform: 'capitalize' }}>{selectionLabel(nodes)}</span>
-          </div>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {!isMulti && (
-              <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 600, color: 'var(--text-tertiary)', background: 'var(--surface-hover)', padding: '2px 6px', borderRadius: 'var(--radius-sm)', letterSpacing: '0.04em', fontFamily: 'var(--font-mono, monospace)' }}>
-                {node.id.slice(0, 4)}
-              </span>
-            )}
-            {onCollapse && (
-              <button
-                className="btn-icon"
-                style={{ padding: '4px' }}
-                onClick={onCollapse}
-                data-tooltip="Collapse panel"
-                aria-label="Collapse the properties panel"
-              >
-                <PanelRightClose size={15} />
-              </button>
-            )}
-          </span>
-        </div>
+    <PanelSubjectContext.Provider value={subject}>
+      <div className="props-shell">
+        <WidthHandle />
+        <div className="props-panel custom-scrollbar">
+          <PanelHeader
+            nodes={nodes}
+            editors={editors}
+            flipped={{ x: flipped.x && !flipped.mixedX, y: flipped.y && !flipped.mixedY }}
+            locked={allLocked}
+            canLock
+            onRename={(title) => updateNodes([node.id], { title })}
+            onRestack={restack}
+            onFlip={flip}
+            onToggleLock={() => set({ locked: !allLocked } as Partial<AnyNode>)}
+            onCollapse={onCollapse}
+          />
 
-        {activeEditors.length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
-            <span style={{ position: 'relative', display: 'flex', height: '8px', width: '8px' }}>
-              <span style={{ position: 'absolute', height: '100%', width: '100%', borderRadius: '50%', backgroundColor: activeEditors[0].color, opacity: 0.7, animation: 'ping 1s cubic-bezier(0, 0, 0.2, 1) infinite' }} />
-              <span style={{ position: 'relative', display: 'inline-flex', borderRadius: '50%', height: '8px', width: '8px', backgroundColor: activeEditors[0].color }} />
-            </span>
-            {activeEditors[0].name} is editing
-          </div>
-        )}
+          {/* Subject: what this object is, first, because it is why it was selected. */}
+          {gridNode && <GridSection nodeId={gridNode.id} />}
+          {node.type === 'chart' && (
+            <Section id="chart" title="Chart" collapsible subject="chart">
+              <ChartSection node={node} />
+            </Section>
+          )}
+          {node.type === 'table' && (
+            <Section id="table" title="Table" collapsible subject="table">
+              <TableSection node={node} />
+            </Section>
+          )}
+          {affords('sticky-theme') && node.type === 'sticky' && (
+            <StickySection node={node} isMulti={isMulti} pickedTheme={pickedTheme} pinned={pinnedShared} set={set} />
+          )}
+          <ConnectorSection
+            node={node as ConnectorNode}
+            affords={affords}
+            shared={shared}
+            set={set}
+            boundNames={connectorBoundNames}
+          />
+          <ShapeGeometrySection
+            node={node}
+            uniformKind={uniformKind}
+            openShape={openShape}
+            affords={affords}
+            shared={shared}
+            setGeometry={setGeometry}
+            setSafeArea={setSafeArea}
+            applyFramePreset={applyFramePreset}
+            turnFrame={turnFrame}
+            fitFrameToContents={fitFrameToContents}
+            frameChildCount={frameChildCount}
+            setLayoutGuide={setLayoutGuide}
+          />
+          <ImageSection node={node as ImageNode} adjustments={adjustments} affords={affords} setAdjustment={setAdjustment} set={set} single={!isMulti} />
 
-        <div style={{ display: 'flex', background: 'var(--surface-hover)', padding: '2px', borderRadius: '6px', width: '100%', marginTop: '8px' }}>
-          <button
-            className="btn-icon btn-icon--sm" style={{ flex: 1 }}
-            onClick={() => {
-              const all = Object.values(useStore.getState().objects);
-              const patches = restackSelection(all, selectedIds, 'front');
-              if (patches.length > 0) applyNodePatches(patches);
-            }}
-            data-tooltip="Bring to front"
-            aria-label="Bring to front"
-          ><BringToFront size={14} /></button>
-          <button
-            className="btn-icon btn-icon--sm" style={{ flex: 1 }}
-            onClick={() => {
-              const all = Object.values(useStore.getState().objects);
-              const patches = restackSelection(all, selectedIds, 'forward');
-              if (patches.length > 0) applyNodePatches(patches);
-            }}
-            data-tooltip="Bring forward"
-            aria-label="Bring forward"
-          ><ArrowUp size={14} /></button>
-          <button
-            className="btn-icon btn-icon--sm" style={{ flex: 1 }}
-            onClick={() => {
-              const all = Object.values(useStore.getState().objects);
-              const patches = restackSelection(all, selectedIds, 'backward');
-              if (patches.length > 0) applyNodePatches(patches);
-            }}
-            data-tooltip="Send backward"
-            aria-label="Send backward"
-          ><ArrowDown size={14} /></button>
-          <button
-            className="btn-icon btn-icon--sm" style={{ flex: 1 }}
-            onClick={() => {
-              const all = Object.values(useStore.getState().objects);
-              const patches = restackSelection(all, selectedIds, 'back');
-              if (patches.length > 0) applyNodePatches(patches);
-            }}
-            data-tooltip="Send to back"
-            aria-label="Send to back"
-          ><SendToBack size={14} /></button>
-          <div style={{ width: '1px', height: '20px', margin: 'auto 4px', background: 'var(--border-divider)' }} />
-          <button
-            className="btn-icon"
-            style={{ flex: 1 }}
-            onClick={() => patchEach((n) => ({ scaleX: -n.scaleX }))}
-            data-tooltip="Flip horizontally"
-            aria-label="Flip horizontally"
-            aria-pressed={!flipped.mixedX && flipped.x}
-          ><FlipHorizontal size={14} /></button>
-          <button
-            className="btn-icon"
-            style={{ flex: 1 }}
-            onClick={() => patchEach((n) => ({ scaleY: -n.scaleY }))}
-            data-tooltip="Flip vertically"
-            aria-label="Flip vertically"
-            aria-pressed={!flipped.mixedY && flipped.y}
-          ><FlipVertical size={14} /></button>
+          <TransformSection
+            bounds={bounds}
+            node={node}
+            aspectLocked={aspectLocked}
+            setAspectLocked={setAspectLocked}
+            resizeBlockedReason={resizeBlockedReason}
+            rotationShared={rotationShared}
+            setOrigin={setOrigin}
+            resizeSelection={resizeSelection}
+            set={set}
+            nudgeEach={nudgeEach}
+            shared={shared}
+            flipped={flipped}
+            onFlip={flip}
+          />
+
+          <AppearanceSection
+            capabilities={capabilities}
+            appearance={appearance ?? undefined}
+            openShape={openShape}
+            hasConnector={hasConnector}
+            sharedPaint={sharedPaint}
+            opacityShared={opacityShared}
+            setAppearance={setAppearance}
+            set={set}
+            nudgeOpacity={(d) => nudgeEach('opacity', d, 0, 1)}
+          />
+
+          <FillSection
+            capabilities={capabilities}
+            appearance={appearance ?? undefined}
+            openShape={openShape}
+            sharedPaint={sharedPaint}
+            setAppearance={setAppearance}
+            setConnectorLikeColor={setConnectorLikeColor}
+          />
+
+          <StrokeSection
+            capabilities={capabilities}
+            appearance={appearance ?? undefined}
+            openShape={openShape}
+            hasCorners={hasCorners}
+            hasEnds={hasEnds}
+            sharedPaint={sharedPaint}
+            setStroke={setStroke}
+            setStrokeStyle={setStrokeStyle}
+            setDashRatio={setDashRatio}
+            setAppearance={setAppearance}
+          />
+
+          {isMulti && <SelectionColorsSection nodes={nodes} />}
+
+          <TypographySection
+            node={node}
+            typography={typography}
+            uniformType={uniformType}
+            openShape={openShape}
+            cycleKey={cycleKey}
+            isBold={isBold}
+            noText={noText}
+            onStartTyping={startTyping}
+            sharedType={sharedType}
+            shared={shared}
+            setTypography={setTypography}
+            set={set}
+            patchEach={patchEach}
+            typographyOf={typographyOf}
+          />
+
+          <EffectsSection
+            capabilities={capabilities}
+            appearance={appearance ?? undefined}
+            openShape={openShape}
+            hasConnector={hasConnector}
+            hasImage={hasImage}
+            sharedPaint={sharedPaint}
+            setAppearance={setAppearance}
+            setShadow={setShadow}
+            setInnerShadow={setInnerShadow}
+          />
+
+          <SketchSection
+            capabilities={capabilities}
+            appearance={appearance ?? undefined}
+            sketchable={sketchable}
+            allClosed={allClosed}
+            sharedPaint={sharedPaint}
+            setAppearance={setAppearance}
+          />
+
+          <PhysicsMaterialSection nodes={nodes} node={node} set={set} />
+
+          <MetadataSection node={node} isMulti={isMulti} createdByLabel={createdByLabel} updatedByLabel={updatedByLabel} />
         </div>
       </div>
-
-      {gridNode && (
-        <Accordion title="Grid" icon={<LayoutGrid size={13} />} defaultOpen>
-          <GridSection nodeId={gridNode.id} />
-        </Accordion>
-      )}
-
-      {/*
-        Open by default, and first, because the data grid inside it is the
-        reason somebody selected the chart. A chart whose numbers are behind a
-        closed accordion is a chart you have to learn to edit.
-      */}
-      {node.type === 'chart' && (
-        <Accordion title="Chart" icon={<BarChart3 size={13} />} defaultOpen>
-          <ChartSection node={node} />
-        </Accordion>
-      )}
-
-      {node.type === 'table' && (
-        <Accordion title="Table" icon={TYPE_ICONS.table} defaultOpen>
-          <TableSection node={node} />
-        </Accordion>
-      )}
-
-      {affords('sticky-theme') && node.type === 'sticky' && (
-        <Accordion title="Note" icon={<StickyNote size={13} />}>
-          {/*
-            The eight papers, offered as themselves.
-
-            This was a full RGB picker with `nearestTheme` run over whatever
-            came back — sixteen million colours offered and eight honoured,
-            silently snapping every choice to something nobody picked. A sticky
-            has no free fill: the palette is eight paper-and-ink pairs, each ink
-            a deep version of its own paper so the note reads as one material,
-            and a control that shows a spectrum to make a one-of-eight decision
-            is lying about what it does. The contextual rail has offered the
-            papers directly for a while; the panel does now too.
-          */}
-          <Row label="Paper">
-            <div className="sticky-papers" role="radiogroup" aria-label="Note colour">
-              {STICKY_THEMES.map((id) => {
-                const paper = THEMES[id];
-                // Nothing reads as chosen across a mixed selection: two notes on
-                // different papers have no one answer, and showing the first
-                // one's as selected would claim they agreed.
-                const active = !pickedTheme.mixed && pickedTheme.value === id;
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    aria-label={id}
-                    data-tooltip={id[0].toUpperCase() + id.slice(1)}
-                    className={`sticky-paper${active ? ' is-active' : ''}`}
-                    style={{ background: paper.bg, borderColor: paper.edge, color: paper.text }}
-                    onClick={() => {
-                      set({ theme: id });
-                      // The next note drawn takes the colour just chosen, which
-                      // is what makes picking one feel like setting a default.
-                      useStore.getState().setStickyTheme(id);
-                    }}
-                  >
-                    Aa
-                  </button>
-                );
-              })}
-            </div>
-          </Row>
-          <Row label="Pinned" hint="A pinned note is held where it is and cannot be dragged. Everything else about it stays editable.">
-            <input type="checkbox" checked={node.pinned} onChange={(e) => set({ pinned: e.target.checked })} />
-          </Row>
-          {!isMulti && <TagEditor tags={node.tags} onChange={(tags: string[]) => set({ tags })} />}
-        </Accordion>
-      )}
-
-      <ConnectorSection
-        node={node as ConnectorNode}
-        affords={affords}
-        shared={shared}
-        set={set}
-        boundNames={connectorBoundNames}
-      />
-
-      <ShapeGeometrySection
-        node={node}
-        uniformKind={uniformKind}
-        openShape={openShape}
-        affords={affords}
-        shared={shared}
-        setGeometry={setGeometry}
-        setSafeArea={setSafeArea}
-        applyFramePreset={applyFramePreset}
-        turnFrame={turnFrame}
-        fitFrameToContents={fitFrameToContents}
-        frameChildCount={frameChildCount}
-        setLayoutGuide={setLayoutGuide}
-      />
-
-      <ImageSection
-        node={node as ImageNode}
-        adjustments={adjustments}
-        affords={affords}
-        setAdjustment={setAdjustment}
-        set={set}
-      />
-
-      <TransformSection
-        bounds={bounds}
-        node={node}
-        aspectLocked={aspectLocked}
-        setAspectLocked={setAspectLocked}
-        resizeBlockedReason={resizeBlockedReason}
-        rotationShared={rotationShared}
-        setOrigin={setOrigin}
-        resizeSelection={resizeSelection}
-        set={set}
-        nudgeEach={nudgeEach}
-        shared={shared}
-      />
-
-      <FillAppearanceSection
-        capabilities={capabilities}
-        appearance={appearance ?? undefined}
-        openShape={openShape}
-        hasConnector={hasConnector}
-        sharedPaint={sharedPaint}
-        opacityShared={opacityShared}
-        setAppearance={setAppearance}
-        set={set}
-        setConnectorLikeColor={setConnectorLikeColor}
-      />
-
-      <StrokeSection
-        capabilities={capabilities}
-        appearance={appearance ?? undefined}
-        openShape={openShape}
-        hasCorners={hasCorners}
-        hasEnds={hasEnds}
-        sharedPaint={sharedPaint}
-        setStroke={setStroke}
-        setStrokeStyle={setStrokeStyle}
-        setDashRatio={setDashRatio}
-      />
-
-      {/* Between the paint and the effects, which is where it belongs: how the
-          marks are made is a property of the drawing, not of the light on it. */}
-      <SketchSection
-        capabilities={capabilities}
-        appearance={appearance ?? undefined}
-        sketchable={sketchable}
-        allClosed={allClosed}
-        sharedPaint={sharedPaint}
-        setAppearance={setAppearance}
-      />
-
-      <EffectsSection
-        capabilities={capabilities}
-        appearance={appearance ?? undefined}
-        openShape={openShape}
-        hasConnector={hasConnector}
-        hasImage={hasImage}
-        sharedPaint={sharedPaint}
-        setAppearance={setAppearance}
-        setShadow={setShadow}
-        setInnerShadow={setInnerShadow}
-      />
-
-      <TypographySection
-        node={node}
-        typography={typography}
-        uniformType={uniformType}
-        openShape={openShape}
-        cycleKey={cycleKey}
-        isBold={isBold}
-        sharedType={sharedType}
-        shared={shared}
-        setTypography={setTypography}
-        set={set}
-        patchEach={patchEach}
-        typographyOf={typographyOf}
-      />
-
-      <PhysicsMaterialSection
-        nodes={nodes}
-        node={node}
-        set={set}
-      />
-
-      <MetadataSection
-        node={node}
-        isMulti={isMulti}
-        createdByLabel={createdByLabel}
-        updatedByLabel={updatedByLabel}
-      />
-    </div>
+    </PanelSubjectContext.Provider>
   );
 };
+
+/** The panel, contained: a crash here resets on the next selection and leaves the board running. */
+export const PropertiesPanel = React.memo(function PropertiesPanel(props: PropertiesPanelProps) {
+  return (
+    <FeatureBoundary name="properties panel" variant="panel" resetKey={props.selectedIds.join(',')}>
+      <PropertiesPanelInner {...props} />
+    </FeatureBoundary>
+  );
+});

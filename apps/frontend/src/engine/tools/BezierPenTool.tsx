@@ -5,10 +5,12 @@ import { gridSnap } from '../interaction/gridSnap';
 import * as React from 'react';
 import { Path, Circle, Line } from 'react-konva';
 import { ThemeService } from '../ThemeService';
-import { pathData, type Anchor } from '../model/pathGeometry';
+import { pathData, toAnchors, type Anchor } from '../model/pathGeometry';
+import { undoManager, updateNode } from '../document';
 import {
   commitPath,
   constrainToAngle,
+  continuationFrom,
   isClosable,
   isHandleDrag,
   previewGeometry,
@@ -49,8 +51,9 @@ const HANDLE_ARM = '#93C5FD';
  * | click the first anchor      | close the path                            |
  * | Shift                       | the segment locks to 45°                  |
  * | Backspace                   | undo the last anchor                      |
- * | Enter                       | finish, open                              |
- * | Escape                      | discard                                   |
+ * | Enter or Escape             | finish, open (Escape discards a lone anchor) |
+ * | press an open path's end     | continue that path from there             |
+ * | Shift while pulling         | the handle locks to 45°                   |
  */
 export class BezierPenTool implements Tool {
   id = 'bezier-pen';
@@ -64,6 +67,8 @@ export class BezierPenTool implements Tool {
   private hoverStart = false;
   /** True once the press has travelled far enough to be shaping a curve. */
   private pulling = false;
+  /** The open path being continued, when the first press landed on one of its ends. */
+  private extending: string | null = null;
 
   onActivate() {
     this.reset();
@@ -83,6 +88,7 @@ export class BezierPenTool implements Tool {
     this.previewPos = null;
     this.hoverStart = false;
     this.pulling = false;
+    this.extending = null;
   }
 
   onPointerDown(ctx: ToolContext, e: any) {
@@ -93,6 +99,15 @@ export class BezierPenTool implements Tool {
     this.pulling = false;
 
     if (!this.isActive) {
+      const resumed = this.resumeAt(raw, ctx.camera.zoom);
+      if (resumed) {
+        this.anchors = resumed.anchors;
+        this.extending = resumed.id;
+        this.isActive = true;
+        this.pressAt = null;
+        this.updateOverlay(ctx);
+        return;
+      }
       this.anchors = [{ x: pos.x, y: pos.y }];
       this.isActive = true;
       this.updateOverlay(ctx);
@@ -140,7 +155,8 @@ export class BezierPenTool implements Tool {
         // Alt breaks the pair, which is how a cusp is drawn. Read every frame
         // rather than at the press, so the key can be taken and released
         // part-way through shaping the curve.
-        this.anchors[this.anchors.length - 1] = pullHandle(last, pos, Boolean(e.evt?.altKey));
+        const target = e.evt?.shiftKey ? constrainToAngle(last, raw) : pos;
+        this.anchors[this.anchors.length - 1] = pullHandle(last, target, Boolean(e.evt?.altKey));
       }
     }
 
@@ -160,8 +176,13 @@ export class BezierPenTool implements Tool {
       this.finalize(ctx, false);
     } else if (e.key === 'Escape') {
       e.preventDefault();
-      this.reset();
-      ctx.setOverlayState?.(null);
+      // Escape keeps the work, as in every vector editor; a lone anchor is not a path.
+      if (this.anchors.length >= 2) {
+        this.finalize(ctx, false);
+      } else {
+        this.reset();
+        ctx.setOverlayState?.(null);
+      }
     } else if (e.key === 'Backspace' || e.key === 'Delete') {
       // Undo the last anchor rather than the whole path. Misplacing one point
       // in a ten-point outline used to mean Escape and start again, which is
@@ -191,8 +212,26 @@ export class BezierPenTool implements Tool {
       return;
     }
 
+    undoManager.stopCapturing();
+    if (this.extending && useStore.getState().objects[this.extending]) {
+      const id = this.extending;
+      updateNode(id, {
+        x: path.x,
+        y: path.y,
+        width: path.width,
+        height: path.height,
+        geometry: path.geometry,
+      });
+      undoManager.stopCapturing();
+      ctx.editor.select(id);
+      this.reset();
+      ctx.setOverlayState?.(null);
+      return;
+    }
+
+    const id = nanoid();
     ctx.editor.createNode({
-      id: nanoid(),
+      id,
       type: 'path',
       x: path.x,
       y: path.y,
@@ -205,6 +244,8 @@ export class BezierPenTool implements Tool {
         stroke: { color: ThemeService.getDefaultStrokeColor(), width: useStore.getState().penStrokeWidth },
       },
     });
+    undoManager.stopCapturing();
+    ctx.editor.select(id);
 
     this.reset();
     ctx.setOverlayState?.(null);
@@ -263,6 +304,24 @@ export class BezierPenTool implements Tool {
         })}
       </>
     );
+  }
+
+  /**
+   * An open path whose end is under the pointer, as anchors to continue from.
+   * The topmost one wins, so the path you can see is the one you extend.
+   */
+  private resumeAt(pointer: { x: number; y: number }, zoom: number): { id: string; anchors: Anchor[] } | null {
+    const nodes = Object.values(useStore.getState().objects) as any[];
+    nodes.sort((a, b) => (b.zIndex || 0) - (a.zIndex || 0));
+    for (const node of nodes) {
+      if (node.type !== 'path' || node.locked || node.hidden) continue;
+      const geo = node.geometry;
+      if (geo?.kind !== 'bezier' || geo.closed) continue;
+      if (node.rotation || (node.scaleX ?? 1) !== 1 || (node.scaleY ?? 1) !== 1) continue;
+      const anchors = continuationFrom(toAnchors(geo), { x: node.x, y: node.y }, pointer, zoom);
+      if (anchors) return { id: node.id, anchors };
+    }
+    return null;
   }
 
   private getPointerPos(ctx: ToolContext, e: any) {

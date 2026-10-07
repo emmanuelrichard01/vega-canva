@@ -1,4 +1,5 @@
 import { layoutGrid, type GridKind, type GridSpec, KIND_DEFAULTS } from './gridLayout';
+import { cssColorOr, isCssColor } from '../text/cssColor';
 import {
   styleCells,
   CELL_SHAPES,
@@ -8,6 +9,30 @@ import {
   type StyledCell,
 } from './gridStyle';
 import { cellPatch, type GridRecipe } from './gridBuild';
+import { normalizePadding, normalizeSpans, normalizeTracks } from './gridTracks';
+import type { CellAlign, CellAlignAxis } from './gridLayout';
+
+const ALIGN_AXES: readonly CellAlignAxis[] = ['start', 'center', 'end', 'stretch'];
+
+/** Content alignment off the wire; absent when it is the default (stretch both ways). */
+function normalizeContentAlign(raw: unknown): CellAlign | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  const axis = (v: unknown): CellAlignAxis =>
+    ALIGN_AXES.includes(v as CellAlignAxis) ? (v as CellAlignAxis) : 'stretch';
+  const align = { x: axis(o.x), y: axis(o.y) };
+  return align.x === 'stretch' && align.y === 'stretch' ? undefined : align;
+}
+
+/** Explicit tracks off the wire; absent when neither axis has any. */
+function normalizeGridTracks(raw: unknown): GridRecipe['spec']['tracks'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  const cols = normalizeTracks(o.cols);
+  const rows = normalizeTracks(o.rows);
+  if (!cols && !rows) return undefined;
+  return { ...(cols ? { cols } : null), ...(rows ? { rows } : null) };
+}
 
 /**
  * A grid node's cells, derived.
@@ -102,12 +127,16 @@ function num(v: unknown, fallback: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
 }
 
+function optional<K extends string, V>(key: K, value: V | undefined): { [P in K]?: V } {
+  return (value === undefined ? {} : { [key]: value }) as { [P in K]?: V };
+}
+
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
 
 function colour(v: unknown, fallback: string): string {
-  return typeof v === 'string' && v.length > 0 ? v : fallback;
+  return cssColorOr(v, fallback);
 }
 
 /**
@@ -138,7 +167,7 @@ export function normalizeRecipe(raw: unknown, width: number, height: number): Gr
     ? style.shapes.filter((s) => (CELL_SHAPES as readonly string[]).includes(s as string))
     : [];
   const palette = Array.isArray(style.palette)
-    ? style.palette.filter((c): c is string => typeof c === 'string' && c.length > 0)
+    ? style.palette.filter(isCssColor).map((c) => c.trim())
     : [];
 
   return {
@@ -164,6 +193,13 @@ export function normalizeRecipe(raw: unknown, width: number, height: number): Gr
       // it started -- so that is the far end of the range rather than an
       // arbitrary cap.
       ...(num(spec.stagger, 0) !== 0 ? { stagger: clamp(num(spec.stagger, 0), 0, 1) } : null),
+      // The layout-tool fields. Each is written only when it says something,
+      // so a grid that uses none of them carries no keys for them.
+      ...optional('padding', normalizePadding(spec.padding)),
+      ...optional('tracks', normalizeGridTracks(spec.tracks)),
+      ...optional('spans', normalizeSpans(spec.spans)),
+      ...optional('contentAlign', normalizeContentAlign(spec.contentAlign)),
+      ...(spec.sizing === 'hug' ? { sizing: 'hug' as const } : null),
     },
     style: {
       // A document written before shapes carried the mix on their own may still

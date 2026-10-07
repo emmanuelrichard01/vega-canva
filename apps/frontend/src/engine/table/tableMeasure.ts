@@ -22,3 +22,18 @@ export function tableMeasure(sketch: boolean): Measure {
     return c.measureText(text).width;
   };
 }
+
+/**
+ * The same measure at the size given, with no sketch scaling — for the paint
+ * plan, which has already scaled its sizes for the sketch hand.
+ */
+export function paintMeasure(sketch: boolean): Measure {
+  if (ctx === undefined) ctx = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d');
+  const c = ctx;
+  if (!c) return approxMeasure;
+  const family = sketch ? SKETCH_FONT : TABLE_FONT;
+  return (text, bold, italic, size) => {
+    c.font = `${italic ? 'italic ' : ''}${bold || sketch ? 600 : 400} ${size}px ${family}`;
+    return c.measureText(text).width;
+  };
+}

@@ -1,17 +1,20 @@
 import { nanoid } from 'nanoid';
-import { applyNodePatches, doc, nextZIndex } from '../document';
+import { applyNodePatches, doc, nextZIndex, DERIVED_ORIGIN } from '../document';
+import { isElectedWriter } from '../document/election';
 import { editor } from '../api/EditorAPI';
 import { requestEditOnMount } from '../interaction/pendingEdit';
 import { useStore } from '../../hooks/useStore';
 import { DEFAULT_TYPOGRAPHY, type AnyNode, type GridNode, type ImageNode, type Point } from '../model/schema';
 import { gridCellsOf } from './gridNode';
 import {
+  fitInCell,
   isSlottable,
-  planGridReflow,
+  planGridUpdate,
   planSlotRelease,
   type ReflowPatch,
   type SlottableNode,
 } from './gridReflow';
+import { adoptionSuppressed } from './dropIntent';
 import {
   assignSlots,
   canHoldContent,
@@ -88,7 +91,7 @@ export function reflowGrid(gridId: string): void {
   const objects = useStore.getState().objects;
   const grid = objects[gridId];
   if (!isGrid(grid)) return;
-  applyNodePatches(planGridReflow(grid, imagesInGrid(objects, gridId)));
+  applyNodePatches(planGridUpdate(grid, imagesInGrid(objects, gridId)));
 }
 
 /**
@@ -100,11 +103,11 @@ export function reflowGrid(gridId: string): void {
  * what `GridRenderer` hit-tests, so the region that accepts a drop is exactly
  * the region that looks like the grid.
  */
-export function gridAtPoint(world: Point): GridNode | null {
+export function gridAtPoint(world: Point, exclude?: string): GridNode | null {
   const objects = useStore.getState().objects;
   let best: GridNode | null = null;
   for (const node of Object.values(objects)) {
-    if (!isGrid(node) || node.locked || node.hidden) continue;
+    if (!isGrid(node) || node.locked || node.hidden || node.id === exclude) continue;
     const local = gridLocalPoint(node, world);
     if (local.x < 0 || local.y < 0 || local.x > node.width || local.y > node.height) continue;
     if (!best || node.zIndex > best.zIndex) best = node;
@@ -123,7 +126,7 @@ export function freeCellsFrom(gridId: string, start: number): number[] {
   const grid = objects[gridId];
   if (!isGrid(grid)) return [];
   const unavailable = unavailableCells(grid, imagesInGrid(objects, gridId), new Set());
-  return freeCellsIn(gridCellsOf(grid).length, unavailable, start);
+  return freeCellsIn(gridCellsOf(grid).map((c) => c.index), unavailable, start);
 }
 
 /** Whether a module is empty and big enough, and so has room for something. */
@@ -148,12 +151,17 @@ export function gridContent(
   gridId: string
 ): GridContent {
   const grid = objects[gridId];
-  if (!isGrid(grid)) return { modules: 0, filled: 0, parked: 0 };
+  if (!isGrid(grid)) return { modules: 0, filled: 0, parked: 0, parkedIds: [] };
 
-  const cells = gridCellsOf(grid);
+  const indices = new Set(gridCellsOf(grid).map((c) => c.index));
   const content = imagesInGrid(objects, gridId);
-  const filled = content.filter((n) => cells.some((c) => c.index === n.gridSlot!.cell)).length;
-  return { modules: cells.length, filled, parked: content.length - filled };
+  const parkedIds = content.filter((n) => !indices.has(n.gridSlot!.cell)).map((n) => n.id);
+  return {
+    modules: indices.size,
+    filled: content.length - parkedIds.length,
+    parked: parkedIds.length,
+    parkedIds,
+  };
 }
 
 export interface GridContent {
@@ -169,6 +177,8 @@ export interface GridContent {
    * count rather than from two that could disagree.
    */
   parked: number;
+  /** The waiting content itself, so the panel can select it. */
+  parkedIds: string[];
 }
 
 /** The module of this grid a world point lands on. */
@@ -193,7 +203,7 @@ function placementPatch(
   const target = gridCellsOf(grid).find((c) => c.index === cell);
   if (!target) return null;
 
-  const box = slotBox(grid, target);
+  const box = slotBox(grid, fitInCell(content, target, grid.grid.spec.contentAlign));
 
   /**
    * A fresh placement is centred and unzoomed, on purpose.
@@ -218,7 +228,9 @@ function placementPatch(
             cornerRadius: target.outline ? 0 : target.radius,
           },
         }
-      : { resize: 'fixed' as const };
+      : content.type === 'text'
+        ? { resize: 'fixed' as const }
+        : null;
 
   return {
     id: content.id,
@@ -265,10 +277,8 @@ export function fillGridWithImages(gridId: string, imageIds: readonly string[]):
 
   const inserting = new Set(images.map((i) => i.id));
   const unavailable = unavailableCells(grid, imagesInGrid(objects, gridId), inserting);
-  const cellCount = gridCellsOf(grid).length;
-
   const { placed, overflow } = assignSlots(
-    cellCount,
+    gridCellsOf(grid).map((c) => c.index),
     images.map((i) => i.id),
     unavailable
   );
@@ -342,7 +352,9 @@ export function reassignGridSlot(imageId: string): void {
   if (!isSlottable(image) || image.locked) return;
 
   const centre = { x: image.x + image.width / 2, y: image.y + image.height / 2 };
-  const grid = gridAtPoint(centre);
+  // Ctrl or ⌘ held through the drop keeps the object free: it lands where it
+  // was dropped and leaves any grid it was in.
+  const grid = adoptionSuppressed() ? null : gridAtPoint(centre, imageId);
 
   if (!grid) {
     if (image.gridSlot) releaseSlots([imageId]);
@@ -699,10 +711,15 @@ export function addTextToCell(gridId: string, cell: number): string | null {
  *
  * The write it makes is itself a change, which this sees. But a reflow is a
  * pure function of the grid's box and only differences are written, so the
- * second pass produces nothing and it settles in one extra round. That is the
- * same property that makes it safe for every client in the room to run it: they
- * all compute the same answer, whoever gets there first writes it, and the rest
- * find it already true.
+ * second pass produces nothing and it settles in one extra round.
+ *
+ * ## Who writes
+ *
+ * A client reflows its own edits at once, in an ordinary transaction, so the
+ * reflow lands in the same undo step as the edit that caused it. Changes from
+ * other people are reflowed only by the elected writer, under
+ * `DERIVED_ORIGIN`, so the room does not write every patch once per peer and
+ * nobody's undo stack fills with reflows they did not cause.
  *
  * ## Why it subscribes to the store rather than to the document
  *
@@ -722,7 +739,9 @@ export function startGridSlotSync(): () => void {
     // document in response would turn looking at history into editing it.
     if (state.isReplaying) return;
 
-    const { objects, lastChangedIds, lastRemovedIds } = state;
+    const { objects, lastChangedIds, lastRemovedIds, lastChangeLocal } = state;
+    if (!lastChangeLocal && !isElectedWriter()) return;
+    const write = { origin: lastChangeLocal ? null : DERIVED_ORIGIN };
 
     /**
      * A grid that was deleted releases its pictures.
@@ -738,7 +757,7 @@ export function startGridSlotSync(): () => void {
         removedGrids,
         Object.values(objects).filter(isSlottable)
       );
-      if (orphans.length > 0) applyNodePatches(orphans);
+      if (orphans.length > 0) applyNodePatches(orphans, write);
     }
 
     /**
@@ -762,8 +781,8 @@ export function startGridSlotSync(): () => void {
     for (const gridId of grids) {
       const grid = objects[gridId];
       if (!isGrid(grid)) continue;
-      patches.push(...planGridReflow(grid, imagesInGrid(objects, gridId)));
+      patches.push(...planGridUpdate(grid, imagesInGrid(objects, gridId)));
     }
-    if (patches.length > 0) applyNodePatches(patches);
+    if (patches.length > 0) applyNodePatches(patches, write);
   });
 }

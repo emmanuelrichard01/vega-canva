@@ -3,8 +3,12 @@ import {
   addSeparator,
   DEFAULT_LAYOUT,
   DOCK_SEATS,
+  drawerSeats,
   hideSeat,
+  isCarried,
   isDefaultLayout,
+  LAYOUT_VERSION,
+  migrateStoredLayout,
   moveItem,
   normalizeLayout,
   removeAt,
@@ -28,10 +32,20 @@ describe('DEFAULT_LAYOUT', () => {
     expect(seats.length).toBe(DOCK_SEATS.length);
   });
 
-  it('starts with every tool on the dock', () => {
-    // The text block used to start put away purely for width. Folding it and
-    // the Text tool into one `type` seat removed a seat instead of hiding one.
-    expect(DEFAULT_LAYOUT.hidden).toEqual([]);
+  it('starts with eleven seats', () => {
+    expect(DEFAULT_LAYOUT.order.filter((i) => i !== SEPARATOR)).toEqual([
+      'select', 'hand', 'draw', 'type', 'sticky', 'shape', 'connector', 'frame', 'data', 'media', 'comment',
+    ]);
+  });
+
+  it('carries every put-away tool on a seat, except Forces, which the drawer holds', () => {
+    // A put-away tool nobody carries would be reachable only from the drawer;
+    // the only one that should be is Forces.
+    expect(drawerSeats(DEFAULT_LAYOUT)).toEqual(['forces']);
+    for (const seat of DEFAULT_LAYOUT.hidden) {
+      if (seat === 'forces') continue;
+      expect(isCarried(DEFAULT_LAYOUT, seat)).toBe(true);
+    }
   });
 
   it('survives its own normalizer unchanged', () => {
@@ -118,6 +132,37 @@ describe('normalizeLayout', () => {
     const { order, hidden } = normalizeLayout({ order: ['select'], hidden: ['select'] });
     expect(order).toContain('select');
     expect(hidden).not.toContain('select');
+  });
+});
+
+describe('carried seats', () => {
+  it('lists a put-away seat in the drawer once its host is put away too', () => {
+    const noData = hideSeat(DEFAULT_LAYOUT, 'data');
+    expect(isCarried(noData, 'chart')).toBe(false);
+    expect(drawerSeats(noData)).toEqual(expect.arrayContaining(['grid', 'chart', 'table', 'data', 'forces']));
+  });
+
+  it('does not count a seat that is itself on the dock as carried', () => {
+    const pinned = showSeat(DEFAULT_LAYOUT, 'chart');
+    expect(isCarried(pinned, 'chart')).toBe(false);
+    expect(drawerSeats(pinned)).not.toContain('chart');
+  });
+});
+
+describe('migrateStoredLayout', () => {
+  it('folds an old layout\'s data and media seats into one seat each, in place', () => {
+    const migrated = normalizeLayout(
+      migrateStoredLayout({ order: ['select', 'grid', 'chart', 'table', 'image', 'audio', 'hand'], hidden: ['forces'] })
+    );
+    expect(migrated.order.slice(0, 4)).toEqual(['select', 'data', 'media', 'hand']);
+    expect(migrated.hidden).toEqual(expect.arrayContaining(['forces', 'grid', 'chart', 'table', 'image', 'audio']));
+    // New seats nobody mentioned still arrive, visible, at the end.
+    expect(migrated.order).toContain('comment');
+  });
+
+  it('leaves a current layout alone', () => {
+    const stored = { v: LAYOUT_VERSION, order: ['chart', 'select'], hidden: [] };
+    expect(migrateStoredLayout(stored)).toBe(stored);
   });
 });
 

@@ -20,10 +20,9 @@ import { createHmac, timingSafeEqual, randomBytes } from 'crypto';
  * a token carries the room id, because the client needs it to open the
  * document at all. Someone who reads it out of their own URL can connect the
  * ordinary way and get an editor session, because a bare room id still opens a
- * board. **Closing that is a product decision, not a cryptographic one** -- it
- * means refusing unsigned connections, which breaks every link already shared
- * and the room-code join box with it. `docs/DEPLOYMENT.md` §1 carries the
- * choice.
+ * board. Closing that is `ENFORCE_SHARE_TOKENS`: unsigned connections and
+ * REST calls are refused, which breaks every bare room link already shared and
+ * the room-code join box with it. `docs/DEPLOYMENT.md` §1 carries the choice.
  *
  * So: this raises the floor from "the client decides" to "the server decides,
  * for anyone who arrives by the link they were given". That is a real change
@@ -78,10 +77,10 @@ function sign(payloadB64: string, secret: string): string {
 /**
  * Mint a link for a role.
  *
- * Minting needs no authority beyond already holding the room id, and that is
- * correct rather than an oversight: a token is strictly *less* than the room
- * id it is derived from, so anyone who could mint one could already do
- * everything it permits. Attenuation never needs a permission check.
+ * This function signs whatever it is asked to; deciding who may ask is the
+ * caller's job. The invite route only mints a role at or below the caller's
+ * own (see `routes/rooms.ts`), because under `ENFORCE_SHARE_TOKENS` the room
+ * id alone grants nothing and a viewer can read it out of their own token.
  */
 export function mintShareToken(secret: string, options: MintOptions): string {
   const { roomId, role } = options;

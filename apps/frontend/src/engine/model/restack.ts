@@ -1,6 +1,7 @@
 import type { AnyNode } from './schema';
 import { nodeBounds, type NodePatch } from './selection';
 import { descendantsOfFrame } from './frames';
+import { sortByStacking } from './stacking';
 
 /**
  * Moving a selection up and down the stack.
@@ -41,9 +42,7 @@ export type RestackOp = 'front' | 'forward' | 'backward' | 'back';
 
 /** Where each node sits, bottom first, as the canvas draws it. */
 function stackOrder(nodes: readonly AnyNode[]): AnyNode[] {
-  // `Array.prototype.sort` is stable, which is what the canvas relies on too:
-  // ties are drawn in insertion order, and so they are read in it here.
-  return [...nodes].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
+  return sortByStacking(nodes);
 }
 
 function overlaps(a: AnyNode, b: AnyNode): boolean {

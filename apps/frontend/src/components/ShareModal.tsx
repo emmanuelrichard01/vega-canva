@@ -1,18 +1,38 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, Check, Clock, Copy, Hash, Info, Link as LinkIcon, QrCode, Share2, X, MessageSquare, Edit3, Eye } from 'lucide-react';
+import { AlertCircle, Archive, Check, ChevronRight, Clock, Copy, FileText, Hash, Image as ImageIcon, Info, Link as LinkIcon, PenTool, QrCode, Share2, X, MessageSquare, Edit3, Eye } from 'lucide-react';
 import { formatRoomCode, roomCodeFor } from '../engine/room/roomCode';
 import { useFocusTrap } from '../hooks/useFocusTrap';
-import { inviteMintUrl } from '../utils/endpoints';
+import { inviteMintUrl, roomRequestHeaders } from '../utils/endpoints';
 import { metadataMap, roomId as currentRoomId } from '../engine/document/doc';
 import { useRoomState } from '../hooks/useSync';
 import { copyLink, shareLink, shareSheetWorthwhile } from '../engine/share/copyLink';
-import type { RoomRole } from '../engine/model/permissions';
+import { getRoomRole, type RoomRole } from '../engine/model/permissions';
+import type { ExportFormat } from '../engine/export/ExportTypes';
+import { menuShortcut, SHORTCUTS } from './menu/shortcuts';
+import './workspace/shell.css';
 import { LinkPreview } from './share/LinkPreview';
 import { ShareQr } from './share/ShareQr';
 
 interface ShareModalProps {
   onClose: () => void;
+  /** Hand over to the export dialog in this format. Without it there is no Export tab. */
+  onExport?: (format: ExportFormat) => void;
 }
+
+/** How much each role may do, so a link is never offered above the tab's own. */
+const RANK: Record<RoomRole, number> = { viewer: 0, commenter: 1, editor: 2 };
+
+/**
+ * The ways work leaves the board, as the Export tab offers them. Each opens the
+ * export dialog already set to its format, where the region, scale and
+ * background are chosen with a preview.
+ */
+const EXPORTS: ReadonlyArray<{ format: ExportFormat; label: string; detail: string; Icon: typeof FileText }> = [
+  { format: 'png', label: 'Image', detail: 'PNG, for slides, chat and documents', Icon: ImageIcon },
+  { format: 'svg', label: 'Vector', detail: 'SVG, sharp at any size and editable in Figma', Icon: PenTool },
+  { format: 'pdf', label: 'Document', detail: 'PDF, for printing and handing over', Icon: FileText },
+  { format: 'json', label: 'Backup', detail: 'Everything on the board, to restore later', Icon: Archive },
+];
 
 type Copied = 'link' | 'code' | null;
 
@@ -70,12 +90,15 @@ function expiryDate(seconds: number): string | null {
 type MintState =
   | { kind: 'idle' }
   | { kind: 'working' }
-  | { kind: 'ready'; url: string }
+  | { kind: 'ready'; url: string; ttlSeconds: number }
   | { kind: 'unavailable' }
   | { kind: 'error'; message: string };
 
-export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
-  const [selectedRole, setSelectedRole] = useState<RoomRole>('editor');
+export const ShareModal: React.FC<ShareModalProps> = ({ onClose, onExport }) => {
+  /** This tab's own role. A link it hands out can carry no more than this. */
+  const ownRole = getRoomRole();
+  const [tab, setTab] = useState<'invite' | 'export'>('invite');
+  const [selectedRole, setSelectedRole] = useState<RoomRole>(ownRole);
   const [expiry, setExpiry] = useState(EXPIRIES[0]);
   const [mint, setMint] = useState<MintState>({ kind: 'idle' });
   const [copied, setCopied] = useState<Copied>(null);
@@ -103,7 +126,14 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
    * means something when somebody else decided it.
    */
   const needsToken = selectedRole !== 'editor';
-  const link = needsToken && mint.kind === 'ready' ? mint.url : fullAccessLink;
+  /**
+   * The link to hand out, or `null` while there is none yet.
+   *
+   * A restricted role never falls back to the board's own address: that
+   * address is full access, and showing it in a selectable field while a
+   * signed link is on its way, or has failed, would hand out edit rights.
+   */
+  const link = !needsToken ? fullAccessLink : mint.kind === 'ready' ? mint.url : null;
 
   const requestLink = useCallback(async () => {
     if (!needsToken) {
@@ -114,7 +144,9 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
     try {
       const res = await fetch(inviteMintUrl(roomId), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // The tab's own invite, if it came through one: the server will not
+        // mint a link above the role that invite carries.
+        headers: roomRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ role: selectedRole, ttlSeconds: expiry.seconds }),
       });
 
@@ -130,8 +162,11 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
         return;
       }
 
-      const { token } = await res.json();
-      setMint({ kind: 'ready', url: `${window.location.origin}/i/${token}` });
+      // The server caps the life of a link to what is left of this tab's own
+      // invite, so the expiry shown is the one it returns, not the one asked for.
+      const body = await res.json();
+      const ttl = Number.isFinite(body?.ttlSeconds) ? Number(body.ttlSeconds) : expiry.seconds;
+      setMint({ kind: 'ready', url: `${window.location.origin}/i/${body.token}`, ttlSeconds: ttl });
     } catch {
       setMint({ kind: 'error', message: 'The server could not be reached.' });
     }
@@ -170,8 +205,13 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
   };
 
   const mode = MODES.find((m) => m.id === selectedRole)!;
-  const linkReady = !needsToken || mint.kind === 'ready';
-  const expiresOn = needsToken ? expiryDate(expiry.seconds) : null;
+  const linkReady = link !== null;
+  const expiresOn = needsToken && mint.kind === 'ready' ? expiryDate(mint.ttlSeconds) : null;
+  /** True when the server gave this link less time than was asked for. */
+  const shortened = needsToken && mint.kind === 'ready' && mint.ttlSeconds > 0 && (expiry.seconds === 0 || mint.ttlSeconds < expiry.seconds);
+  /** Why each role this tab cannot hand out is unavailable, said on the control. */
+  const roleReason = (id: RoomRole) =>
+    RANK[id] > RANK[ownRole] ? `Your ${ownRole === 'viewer' ? 'view' : 'comment'} link can't share ${id === 'editor' ? 'edit' : 'comment'} access` : undefined;
 
   /**
    * Arrow keys across the three modes.
@@ -186,8 +226,9 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
     const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0;
     if (!step) return;
     event.preventDefault();
-    const index = MODES.findIndex((m) => m.id === selectedRole);
-    const next = MODES[(index + step + MODES.length) % MODES.length];
+    const allowed = MODES.filter((m) => RANK[m.id] <= RANK[ownRole]);
+    const index = allowed.findIndex((m) => m.id === selectedRole);
+    const next = allowed[(index + step + allowed.length) % allowed.length];
     setSelectedRole(next.id);
     modesRef.current?.querySelector<HTMLButtonElement>(`[data-role="${next.id}"]`)?.focus();
   };
@@ -227,6 +268,55 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
           </button>
         </div>
 
+        {onExport && (
+          <div className="share__tabs" role="tablist" aria-label="Share or export">
+            {(['invite', 'export'] as const).map((id) => (
+              <button
+                key={id}
+                id={`share-tab-${id}`}
+                type="button"
+                role="tab"
+                aria-selected={tab === id}
+                aria-controls={`share-pane-${id}`}
+                tabIndex={tab === id ? 0 : -1}
+                className="share__tab"
+                onClick={() => setTab(id)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+                  e.preventDefault();
+                  const other = id === 'invite' ? 'export' : 'invite';
+                  setTab(other);
+                  (e.currentTarget.parentElement?.querySelector(`#share-tab-${other}`) as HTMLElement | null)?.focus();
+                }}
+              >
+                {id === 'invite' ? 'Invite' : 'Export'}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {tab === 'export' && onExport ? (
+          <div className="share__pane" id="share-pane-export" role="tabpanel" aria-labelledby="share-tab-export">
+            <div className="share__exports">
+              {EXPORTS.map(({ format, label, detail, Icon }) => (
+                <button key={format} type="button" className="share__export" onClick={() => onExport(format)}>
+                  <span className="share__export-icon" aria-hidden="true"><Icon size={16} /></span>
+                  <span className="share__export-text">
+                    <span className="share__export-label">{label}</span>
+                    <span className="share__export-detail">{detail}</span>
+                  </span>
+                  <ChevronRight size={15} className="share__export-go" aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+            <p className="share__hint">
+              Each opens the export settings with a preview, where you choose the area, scale and background.
+              {' '}{menuShortcut(SHORTCUTS.export)} opens them from anywhere on the board.
+            </p>
+          </div>
+        ) : (
+        <div className="share__pane" id="share-pane-invite" role={onExport ? 'tabpanel' : undefined} aria-labelledby={onExport ? 'share-tab-invite' : undefined}>
+
         {/* The choice and its explanation are one unit: the panel's own flex
             gap sets the rhythm between sections, and these two are a section. */}
         <div className="share__choice">
@@ -252,7 +342,10 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
               aria-checked={selectedRole === id}
               tabIndex={selectedRole === id ? 0 : -1}
               className="share__mode"
-              onClick={() => setSelectedRole(id)}
+              aria-disabled={roleReason(id) ? true : undefined}
+              aria-describedby={roleReason(id) ? 'share-role-limit' : undefined}
+              data-tooltip={roleReason(id)}
+              onClick={() => { if (!roleReason(id)) setSelectedRole(id); }}
             >
               <Icon size={13} aria-hidden="true" />
               {label}
@@ -261,6 +354,11 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
         </div>
 
         <p className="share__blurb">{mode.blurb}</p>
+        {ownRole !== 'editor' && (
+          <p className="share__hint" id="share-role-limit">
+            You opened this board with a {ownRole === 'viewer' ? 'view' : 'comment'} link, so the links you share can carry no more than that.
+          </p>
+        )}
         </div>
 
         <div className="share__field">
@@ -269,11 +367,12 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
             type="text"
             readOnly
             value={
-              mint.kind === 'working' && needsToken
-                ? 'Creating a link…'
-                : mint.kind === 'unavailable' && needsToken
-                  ? 'Restricted links are not enabled on this server'
-                  : link
+              link ??
+              (mint.kind === 'unavailable'
+                ? 'Restricted links are not enabled on this server'
+                : mint.kind === 'error'
+                  ? 'No link yet'
+                  : 'Creating a link…')
             }
             aria-label={`Link that opens this board in ${mode.label.toLowerCase()} mode`}
             onFocus={(e) => e.currentTarget.select()}
@@ -295,7 +394,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
           </button>
           <button
             className={`share__copy${copied === 'link' ? ' is-copied' : ''}`}
-            onClick={() => void copy('link', link)}
+            onClick={() => { if (link) void copy('link', link); }}
             disabled={!linkReady}
             aria-live="polite"
           >
@@ -304,7 +403,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
           </button>
         </div>
 
-        {showQr && linkReady && (
+        {showQr && link && (
           <div className="share__qr">
             <ShareQr url={link} label={mode.label.toLowerCase()} />
             <p className="share__qr-note">
@@ -317,7 +416,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
         {/* Only where it beats the copy button that is already here: on a
             phone, sharing means picking a thread, and the operating system is
             much better at that than a dialog is. */}
-        {shareSheetWorthwhile() && linkReady && (
+        {shareSheetWorthwhile() && link && (
           <button
             type="button"
             className="share__system"
@@ -347,7 +446,12 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
             </select>
             {/* The date, not the duration. "30 days" is the choice; "14
                 October" is the thing anybody will need to know later. */}
-            {expiresOn && <span className="share__expiry-date">until {expiresOn}</span>}
+            {expiresOn && (
+              <span className="share__expiry-date">
+                until {expiresOn}
+                {shortened ? ', when your own link runs out' : ''}
+              </span>
+            )}
           </div>
         )}
 
@@ -414,6 +518,8 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
                 : 'There are no accounts on this board: the link is the key. Anyone who has it can edit, and a link cannot be taken back once it is out.'}
           </span>
         </p>
+        </div>
+        )}
       </div>
     </div>
   );

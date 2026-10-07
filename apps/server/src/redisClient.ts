@@ -1,35 +1,23 @@
-import IORedis from 'ioredis';
+import IORedis, { type RedisOptions } from 'ioredis';
+import type { Config } from './config';
 
 /**
  * One Redis connection for the things that must agree across instances.
  *
- * ## Why this exists rather than reusing the Hocuspocus extension's
+ * The rate limiters and the upload quota use this client. The Hocuspocus Redis
+ * extension keeps its own connections, which are occupied by pub/sub: a
+ * connection in subscriber mode cannot run the commands the limiter and the
+ * quota need.
  *
- * `quota.ts` was handed its client by reaching into the Hocuspocus Redis
- * extension and taking `(extension as any).pub`. That works today and is one
- * library upgrade away from returning `undefined` — at which point nothing
- * fails: the tracker simply falls back to memory, every instance keeps its own
- * counters, and the quota stops being a quota. `rateLimit.ts` says so in its
- * own header and asks for exactly this instead.
+ * ## Failure behaviour
  *
- * So the connection comes from config, like every other piece of deployment
- * truth, and the extension keeps its own. Two connections is the correct number
- * here anyway: the extension's are occupied by pub/sub, and a connection in
- * subscriber mode cannot run the commands the limiter and the quota need.
+ * Commands fail fast while the connection is down (`enableOfflineQueue:
+ * false`), and every caller falls back to its in-memory bucket when a call
+ * fails, so an outage makes limits per-instance rather than refusing traffic.
  *
- * ## Why the errors are swallowed and the retries give up
- *
- * ioredis reconnects forever by default and emits an `error` event on every
- * attempt. With no listener that is an unhandled event; with a listener and no
- * cap it is a line of log per second for as long as Redis is down, which buries
- * the outage it is reporting. So attempts are capped and the log is rate
- * limited, and everything that uses this client already falls back to memory
- * when a call fails — the limiter and the quota both catch and degrade rather
- * than refuse traffic.
- *
- * Degrading is the right failure here: a Redis outage should make the limits
- * per-instance again, which is where they were before this existed. It should
- * not take the API down.
+ * Reconnection never stops. The backoff is capped, so a long outage costs one
+ * attempt every few seconds, and connection errors are logged at most once per
+ * `LOG_EVERY_MS` so the log does not bury the outage it is reporting.
  */
 
 export interface SharedRedis {
@@ -37,31 +25,61 @@ export interface SharedRedis {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, mode?: string, duration?: number): Promise<unknown>;
   incr(key: string): Promise<number>;
-  expire(key: string, seconds: number): Promise<unknown>;
+  incrby(key: string, increment: number): Promise<number>;
+  expire(key: string, seconds: number): Promise<number>;
   quit(): Promise<unknown>;
 }
 
-/** How many reconnects before it stops trying and stays on the memory path. */
-const MAX_RETRIES = 10;
 /** No more than one connection-error line per this many ms. */
 const LOG_EVERY_MS = 30_000;
+/** The longest wait between reconnection attempts. */
+const MAX_BACKOFF_MS = 5_000;
+
+/** Exponential backoff, capped; never `null`, which would end reconnection for good. */
+export function reconnectDelay(attempt: number): number {
+  return Math.min(100 * 2 ** Math.min(attempt, 16), MAX_BACKOFF_MS);
+}
+
+/**
+ * Connection options for ioredis, from config.
+ *
+ * Shared with the Hocuspocus extension so both connections authenticate and
+ * use TLS the same way.
+ */
+export function redisConnectionOptions(redis: NonNullable<Config['redis']>): RedisOptions {
+  const fromUrl: RedisOptions = {};
+  if (redis.url) {
+    const url = new URL(redis.url);
+    fromUrl.host = url.hostname;
+    fromUrl.port = url.port ? Number(url.port) : 6379;
+    if (url.username) fromUrl.username = decodeURIComponent(url.username);
+    if (url.password) fromUrl.password = decodeURIComponent(url.password);
+    if (url.protocol === 'rediss:') fromUrl.tls = {};
+    const db = url.pathname.replace(/^\//, '');
+    if (db) fromUrl.db = Number(db);
+  }
+  return {
+    host: redis.host ?? undefined,
+    port: redis.port,
+    ...(redis.password ? { password: redis.password } : {}),
+    ...(redis.tls ? { tls: {} } : {}),
+    ...fromUrl,
+  };
+}
 
 export function createSharedRedis(
-  options: { host: string | null; port: number },
+  redis: Config['redis'],
   log: (message: string, meta?: Record<string, unknown>) => void
 ): SharedRedis | null {
-  if (!options.host) return null;
+  if (!redis) return null;
 
   const client = new IORedis({
-    host: options.host,
-    port: options.port,
-    // Commands issued while the connection is down fail fast instead of
-    // queueing. A limiter that waits for Redis to come back is a limiter that
-    // holds every request open during an outage; failing is what lets the
-    // caller fall back to its in-memory bucket immediately.
+    ...redisConnectionOptions(redis),
+    // Fail fast rather than queue: a limiter that waits for Redis holds every
+    // request open during an outage.
     enableOfflineQueue: false,
     maxRetriesPerRequest: 1,
-    retryStrategy: (attempt: number) => (attempt > MAX_RETRIES ? null : Math.min(attempt * 200, 3000)),
+    retryStrategy: reconnectDelay,
   });
 
   let lastLoggedAt = 0;

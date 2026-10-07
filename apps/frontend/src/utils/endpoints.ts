@@ -11,6 +11,8 @@
  * the same host (e.g. a deployed frontend pointing at a remote sync server).
  */
 
+import { currentInvite } from '../engine/room/invite';
+
 const env = (import.meta as any).env || {};
 
 /** Host the browser used to load the app, e.g. "localhost" or "192.168.1.42". */
@@ -38,3 +40,15 @@ export const shareCardUrl = (roomId: string) => `${API_BASE}/rooms/${encodeURICo
 /** The picture a board link unfurls into, as the sync server draws it. */
 export const shareCardImageUrl = (roomId: string, version?: string) =>
   `${API_BASE}/cards/room/${encodeURIComponent(roomId)}/image.png${version ? `?v=${encodeURIComponent(version)}` : ''}`;
+
+/**
+ * Headers every room-scoped REST call carries.
+ *
+ * A tab opened from an invite link presents that invite as `X-Invite-Token`.
+ * With `ENFORCE_SHARE_TOKENS` on, the server refuses uploads, history, link
+ * previews and card writes that arrive without it.
+ */
+export function roomRequestHeaders(extra?: Record<string, string>): Record<string, string> {
+  const invite = typeof window !== 'undefined' ? currentInvite() : null;
+  return { ...(extra ?? {}), ...(invite ? { 'X-Invite-Token': invite.token } : {}) };
+}

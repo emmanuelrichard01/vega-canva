@@ -311,13 +311,19 @@ export function planUngroup(
  * settles rather than making one pass and leaving the parents behind.
  */
 export function emptyGroups(order: readonly string[], objects: NodeTable, groups: Groups): string[] {
+  // One pass over the nodes, not one per group per round.
+  const occupied = new Set<string>();
+  for (const n of order) {
+    const parent = objects[n]?.parentId;
+    if (parent) occupied.add(parent);
+  }
   const dead = new Set<string>();
   let changed = true;
   while (changed) {
     changed = false;
     for (const id of Object.keys(groups)) {
       if (dead.has(id)) continue;
-      const hasNode = order.some((n) => objects[n]?.parentId === id);
+      const hasNode = occupied.has(id);
       const hasGroup = childGroups(groups, id).some((g) => !dead.has(g));
       if (!hasNode && !hasGroup) {
         dead.add(id);

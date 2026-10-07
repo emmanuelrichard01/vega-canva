@@ -4,6 +4,7 @@ import { finishCreation } from './toolModes';
 import { createGrid } from '../grid/gridApply';
 import { gridDefaults } from '../grid/gridDefaults';
 import { GridPreview } from './GridPreview';
+import { MAX_TRACKS } from '../grid/gridTracks';
 
 /** A drag smaller than this is a click, and gets a sensible default grid. */
 const CLICK_SIZE = { width: 480, height: 360 };
@@ -125,7 +126,7 @@ export class GridTool implements Tool {
 
   private adjustColumns(ctx: ToolContext, delta: number) {
     const snap = gridDefaults.getSnapshot();
-    const newCols = Math.max(1, Math.min(24, Math.round(snap.spec.columns + delta)));
+    const newCols = Math.max(1, Math.min(MAX_TRACKS, Math.round(snap.spec.columns + delta)));
     gridDefaults.remember({
       spec: { ...snap.spec, columns: newCols, x: 0, y: 0, width: 0, height: 0 },
       style: snap.style,
@@ -135,7 +136,7 @@ export class GridTool implements Tool {
 
   private adjustRows(ctx: ToolContext, delta: number) {
     const snap = gridDefaults.getSnapshot();
-    const newRows = Math.max(1, Math.min(24, Math.round(snap.spec.rows + delta)));
+    const newRows = Math.max(1, Math.min(MAX_TRACKS, Math.round(snap.spec.rows + delta)));
     gridDefaults.remember({
       spec: { ...snap.spec, rows: newRows, x: 0, y: 0, width: 0, height: 0 },
       style: snap.style,

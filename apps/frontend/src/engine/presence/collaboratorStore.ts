@@ -22,7 +22,8 @@
  */
 
 import { provider } from '../document';
-import { smoothingFactor } from '../cursor/remoteCursor';
+import { cameraSystem } from '../CameraSystem';
+import { addSample, createMotion, screenSpeed, stepMotion, type MotionState } from './cursorMotion';
 import { readCollaborators, rosterSignature, type Collaborator } from './collaborators';
 
 type Unsubscribe = () => void;
@@ -39,6 +40,10 @@ class CollaboratorStore {
   private roster: Collaborator[] = [];
   private signature = '';
 
+  /** Each pointer's motion, by clientId. See `cursorMotion.ts`. */
+  private motions = new Map<number, MotionState>();
+  private reducedMotion = false;
+
   private rosterListeners = new Set<() => void>();
   private frameListeners = new Set<(dtMs: number) => void>();
 
@@ -48,6 +53,13 @@ class CollaboratorStore {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
+    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+      this.reducedMotion = mq.matches;
+      mq.addEventListener?.('change', () => {
+        this.reducedMotion = mq.matches;
+      });
+    }
     this.attach();
   }
 
@@ -69,21 +81,30 @@ class CollaboratorStore {
   private read = () => {
     const next = readCollaborators(provider.awareness?.getStates(), provider.awareness?.clientID);
 
-    // Carry smoothing across the update, so a broadcast does not restart the
-    // interpolation from wherever the last one landed.
-    const previous = new Map(this.roster.map((c) => [c.clientId, c]));
+    // Feed each broadcast position to that pointer's motion, so a broadcast
+    // never restarts the movement from wherever the last one landed.
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const present = new Set<number>();
     for (const person of next) {
-      const before = previous.get(person.clientId);
-      if (!before) continue;
+      present.add(person.clientId);
       if (!person.cursor) {
-        // They left the canvas. Drop the smoothed position so that coming back
-        // at a different edge fades in *there*, rather than sliding across the
-        // whole board from wherever they were last seen.
+        // They left the canvas. Forget the motion so that coming back at a
+        // different edge fades in *there*, rather than sliding across the board
+        // from wherever they were last seen.
+        this.motions.delete(person.clientId);
         person.smoothed = null;
-      } else {
-        person.smoothed = before.smoothed ?? { ...person.cursor };
+        continue;
       }
+      let motion = this.motions.get(person.clientId);
+      if (!motion) {
+        motion = createMotion(person.cursor.x, person.cursor.y, now);
+        this.motions.set(person.clientId, motion);
+      } else if (motion.sx !== person.cursor.x || motion.sy !== person.cursor.y) {
+        addSample(motion, person.cursor.x, person.cursor.y, now, cameraSystem.zoom);
+      }
+      person.smoothed = { x: motion.x, y: motion.y };
     }
+    for (const id of this.motions.keys()) if (!present.has(id)) this.motions.delete(id);
 
     const signature = rosterSignature(next);
     if (signature === this.signature) {
@@ -124,6 +145,12 @@ class CollaboratorStore {
   find = (clientId: number): Collaborator | undefined =>
     this.roster.find((c) => c.clientId === clientId);
 
+  /** How fast someone's pointer is moving on your screen, in px/s. */
+  speedOf = (clientId: number): number => {
+    const motion = this.motions.get(clientId);
+    return motion ? screenSpeed(motion, cameraSystem.zoom) : 0;
+  };
+
   // -- the frame loop ------------------------------------------------------
 
   /**
@@ -161,29 +188,32 @@ class CollaboratorStore {
     const dt = this.lastFrameAt ? now - this.lastFrameAt : 1000 / 60;
     this.lastFrameAt = now;
 
-    this.advance(dt);
+    this.advance(dt, now);
     this.frameListeners.forEach((fn) => fn(dt));
   };
 
   /**
-   * Step every remote pointer toward its broadcast position.
+   * Step every remote pointer one frame along its predicted path.
    *
-   * In **world** space, which is the whole reason this moved out of the cursor
-   * component: interpolating screen positions meant your own pan dragged
-   * everybody's pointer along behind the content for a fifth of a second.
+   * In **world** space, so your own pan moves everybody's pointer with the
+   * content it is over rather than dragging it along behind.
    */
-  private advance(dtMs: number) {
-    const alpha = smoothingFactor(dtMs);
-    if (alpha <= 0) return;
-
+  private advance(dtMs: number, now: number) {
+    const zoom = cameraSystem.zoom;
     for (const person of this.roster) {
       if (!person.cursor) continue;
-      if (!person.smoothed) {
-        person.smoothed = { ...person.cursor };
-        continue;
+      let motion = this.motions.get(person.clientId);
+      if (!motion) {
+        motion = createMotion(person.cursor.x, person.cursor.y, now);
+        this.motions.set(person.clientId, motion);
       }
-      person.smoothed.x += (person.cursor.x - person.smoothed.x) * alpha;
-      person.smoothed.y += (person.cursor.y - person.smoothed.y) * alpha;
+      stepMotion(motion, dtMs, now, zoom, this.reducedMotion);
+      if (person.smoothed) {
+        person.smoothed.x = motion.x;
+        person.smoothed.y = motion.y;
+      } else {
+        person.smoothed = { x: motion.x, y: motion.y };
+      }
     }
   }
 

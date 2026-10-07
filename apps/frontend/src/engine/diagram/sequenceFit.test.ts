@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { estimateText, layoutSequence, parseSequence, SEQ_TYPE } from './sequence';
+import { MERMAID_TEMPLATES } from './mermaidTemplates';
 
 /**
  * Whether the words fit in the boxes drawn for them.
@@ -17,23 +15,7 @@ import { estimateText, layoutSequence, parseSequence, SEQ_TYPE } from './sequenc
  * the constants can be tuned without rewriting them.
  */
 
-const MODAL = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '..', '..', 'components', 'MermaidModal.tsx'
-);
-
-function sequenceTemplates(): Array<{ name: string; source: string }> {
-  const src = readFileSync(MODAL, 'utf8');
-  const start = src.indexOf('const TEMPLATES');
-  const block = src.slice(start, src.indexOf('\n];', start));
-  const re = /name: '([^']+)',\s*kind: 'sequence',\s*source: `([\s\S]*?)`,/g;
-  const out: Array<{ name: string; source: string }> = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(block))) out.push({ name: m[1], source: m[2] });
-  return out;
-}
-
-const SEQUENCES = sequenceTemplates();
+const SEQUENCES = MERMAID_TEMPLATES.filter((t) => t.kind === 'sequence');
 
 /** The same estimator the layout defaults to, so the fit is self-consistent. */
 const widthOf = (text: string, fontSize: number) =>

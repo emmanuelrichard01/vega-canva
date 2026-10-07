@@ -24,9 +24,9 @@ That changes the arithmetic below: every item is now carrying real data.
 
 | # | Item | State |
 | --- | --- | --- |
-| 1 | Upload quotas (§1.1) | **Done.** Per-room 200 MB, per-IP daily 500 MB, global 10 GB, enforced with 413. A rejection is now *reported* too — it used to be silent, and the image stayed on a local blob URL looking like success until the next reload. |
+| 1 | Upload quotas (§1.1) | **Done.** Per-room 200 MB, daily 500 MB per client address *and* per session (the stricter decides; link-preview pictures count), global 10 GB, enforced with 413. Until 2026-10 the daily cap was keyed on the session alone, which any client could reset by dropping its cookie. A rejection is now *reported* too — it used to be silent, and the image stayed on a local blob URL looking like success until the next reload. |
 | 2 | Dashboard bundle preload (§1.2) | **Done.** The eager set is three files: the runtime, the icons and the stylesheet. Verified in `dist/index.html`. |
-| 3 | Room & media reaper (§1.3) | **Written, deliberately unscheduled.** Its clock was also broken — `last_active_at` only moved on *edit*, so a board read daily and never edited was the row most likely to be collected. Fixed; see `DEPLOYMENT.md` §7.2 before running it. |
+| 3 | Room & media reaper (§1.3) | **Written; scheduled weekly as a report.** It deletes only with `REAP_APPLY=true`. Its clock was also broken — `last_active_at` only moved on *edit*, so a board read daily and never edited was the row most likely to be collected. Fixed; see `DEPLOYMENT.md` §8.2 before turning deletion on. |
 | 4 | Error tracking (§1.4) | **Done, and it was a `console.log` before.** See below. |
 | 5 | Database backups (§1.5) | **Built and tested; not yet run.** Secrets are set. One manual run is all that stands between here and a real backup — `SETUP-CHECKLIST.md` §1. |
 
@@ -78,10 +78,10 @@ Ranked by "how likely is this to ruin a week", not by how interesting it is.
 
 **This is the biggest risk of a public launch and it is not in `DEPLOYMENT.md`.**
 
-The upload route is `POST /rooms/:roomId/media` (`apps/server/src/index.ts:274`).
+The upload route is `POST /rooms/:roomId/media` (`apps/server/src/routes/media.ts`).
 What limits exist:
 
-- 50MB per file (`index.ts:205`)
+- 50MB per file (`MAX_UPLOAD_BYTES`)
 - A token bucket of 30 uploads burst, 1/sec sustained, **per IP**
 - An allow-list of image and audio types
 
@@ -94,7 +94,7 @@ attention, and on a free tier you will find out about it via a suspension
 email rather than a graph.
 
 **The fix, concretely.** You are already recording `size_bytes` and `room_id` in
-`media_refs` (`index.ts:311`), and migration 2 added `media_refs_room_id_idx`,
+`media_refs`, and migration 2 added `media_refs_room_id_idx`,
 so the query is cheap:
 
 ```sql
@@ -155,17 +155,12 @@ print(sum(os.path.getsize(f'dist/assets/{n}') for n in names) // 1024, 'kB eager
 
 Two separate problems that get conflated.
 
-**Storage never shrinks.** No room TTL, no S3 lifecycle policy, no orphaned-media
-reaping. `rooms.last_active_at` is written on every snapshot and read by
-nothing. Migration 2 added `rooms_last_active_idx` specifically so a reaper
-would have its index; the reaper does not exist. On a 10GB free tier this is
-weeks, not months.
-
-A reaper needs to, in one transaction per room: delete the S3 objects listed in
-`media_refs` for that room, then delete the `rooms` row (which cascades to
-`room_snapshots`, `room_updates` and `media_refs`). Order matters — delete the
-objects first, because a failed object delete after the row is gone leaves an
-orphan nothing knows about.
+**Storage never shrinks** unless the reaper is allowed to delete.
+`reaper.ts` deletes a room's objects first, then the `rooms` row (which
+cascades to `room_snapshots`, `room_updates` and `media_refs`) in a statement
+that re-checks inactivity and returns any media uploaded meanwhile, so nothing
+is orphaned. It runs weekly as a report; see `DEPLOYMENT.md` §8.2 for turning
+deletion on. There is still no S3 lifecycle policy.
 
 **A single board grows forever.** Distinct and more subtle. A Yjs document
 accumulates structural history for its entire life. `room_updates` is bounded by
@@ -215,8 +210,8 @@ untested backup is a belief, not a backup.
 
 There is no auth today. The access model is: **the room id is the capability.**
 Whoever holds it can open, edit, rename and delete. `onAuthenticate`
-(`index.ts:540`) validates the id's shape and length and then returns success
-unconditionally.
+(`collab.ts`) validates the id's shape and length and, without a signed
+invite, returns success.
 
 That model is legitimate — it is what "anyone with the link" does — and this
 session closed the hole in it (it used to accept one-character room ids). What
@@ -322,9 +317,11 @@ Two things that follow, and are easy to get wrong:
   dialog rather than implying a privacy the model does not have — the dialog
   does.
 
-Also gate the two REST routes on membership, not just on room shape: the history
-endpoint (`index.ts:397`) currently hands the full board history to anybody who
-asks, and the media proxy (`index.ts:331`) serves any object in any room.
+Also gate the REST routes on membership, not just on room shape. Under
+`ENFORCE_SHARE_TOKENS` the history endpoint, uploads, link previews and the
+share card already require an invite (`X-Invite-Token`), and the media proxy
+only serves objects recorded in `media_refs`; with accounts, the same checks
+would read a membership table instead.
 
 ### What this does *not* need
 
@@ -459,7 +456,7 @@ restarting at each heading.
 | 2 | Blocking a public link | Sentry on client and server | §1.4 |
 | 3 | Blocking a public link | Postgres PITR, and one tested restore | §1.5 |
 | 4 | First week live | Durable anonymous identity | §2.1 |
-| 5 | First week live | The room and media reaper | §1.3 |
+| 5 | First week live | The room and media reaper (written; deletion off until backups are proven) | §1.3 |
 | 6 | First week live | Billing alerts on every account, including the free ones | §3 |
 | 7 | Once people use it | Real accounts: magic link plus OAuth | §2.2 |
 | 8 | ~~Once people use it~~ **done** | Per-board roles, enforced at the WebSocket layer | §2.3 |

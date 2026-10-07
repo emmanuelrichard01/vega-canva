@@ -34,12 +34,6 @@
   line-height: 1.25;
 }
 
-.tbled__text {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
 
 /* The selection: a quiet wash across the range, and one crisp cell — in ink,
    not the accent. A table's cells are always light (they are content, not
@@ -705,19 +699,29 @@
 .tbled-bar {
   position: fixed;
   /* The table's own toolbar belongs to the board too; TableEditor keeps it
-     inside the free area between the side panels so it is never covered. */
+     inside the free area between the side panels so it is never covered.
+     Two rows: the tools, then the formula bar — TableEditor's BAR_H. */
   z-index: calc(var(--z-canvas-overlay) + 1);
   display: flex;
-  align-items: center;
-  gap: 4px;
-  height: 42px;
-  padding: 0 6px;
+  flex-direction: column;
+  min-width: 560px;
+  max-width: calc(100vw - 16px);
   border-radius: var(--radius-xl);
   background: var(--surface-elevated);
   box-shadow: var(--shadow-float), var(--shadow-lg);
   white-space: nowrap;
   animation: tbled-settle 180ms var(--ease-settle);
 }
+
+.tbled-bar__row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 44px;
+  padding: 0 6px;
+}
+
+.tbled-bar__spacer { flex: 1; min-width: 8px; }
 
 @keyframes tbled-settle {
   from { transform: translateY(4px); }
@@ -747,8 +751,8 @@
   place-items: center;
   grid-auto-flow: column;
   gap: 3px;
-  min-width: 30px;
-  height: 30px;
+  min-width: var(--control-h-sm);
+  height: var(--control-h-sm);
   padding: 0 6px;
   border: 0;
   border-radius: var(--radius-md);
@@ -781,7 +785,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 30px;
+  height: var(--control-h-sm);
   padding: 0 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);

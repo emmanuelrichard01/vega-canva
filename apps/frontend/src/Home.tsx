@@ -1,343 +1,245 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from './hooks/useAuth';
 import { nanoid } from 'nanoid';
 import {
-  AlertTriangle, Check, ChevronDown, ChevronRight, Compass, Download, LayoutGrid, Layers, Link2, LogOut, Plus,
-  Rows3, Trash2,
-  Search, Sparkles, Undo2,
-  UploadCloud, X,
+  AlertTriangle, ChevronDown, ChevronRight, Command, Compass, Copy, CopyPlus, Download, ExternalLink, LayoutGrid,
+  Layers, Link2, LogOut, Pencil, Pin, PinOff, Plus, Rows3, Search, Sparkles, SunMoon, Trash2, Undo2, UploadCloud, X,
 } from 'lucide-react';
 import { parseDocumentExport } from './engine/export/DocumentImport';
-import {
-  looksLikeLibrary, mergeLibrary, parseLibrary, serializeLibrary,
-} from './engine/room/libraryIndex';
+import { looksLikeLibrary, mergeLibrary, parseLibrary, serializeLibrary } from './engine/room/libraryIndex';
 import { looksLikeRoomCode, roomIdFromCode } from './engine/room/roomCode';
 import { notices$ } from './engine/ui/notices';
-import { stashPendingRestore, stashPendingTemplate } from './engine/export/pendingRestore';
-import {
-  CATEGORIES, TEMPLATES, templatePreview,
-  type Template, type TemplateCategory,
-} from './engine/templates/templates';
-import { WorkspaceCover } from './components/WorkspaceCover';
+import { stashPendingRestore, stashPendingTemplate, takePendingTemplate } from './engine/export/pendingRestore';
+import { CATEGORIES, TEMPLATES, type Template, type TemplateCategory } from './engine/templates/templates';
+import { loadPreview, type BoardPreview } from './engine/model/boardPreview';
+import { slugify } from './engine/export/filenames';
 import { BoardTile, type BoardLayout } from './components/home/BoardTile';
 import { QuickStart } from './components/home/QuickStart';
+import { TemplateCard } from './components/home/TemplateCard';
+import { TemplatePeek } from './components/home/TemplatePeek';
+import { templateCover } from './components/home/templateCover';
+import { useBoardStatus } from './components/home/useBoardStatus';
+import { useRovingGrid } from './components/home/useRovingGrid';
 import {
-  BOARD_SORTS,
-  groupBoards,
-  sortBoards,
-  whenOpened,
-  type BoardSort,
-} from './engine/room/boardShelf';
+  LIBRARY_KEYS, REMOVED_LIMIT, canEditBoard, cleanBoardName, displayName, focusAfterRemoval, insertAt, libraryGroups,
+  mutateNames, mutatePins, mutateRecents, mutateRemoved, readNames, readPins, readRecents, readRemoved, togglePin,
+  upsertRecent, type LibraryBoard, type NameMap, type PinMap, type RemovedBoard,
+} from './components/home/library';
+import { BOARD_SORTS, whenOpened, type BoardSort, type ShelfBoard } from './engine/room/boardShelf';
+import { Menu, type MenuAnchor } from './components/menu/Menu';
+import type { MenuEntry } from './components/menu/menuModel';
 import { AuthModal } from './components/AuthModal';
 import { Logo } from './components/ui/Logo';
 import { Avatar } from './components/ui/Avatar';
+import { storageGet, storageSet } from './utils/safeStorage';
+import './components/home/home.css';
 
-interface RecentWorkspace {
-  id: string;
-  name: string;
-  lastAccessed: number;
-}
+const HomePalette = lazy(() => import('./components/home/HomePalette').then((m) => ({ default: m.HomePalette })));
+const AppearancePanel = lazy(() => import('./components/home/AppearancePanel').then((m) => ({ default: m.AppearancePanel })));
+const loadRemote = () => import('./components/home/remoteBoard');
 
-interface RemovedWorkspace extends RecentWorkspace {
-  removedAt: number;
-}
-
-const STORAGE_KEY = 'recentWorkspaces';
-
-/**
- * Boards taken off this device, kept so they can be put back.
- *
- * ## Why removing one is the most dangerous click on this screen
- *
- * It is not a delete. The board is untouched, it is still on the server, and
- * the link still opens it -- which is exactly what makes it dangerous, because
- * it *reads* as the harmless one of the two. There are no accounts here, so
- * this list is, for almost every board, the only record of its address. Losing
- * the address is losing the work: the objects are all still there and nobody
- * can ever reach them again.
- *
- * That was a single unconfirmed click on a small X that sits on a card people
- * are aiming at with a pointer. So: an undo on the notice, for the moment it
- * happens, and this list for afterwards, because a toast is gone in ten
- * seconds and the realisation usually is not.
- */
-const REMOVED_KEY = 'vega_removed_workspaces';
-
-/**
- * A ceiling, not a working limit.
- *
- * This was 24, described as "enough to cover a tidying session", and entries
- * beyond it fell off the end silently. That put a hole in the shelf at exactly
- * the point it exists to cover: removing a twenty-fifth board *permanently
- * discarded* the oldest removal's address, with no notice and no way back —
- * the unrecoverable loss this whole area is built around, caused by the
- * mechanism built to prevent it.
- *
- * Worse, the entry that fell off was the one removed *longest ago*, which is
- * precisely the one least likely to still be reachable from a link in
- * somebody's chat history.
- *
- * An entry is about 120 bytes, so 24 of them saved roughly two kilobytes of a
- * five-megabyte budget. Nothing was being bought.
- *
- * The number is high enough now that reaching it is a genuinely exceptional
- * event rather than a Tuesday, and `writeRemoved` says so out loud if it ever
- * happens instead of quietly trimming. The shelf's real exit is **Forget
- * permanently**: deliberate, per-board and confirmed. A limit is not a way to
- * delete things, and using one as though it were is what made the silent trim
- * look reasonable.
- */
-const REMOVED_LIMIT = 500;
 const VIEW_KEY = 'vega_home_view';
-/** How the library is laid out and ordered. A preference, so it is remembered. */
 const LAYOUT_KEY = 'vega_home_layout';
 const SORT_KEY = 'vega_home_sort';
 
-/** Which half of the library the stage is showing. */
 type View = 'boards' | 'templates';
 
-/**
- * Where to land, read straight from storage rather than from state.
- *
- * `recentRooms` arrives in an effect, one render too late to choose an
- * initial view with — and a first-time visitor would see the empty boards
- * view flash before being moved to the gallery.
- */
+type OpenMenu =
+  | { kind: 'board'; board: ShelfBoard; anchor: MenuAnchor; focusFirst: boolean }
+  | { kind: 'sort' | 'new' | 'me'; anchor: MenuAnchor; focusFirst: boolean };
+
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent || '');
+
+/** Read from storage, not state, so the first render already shows the right view. */
 function initialView(): View {
-  /**
-   * Your boards, unless you last chose otherwise.
-   *
-   * A first visit used to land on the gallery, on the reasoning that the boards
-   * view would be empty and the gallery is the only half with anything in it.
-   * That was true when the empty state was an icon and a paragraph. It now
-   * offers the three real openings, the first of which is the gallery, so
-   * landing on the boards costs a newcomer nothing and gains them the thing a
-   * library is for: this is where your work is.
-   *
-   * It also stops the front door moving between the first visit and the second,
-   * which is the sort of thing nobody can name and everybody feels.
-   */
-  // An explicit `?view=templates` wins: the install shortcut and shared links use it.
   const asked = new URLSearchParams(window.location.search).get('view');
   if (asked === 'boards' || asked === 'templates') return asked;
-  const remembered = localStorage.getItem(VIEW_KEY);
-  if (remembered === 'boards' || remembered === 'templates') return remembered;
-  return 'boards';
+  return storageGet(VIEW_KEY) === 'templates' ? 'templates' : 'boards';
 }
+
+const isTyping = (el: Element | null) =>
+  !!el && (el.matches('input, textarea, select') || (el as HTMLElement).isContentEditable);
+
+/* --------------------------------------------------- dashboard → board motion */
+
+/**
+ * The cover that travels into the board.
+ *
+ * Named only as the page is swapped out, and every name cleared when the page
+ * is shown again, so exactly one element carries it however many times
+ * somebody goes to a board and comes Back — a page restored from the back
+ * cache would otherwise still carry the last cover's name, and two elements
+ * with one name cancel the transition.
+ */
+let leavingCover: HTMLElement | null = null;
+const SWAP_SUPPORTED = typeof window !== 'undefined' && 'onpageswap' in window;
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('pageswap', (event) => {
+    if ((event as Event & { viewTransition?: unknown }).viewTransition && leavingCover) {
+      leavingCover.style.viewTransitionName = 'board-canvas';
+    }
+  });
+  const clearNames = () => {
+    document.querySelectorAll<HTMLElement>('.bcard__art, .tcard__art, .tpeek__art').forEach((el) => {
+      if (el.style.viewTransitionName) el.style.viewTransitionName = '';
+    });
+    leavingCover = null;
+  };
+  window.addEventListener('pageshow', clearNames);
+  window.addEventListener('pagereveal', clearNames);
+}
+
+function armCover(cover: HTMLElement | null | undefined) {
+  leavingCover = cover ?? null;
+  // Without `pageswap` there is no later moment to name it in.
+  if (cover && !SWAP_SUPPORTED) cover.style.viewTransitionName = 'board-canvas';
+}
+
+function goToBoard(url: string, cover?: HTMLElement | null) {
+  armCover(cover);
+  window.location.href = url;
+}
+
+const anchorOf = (el: Element | null, prefer: 'below' | 'above' = 'below', align: 'start' | 'end' = 'end'): MenuAnchor =>
+  ({ kind: 'rect', rect: (el ?? document.body).getBoundingClientRect(), prefer, align });
 
 /**
  * The library — everything before the canvas.
  *
- * ## The shape, and why it is this one
+ * A rail and a stage. The rail navigates between your boards and the template
+ * gallery; the stage shows one of them at a time, with its own controls in its
+ * header. One accent button makes a board. Every action on the page is
+ * reachable from the keyboard: arrows move through the cards, ⌘K finds
+ * anything, N starts a board, / searches.
  *
- * A rail and a stage. Navigation lives in the rail, so what is left in the
- * column is only content — which is what makes a section boundary obvious
- * instead of a judgement call. The previous version stacked a masthead, a
- * collapsible gallery, category pills, a featured strip, a grid, a second
- * heading, a search field, a join form and a layout toggle down one column,
- * and the result had no shape at all.
- *
- * ## Two views, and which one you land on
- *
- * The stage shows **one view at a time** — your boards, or the gallery. They
- * are not two sections of one scroll: stacking them means every visit begins
- * by scrolling past whichever one you did not come for, and it puts two
- * headings, two grids and two empty states in a single column where a section
- * boundary becomes a judgement call.
- *
- * You land on **your boards**, because anyone who has been here before came
- * back for something they made. The exception is a first visit, where the
- * boards view is an empty state and the gallery is the only thing with
- * anything in it — so that lands on the gallery instead. One condition, not a
- * mode, and the choice is remembered after that.
- *
- * The boards view ends with an invitation into the gallery. A tab someone
- * never presses is a tab that may as well not exist, and "there are thirteen
- * boards here already full" is worth saying once where it will be read.
- *
- * ## Two fixes here that were not cosmetic
- *
- * 1. **Seven hooks ran after an early return.** `if (!user) return <AuthModal/>`
- *    sat above `useState` for the category and four memos, so signing in
- *    changed the hook count between renders — a rules-of-hooks violation that
- *    blanked the page on the transition. Every hook is now above every return.
- * 2. **There were two search fields**, in unrelated places, neither beside
- *    what it filtered. There is one now, and it filters both sections.
+ * The board list, its shelf, pins and pending names are shared with every
+ * other tab of this site, so each change is a read-merge-write against
+ * storage, and changes from other tabs arrive through `storage` events.
  */
 export const Home: React.FC = () => {
   const { user, logout } = useAuth();
 
-  // ------------------------------------------------------------------ state
-  // Every hook lives above every early return. See the note above.
+  // Every hook lives above the early return for signed-out visitors.
   const [view, setView] = useState<View>(initialView);
   const [category, setCategory] = useState<TemplateCategory | null>(null);
   const [query, setQuery] = useState('');
-  /**
-   * How the boards are shown, and in what order.
-   *
-   * Two real answers to two different questions. A grid answers "which one was
-   * that" — you recognise a board by its shape long before its name — and a
-   * list answers "where is the one called X" once there are more boards than
-   * pictures anyone can scan. Both are remembered, because it is a way of
-   * working rather than a thing you choose per visit.
-   */
-  const [layout, setLayout] = useState<BoardLayout>(
-    () => (localStorage.getItem(LAYOUT_KEY) === 'list' ? 'list' : 'grid')
-  );
-  const [sort, setSort] = useState<BoardSort>(
-    () => (localStorage.getItem(SORT_KEY) === 'name' ? 'name' : 'recent')
-  );
-  const [sortOpen, setSortOpen] = useState(false);
-  /** Which board card has its menu open, so only one ever does. */
-  const [boardMenu, setBoardMenu] = useState<string | null>(null);
-  /** The board whose link was just copied, for the two seconds it says so. */
-  const [copiedBoard, setCopiedBoard] = useState<string | null>(null);
-  const [removedRooms, setRemovedRooms] = useState<RemovedWorkspace[]>([]);
+  const [layout, setLayout] = useState<BoardLayout>(() => (storageGet(LAYOUT_KEY) === 'list' ? 'list' : 'grid'));
+  const [sort, setSort] = useState<BoardSort>(() => (storageGet(SORT_KEY) === 'name' ? 'name' : 'recent'));
+  const [recentRooms, setRecentRooms] = useState<LibraryBoard[]>(readRecents);
+  const [removedRooms, setRemovedRooms] = useState<RemovedBoard[]>(readRemoved);
+  const [pins, setPins] = useState<PinMap>(readPins);
+  const [names, setNames] = useState<NameMap>(readNames);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [menu, setMenu] = useState<OpenMenu | null>(null);
+  const [peekId, setPeekId] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [shelfOpen, setShelfOpen] = useState(false);
+  const [confirmForget, setConfirmForget] = useState<string | null>(null);
   const [joinLink, setJoinLink] = useState('');
-  /** Said when a code does not check out, rather than opening a phantom board. */
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinOpen, setJoinOpen] = useState(false);
-  const [recentRooms, setRecentRooms] = useState<RecentWorkspace[]>([]);
   const [restoreError, setRestoreError] = useState<string | null>(null);
-  /** The account menu: identity and the session, and nothing else. */
-  const [meOpen, setMeOpen] = useState(false);
-  /**
-   * The menu behind the `+`.
-   *
-   * ## Why the four openings are one control
-   *
-   * There are four ways to get a board on screen — blank, from a template,
-   * from a backup file, from somebody's link — and they used to sit at three
-   * different levels of prominence: the `+` at the top of the rail, Templates
-   * as a nav destination, and the other two behind the avatar. The empty state
-   * has always offered three of them together, in one list, in the order they
-   * are worth trying, which is the app already saying they are one family.
-   *
-   * Behind the avatar was the wrong drawer, not merely a quiet one. An avatar
-   * means *things about me* — who I am, this session, signing out. A backup
-   * file is about a **board**. Filing a board action under a heading that
-   * describes a person is why no amount of use ever made it findable: there
-   * was nothing to learn, because the label did not predict the contents.
-   *
-   * So they are all here, behind the one thing on this page a hand already
-   * goes to. Four scattered entrances is four things to remember; one entrance
-   * with a menu is one, which is what muscle memory can actually hold.
-   *
-   * The `+` itself is unchanged: a plain click still opens a blank board with
-   * no menu in the way. That is the whole point of splitting the control
-   * rather than turning it into a menu button — the common case must not pay
-   * for the rare ones.
-   */
-  const [newOpen, setNewOpen] = useState(false);
-  /**
-   * A backup file is being dragged over the page.
-   *
-   * Held as state rather than a class toggled imperatively because the drop
-   * surface is the whole stage and the cue is a full-bleed overlay: React
-   * already owns that subtree, and a second writer to the same DOM is how the
-   * canvas ended up with two cursors.
-   */
   const [dropping, setDropping] = useState(false);
+
   const restoreInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const meRef = useRef<HTMLDivElement>(null);
-  const newRef = useRef<HTMLDivElement>(null);
   const joinRef = useRef<HTMLInputElement>(null);
-  const sortRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLElement>(null);
-  /**
-   * How many dragenters are outstanding.
-   *
-   * `dragleave` fires when the pointer crosses into a *child* of the drop
-   * surface, so clearing the cue on it makes the overlay flicker off and on
-   * over every card in the grid. Counting enters against leaves is the only
-   * thing that survives a surface with children in it.
-   */
+  const sortRef = useRef<HTMLButtonElement>(null);
+  const newMoreRef = useRef<HTMLButtonElement>(null);
+  const meRef = useRef<HTMLButtonElement>(null);
+  const keepRef = useRef<HTMLButtonElement>(null);
+  /** dragenter/leave fire for every child crossed, so they are counted. */
   const dragDepth = useRef(0);
+  /** Renames already retried this visit, so a failing one is not hammered. */
+  const retried = useRef(new Set<string>());
 
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-      if (Array.isArray(saved)) setRecentRooms(saved);
-    } catch { /* corrupt localStorage entry — not worth surfacing */ }
-    try {
-      const gone = JSON.parse(localStorage.getItem(REMOVED_KEY) || '[]');
-      if (Array.isArray(gone)) setRemovedRooms(gone);
-    } catch { /* same */ }
-  }, []);
-
-  useEffect(() => { localStorage.setItem(VIEW_KEY, view); }, [view]);
-  useEffect(() => { localStorage.setItem(LAYOUT_KEY, layout); }, [layout]);
-  useEffect(() => { localStorage.setItem(SORT_KEY, sort); }, [sort]);
-
-  /**
-   * `/` puts the caret in the search field.
-   *
-   * The one convention every library screen shares, and the reason it is worth
-   * having here rather than being a nicety: this page is a grid of twenty-one
-   * pictures, and the fastest way through it is to type. The field is centred
-   * in the bar where it can be reached, but reaching for it is still a journey
-   * across the screen with a pointer.
-   *
-   * Ignored while a field already has focus, so typing a slash into the search
-   * or the join box types a slash.
-   */
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
-      const el = document.activeElement?.tagName;
-      if (el === 'INPUT' || el === 'TEXTAREA') return;
-      e.preventDefault();
-      searchRef.current?.focus();
-      searchRef.current?.select();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
-  /** A menu that outlives a click elsewhere is a menu you have to dismiss. */
-  /**
-   * Both rail popovers dismiss the same way, so they dismiss in one place.
-   *
-   * Written once over a list rather than twice over a ref: two copies of this
-   * is two chances for one of them to keep a listener after its menu closed,
-   * and the second menu was added by copying the first.
-   */
-  useEffect(() => {
-    if (!meOpen && !newOpen && !sortOpen && !boardMenu) return;
-    const closeAll = () => { setMeOpen(false); setNewOpen(false); setSortOpen(false); setBoardMenu(null); };
-    const onDown = (e: PointerEvent) => {
-      const t = e.target as Node;
-      if (meOpen && !meRef.current?.contains(t)) setMeOpen(false);
-      if (newOpen && !newRef.current?.contains(t)) setNewOpen(false);
-      if (sortOpen && !sortRef.current?.contains(t)) setSortOpen(false);
-      // A card's menu lives inside the card, so anything outside *that card*
-      // closes it — including a click on the next card, which then opens its own.
-      if (boardMenu && !(t instanceof Element && t.closest(`.bcard[href$="/${boardMenu}"]`))) setBoardMenu(null);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeAll(); };
-    window.addEventListener('pointerdown', onDown);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('pointerdown', onDown);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [meOpen, newOpen, sortOpen, boardMenu]);
-
+  useEffect(() => { storageSet(VIEW_KEY, view); }, [view]);
+  useEffect(() => { storageSet(LAYOUT_KEY, layout); }, [layout]);
+  useEffect(() => { storageSet(SORT_KEY, sort); }, [sort]);
   // Switching views starts a new screen, so it starts at the top of one.
   useEffect(() => { stageRef.current?.scrollTo({ top: 0 }); }, [view]);
 
+  /** Another tab, or a board in this one, changed the library. */
+  useEffect(() => {
+    const reload = () => {
+      setRecentRooms(readRecents());
+      setRemovedRooms(readRemoved());
+      setPins(readPins());
+      setNames(readNames());
+    };
+    const onStorage = (e: StorageEvent) => { if (e.key === null || LIBRARY_KEYS.has(e.key)) reload(); };
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('pageshow', reload);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('pageshow', reload);
+    };
+  }, []);
+
+  const status = useBoardStatus(useMemo(() => recentRooms.map((r) => r.id), [recentRooms]));
+  const statusOf = (id: string) => status.boards.get(id);
+  const entryOf = useCallback((id: string) => recentRooms.find((r) => r.id === id), [recentRooms]);
+
   /**
-   * Thumbnails, built once.
-   *
-   * `build()` allocates ids and lays out up to a hundred and fifty nodes, so
-   * doing this per render — which is per keystroke in the search field — is
-   * real work for a picture that never changes.
+   * The server's name for a board wins over the one this device remembers —
+   * somebody may have renamed it since — except for a name typed here, which
+   * is shown until the server reports the board under it.
    */
+  useEffect(() => {
+    if (status.boards.size === 0) return;
+    const settled: string[] = [];
+    const renamed = new Map<string, string>();
+    for (const room of recentRooms) {
+      const title = status.boards.get(room.id)?.title;
+      if (!title) continue;
+      const pending = names[room.id];
+      if (pending) {
+        if (pending.name === title) settled.push(room.id);
+      } else if (title !== room.name) {
+        renamed.set(room.id, title);
+      }
+    }
+    if (settled.length) {
+      setNames(mutateNames((current) => {
+        const next = { ...current };
+        for (const id of settled) delete next[id];
+        return next;
+      }));
+    }
+    if (renamed.size) {
+      setRecentRooms(mutateRecents((list) => list.map((r) => (renamed.has(r.id) ? { ...r, name: renamed.get(r.id)! } : r))));
+    }
+  }, [status, names, recentRooms]);
+
+  /** A name typed while the board could not be reached goes out once it can. */
+  useEffect(() => {
+    for (const [id, pending] of Object.entries(names)) {
+      if (pending.sent || retried.current.has(id) || !status.boards.get(id)?.exists) continue;
+      retried.current.add(id);
+      const entry = entryOf(id);
+      void loadRemote()
+        .then((m) => m.renameRemote(id, pending.name, { invite: entry?.invite }))
+        .then((result) => {
+          if (result === 'renamed') {
+            setNames(mutateNames((n) => (n[id]?.name === pending.name ? { ...n, [id]: { name: pending.name, sent: true } } : n)));
+          } else if (result === 'refused') {
+            setNames(mutateNames((n) => {
+              const { [id]: _drop, ...rest } = n;
+              return rest;
+            }));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [names, status, entryOf]);
+
+  // --------------------------------------------------------------- derived
+  /** Covers drawn from each template's real board: charts as the lines they plot. */
   const templatePreviews = useMemo(() => {
-    const out: Record<string, ReturnType<typeof templatePreview>> = {};
-    TEMPLATES.forEach((t) => { out[t.id] = templatePreview(t); });
+    const out: Record<string, BoardPreview | null> = {};
+    TEMPLATES.forEach((t) => { out[t.id] = templateCover(t); });
     return out;
   }, []);
 
@@ -345,10 +247,6 @@ export const Home: React.FC = () => {
     const q = query.trim().toLowerCase();
     let list = category ? TEMPLATES.filter((t) => t.category === category) : TEMPLATES;
     if (q) {
-      // Name, blurb, what it teaches, and the name of the section it sits in.
-      // Searching the name alone means "physics" finds nothing, which is the
-      // obvious thing to type — and so is "architecture", which is a category
-      // rather than a word on any card.
       list = list.filter((t) => {
         const section = CATEGORIES.find((c) => c.id === t.category)?.label ?? '';
         return `${t.name} ${t.blurb} ${t.teaches.join(' ')} ${section}`.toLowerCase().includes(q);
@@ -357,155 +255,423 @@ export const Home: React.FC = () => {
     return list;
   }, [category, query]);
 
-  /**
-   * The showcase boards lead the gallery, but only when nothing is narrowing
-   * it. Someone who picked a category or typed a query has said exactly what
-   * they want; three unrelated boards above their answer is the page
-   * overriding them.
-   */
+  /** The showcase boards lead the gallery, unless a filter has said what is wanted. */
   const showFeatured = !category && !query.trim();
   const featured = useMemo(() => {
     if (!showFeatured) return [];
-    const CATEGORY_ORDER = ['thinking', 'science', 'work'];
-    return matchedTemplates
-      .filter((t) => t.featured)
-      .sort((a, b) => {
-        const ia = CATEGORY_ORDER.indexOf(a.category);
-        const ib = CATEGORY_ORDER.indexOf(b.category);
-        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
-      });
+    const order = ['thinking', 'science', 'work'];
+    const rank = (c: string) => (order.indexOf(c) === -1 ? 99 : order.indexOf(c));
+    return matchedTemplates.filter((t) => t.featured).sort((a, b) => rank(a.category) - rank(b.category));
   }, [showFeatured, matchedTemplates]);
   const rest = useMemo(
     () => (showFeatured ? matchedTemplates.filter((t) => !t.featured) : matchedTemplates),
     [showFeatured, matchedTemplates]
   );
 
-  /**
-   * Four templates to show at the end of the boards.
-   *
-   * Picked once and kept for the session rather than rotated per render: a row
-   * that reshuffles while you look at it is a row you cannot point at. The
-   * showcase boards lead, because they are the ones that answer "what can this
-   * thing actually do" in one picture.
-   */
-  const suggestedTemplates = useMemo(() => {
-    const featuredFirst = [...TEMPLATES].sort((a, b) => Number(Boolean(b.featured)) - Number(Boolean(a.featured)));
-    // Five, not four: the seam now shares the board grid's column basis, and a
-    // wide window lays that out as five tracks. Four cards left the last track
-    // of the row empty, which reads as a missing card rather than as a choice.
-    // Narrower windows drop to four or three tracks and simply wrap.
-    return featuredFirst.slice(0, 5);
-  }, []);
+  /** Five, so the row under the boards fills a wide window's tracks. */
+  const suggestedTemplates = useMemo(
+    () => [...TEMPLATES].sort((a, b) => Number(Boolean(b.featured)) - Number(Boolean(a.featured))).slice(0, 5),
+    []
+  );
+  const starters = useMemo(() => suggestedTemplates.slice(0, 3), [suggestedTemplates]);
 
-  const matchedRooms = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const ordered = sortBoards(recentRooms, sort);
-    return q ? ordered.filter((r) => r.name.toLowerCase().includes(q)) : ordered;
-  }, [recentRooms, query, sort]);
+  const hasRooms = recentRooms.length > 0;
 
-  /**
-   * The boards under headings of when they were last open.
-   *
-   * Only where a heading earns its place: ordered by name, or filtered by a
-   * search, the grouping would be arbitrary, so the grid is flat and the
-   * answer to "why is it in this order" is the control that says so.
-   */
+  /** The templates on screen, in the order they appear — what the peek steps through. */
+  const visibleTemplates = useMemo<Template[]>(() => {
+    if (view === 'templates') {
+      if (!showFeatured) return rest;
+      return [...featured, ...CATEGORIES.flatMap((c) => rest.filter((t) => t.category === c.id))];
+    }
+    if (!hasRooms) return starters;
+    return query.trim() ? [] : suggestedTemplates;
+  }, [view, showFeatured, rest, featured, hasRooms, starters, query, suggestedTemplates]);
+
   const boardGroups = useMemo(
-    () => (sort === 'recent' && !query.trim() ? groupBoards(matchedRooms) : [{ id: 'today' as const, label: '', boards: matchedRooms }]),
-    [matchedRooms, sort, query]
+    () => libraryGroups(recentRooms, { pins, names, sort, query }),
+    [recentRooms, pins, names, sort, query]
   );
 
-  // ---------------------------------------------------------------- actions
-  const openBoard = () => { window.location.href = `/room/${nanoid(10)}`; };
+  const peekTemplate = peekId ? TEMPLATES.find((t) => t.id === peekId) ?? null : null;
+  const peekIndex = peekTemplate ? visibleTemplates.findIndex((t) => t.id === peekTemplate.id) : -1;
+  // The peek belongs to the templates on screen; switching views or filtering one away closes it.
+  const peeking = peekTemplate && peekIndex >= 0 ? peekTemplate : null;
 
-  const openTemplate = (template: Template) => {
+  const roving = useRovingGrid(`${view}|${layout}|${sort}|${query}|${category}|${recentRooms.length}|${Object.keys(pins).length}|${renaming}`);
+
+  // --------------------------------------------------------------- actions
+  const openBoard = useCallback(() => goToBoard(`/room/${nanoid(10)}?new=1`), []);
+
+  const openTemplate = useCallback((template: Template) => {
     stashPendingTemplate(template.id);
-    openBoard();
-  };
+    const cover = peekId === template.id
+      ? document.querySelector<HTMLElement>('.tpeek__art')
+      : document.querySelector<HTMLElement>(`[data-template="${template.id}"] .tcard__art`);
+    goToBoard(`/room/${nanoid(10)}`, cover);
+  }, [peekId]);
 
-  /**
-   * Rebuild a board from a JSON backup, as a **new** room.
-   *
-   * Deliberately not the same operation as the Restore inside the export
-   * dialog, which replaces the board you are standing in. That one is
-   * unreachable in the case this exists for: someone who cleared their browser
-   * arrives here with no boards at all, so the in-room restore has no room to
-   * be in.
-   *
-   * Validated before navigating. Sending someone to a fresh empty room and
-   * *then* discovering the file was unreadable leaves them somewhere new with
-   * nothing in it and no obvious way back.
-   */
-  /**
-   * Whether a drag carries something we could actually restore.
-   *
-   * Checked on `dragover` as well as on drop, because the cue has to be honest
-   * *before* the release: an overlay that says "drop to restore" for a dragged
-   * image is a promise the drop cannot keep. During a drag the browser exposes
-   * only the item's `kind` and `type` — never its name or contents — so this is
-   * as much as can be known, and a `.json` dragged from a file manager
-   * sometimes arrives typed as `''`. A single file with no type is allowed
-   * through and rejected properly on drop, where the content can be read.
-   */
-  const dragHasFile = (dt: DataTransfer | null) =>
-    !!dt && Array.from(dt.items).some((i) => i.kind === 'file');
+  /** A tab opened from this one inherits its session storage, so the stash goes with it. */
+  const openTemplateInNewTab = useCallback((template: Template) => {
+    stashPendingTemplate(template.id);
+    const tab = window.open(`/room/${nanoid(10)}`, '_blank');
+    if (tab) tab.opener = null;
+    takePendingTemplate();
+  }, []);
 
-  const handleRestoreFile = async (file: File) => {
-    setRestoreError(null);
-    const text = await file.text();
-
-    // One picker and one drop target for both kinds of file, because a person
-    // holding a .json from this app should not have to know which of two
-    // things it is. The discriminator is checked first so a malformed board
-    // list reports a board-list problem rather than being handed to the
-    // document reader and coming back as "that file does not contain a
-    // document" — an error about the wrong thing, which is worse than none.
-    if (looksLikeLibrary(text)) { loadLibrary(text); return; }
-
-    const result = parseDocumentExport(text);
-    if (!result.ok) { setRestoreError(result.error); return; }
-    stashPendingRestore(text);
-    openBoard();
-  };
-
-  /**
-   * Open the join field with something already in it.
-   *
-   * Used by the paste shortcut and by the menu alike, so the field is filled
-   * and focused by one path rather than by two that can drift.
-   */
-  const openJoin = (prefill = '') => {
+  const openJoin = useCallback((prefill = '') => {
     setJoinError(null);
     setJoinOpen(true);
     if (prefill) setJoinLink(prefill);
     window.setTimeout(() => joinRef.current?.focus(), 0);
+  }, []);
+
+  const goTemplates = useCallback((c: TemplateCategory | null) => {
+    setView('templates');
+    setCategory(c);
+  }, []);
+
+  const peek = useCallback((template: Template) => {
+    setPeekId((current) => (current === template.id ? null : template.id));
+  }, []);
+
+  const stepPeek = (direction: -1 | 1) => {
+    if (peekIndex < 0 || visibleTemplates.length === 0) return;
+    const next = visibleTemplates[(peekIndex + direction + visibleTemplates.length) % visibleTemplates.length];
+    setPeekId(next.id);
+    stageRef.current?.querySelector<HTMLElement>(`[data-template="${next.id}"]`)?.scrollIntoView({ block: 'nearest' });
+  };
+
+  const closePeek = useCallback(() => {
+    const id = peekId;
+    setPeekId(null);
+    if (id) stageRef.current?.querySelector<HTMLElement>(`[data-template="${id}"]`)?.focus({ preventScroll: true });
+  }, [peekId]);
+
+  const focusCard = (id: string | null) => {
+    window.setTimeout(() => {
+      const el = id ? stageRef.current?.querySelector<HTMLElement>(`[data-roving="${CSS.escape(id)}"]`) : null;
+      (el ?? searchRef.current)?.focus();
+    }, 0);
+  };
+
+  const copyAddress = async (room: ShelfBoard) => {
+    const url = `${window.location.origin}/room/${room.id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      notices$.notify({ message: `Copied the link to “${room.name}”.`, tone: 'success' });
+    } catch {
+      // A denied clipboard is a permission decision, so offer the address instead.
+      notices$.notify({ message: url, tone: 'info', duration: 20000 });
+    }
+  };
+
+  /** Put a removed board back, at `index` in the list when it is still known. */
+  const putBack = (id: string, index?: number) => {
+    let entry: RemovedBoard | undefined;
+    setRemovedRooms(mutateRemoved((list) => {
+      entry = list.find((r) => r.id === id);
+      return list.filter((r) => r.id !== id);
+    }));
+    if (!entry) return;
+    const { removedAt: _removedAt, ...room } = entry;
+    setRecentRooms(mutateRecents((list) => insertAt(list, room, index ?? list.length)));
   };
 
   /**
-   * Paste a board link anywhere on this page.
-   *
-   * This is how people arrive from a link: somebody sent it, it is already on
-   * the clipboard, and the current path is *find the control, click it, click
-   * the field, paste*. Four steps to consume a thing the browser already has.
-   *
-   * Two guards, and both matter:
-   *
-   * - **Only when nothing is focused.** A paste into the search field or the
-   *   join field itself must behave like a paste, so this stands down for any
-   *   input, textarea or `contenteditable`. Without that check the shortcut
-   *   would eat the very field it opens.
-   * - **Only for text that is actually a board.** A link containing `/room/`
-   *   or a string shaped like a room code opens the field pre-filled;
-   *   everything else is left alone, because a page that reacts to *any*
-   *   clipboard content is a page you stop pasting near.
-   *
-   * It fills the field rather than navigating. A paste is not a decision — the
-   * clipboard can hold something stale — so the last step stays deliberate.
+   * Remove recoverably, with an undo on the notice. Focus moves to the card
+   * that takes this one's place, so the keyboard carries on.
    */
+  const removeRoom = (board: ShelfBoard) => {
+    const cells = Array.from(stageRef.current?.querySelectorAll<HTMLElement>('.lgroup [data-roving]') ?? []);
+    const at = cells.findIndex((el) => el.dataset.roving === board.id);
+    const after = focusAfterRemoval(at, cells.length);
+    const nextId = after >= 0 ? cells.filter((el) => el.dataset.roving !== board.id)[after]?.dataset.roving ?? null : null;
+
+    let index = -1;
+    let entry: LibraryBoard | undefined;
+    const next = mutateRecents((list) => {
+      index = list.findIndex((r) => r.id === board.id);
+      entry = list[index];
+      return list.filter((r) => r.id !== board.id);
+    });
+    if (!entry) return;
+    setRecentRooms(next);
+    const before = readRemoved().length;
+    const removed = mutateRemoved((list) => [{ ...entry!, removedAt: Date.now() }, ...list.filter((r) => r.id !== board.id)]);
+    setRemovedRooms(removed);
+    if (before + 1 > REMOVED_LIMIT) {
+      notices$.notify({
+        message: `The removed list is full at ${REMOVED_LIMIT}, so the oldest entry has been dropped. Save your board list to keep a copy.`,
+        tone: 'warning',
+        duration: 14000,
+      });
+    }
+    notices$.notify({
+      message: `Removed “${board.name}” from this device. The board itself is untouched.`,
+      tone: 'info',
+      duration: 12000,
+      action: { label: 'Undo', run: () => putBack(board.id, index) },
+    });
+    focusCard(nextId);
+  };
+
+  /** The one step here that cannot be undone, so it asks — inline, in the row. */
+  const forgetRemoved = (room: RemovedBoard) => {
+    setRemovedRooms(mutateRemoved((list) => list.filter((r) => r.id !== room.id)));
+    setConfirmForget(null);
+    notices$.notify({ message: `Forgot “${room.name}”.`, tone: 'info' });
+  };
+
+  useEffect(() => {
+    if (confirmForget) keepRef.current?.focus();
+  }, [confirmForget]);
+
+  const togglePinned = (board: ShelfBoard) => {
+    const next = mutatePins((current) => togglePin(current, board.id));
+    setPins(next);
+    notices$.notify({ message: next[board.id] ? `Pinned “${board.name}”.` : `Unpinned “${board.name}”.`, tone: 'success' });
+  };
+
+  /** Whether this device can rename a board from here, and why not. */
+  const renameBlock = (board: ShelfBoard): string | null => {
+    const entry = entryOf(board.id);
+    if (entry && !canEditBoard(entry)) return `Your link to this board is a ${entry.role} link, so it cannot be renamed from here.`;
+    if (status.restricted && !entry?.invite) return 'This server needs an invite link to change a board. Open the board from its invite to rename it.';
+    return null;
+  };
+
+  const commitRename = (board: ShelfBoard, typed: string | null) => {
+    setRenaming(null);
+    focusCard(board.id);
+    if (typed === null) return;
+    const name = cleanBoardName(typed);
+    const previous = entryOf(board.id)?.name ?? board.name;
+    if (!name || name === displayName(board, names)) return;
+
+    setRecentRooms(mutateRecents((list) => list.map((r) => (r.id === board.id ? { ...r, name } : r))));
+    setNames(mutateNames((n) => ({ ...n, [board.id]: { name, sent: false } })));
+    retried.current.add(board.id);
+    const invite = entryOf(board.id)?.invite;
+    void loadRemote()
+      .then((m) => m.renameRemote(board.id, name, { invite }))
+      .then((result) => {
+        if (result === 'renamed') {
+          setNames(mutateNames((n) => (n[board.id]?.name === name ? { ...n, [board.id]: { name, sent: true } } : n)));
+          return;
+        }
+        if (result === 'refused') {
+          setNames(mutateNames((n) => {
+            const { [board.id]: _drop, ...restNames } = n;
+            return restNames;
+          }));
+          setRecentRooms(mutateRecents((list) => list.map((r) => (r.id === board.id ? { ...r, name: previous } : r))));
+          notices$.notify({
+            message: status.restricted
+              ? `This server needs an invite link to change “${previous}”. Open the board from its invite to rename it.`
+              : `“${previous}” kept its name: your link to it does not allow changes.`,
+            tone: 'error',
+          });
+          return;
+        }
+        notices$.notify({
+          message: `Renamed on this device. “${name}” reaches the board the next time it can be reached from here.`,
+          tone: 'info',
+        });
+      })
+      .catch(() => {});
+  };
+
+  /** Why a board cannot be copied or backed up from here, or `null` when it can. */
+  const copyBlock = (board: ShelfBoard): string | null => {
+    if (status.restricted) return 'This server needs an invite link for every board, so boards cannot be copied from here.';
+    if (loadPreview(board.id) === null && statusOf(board.id)?.exists !== true) return 'Open it once on this device, or connect, to copy it.';
+    return null;
+  };
+
+  const duplicateBoard = async (board: ShelfBoard) => {
+    const name = displayName(board, names);
+    const invite = entryOf(board.id)?.invite;
+    notices$.notify({ message: `Reading “${name}”…`, tone: 'info', duration: 3000 });
+    const remote = await loadRemote();
+    const plan = await remote.planDuplicate(board.id, { invite }).catch(() => null);
+    if (!plan) {
+      notices$.notify({ message: `Could not reach “${name}”, and this device has no copy of it. Try again when you are online.`, tone: 'error' });
+      return;
+    }
+    if (plan.objectCount === 0) {
+      notices$.notify({ message: `“${name}” has nothing on it yet, so there is nothing to copy. Start a new board instead.`, tone: 'info' });
+      return;
+    }
+
+    const copyName = `Copy of ${name}`;
+    const go = async () => {
+      const newId = nanoid(10);
+      try {
+        const where = await remote.writeDuplicate(newId, plan, copyName);
+        setRecentRooms(mutateRecents((list) => upsertRecent(list, { id: newId, name: copyName, lastAccessed: Date.now() })));
+        if (where === 'device') {
+          notices$.notify({ message: `“${copyName}” is saved on this device and reaches the server when it can.`, tone: 'info' });
+        }
+        goToBoard(`/room/${newId}`);
+      } catch {
+        notices$.notify({ message: `Could not save “${copyName}”. This browser may be out of storage space.`, tone: 'error' });
+      }
+    };
+
+    const cautions: string[] = [];
+    if (!plan.fromServer) {
+      cautions.push('the server could not be reached, so this copies what this device last saw, without changes made since');
+    }
+    if (plan.mediaCount > 0) {
+      cautions.push(
+        `${plan.mediaCount} image or audio file${plan.mediaCount === 1 ? '' : 's'} will still load from the original board: ` +
+        'anyone you share the copy with could find the original’s address, and they stop loading if the original is deleted'
+      );
+    }
+    if (cautions.length === 0) { await go(); return; }
+    notices$.notify({
+      message: `Before you copy “${name}”: ${cautions.join('; ')}.`,
+      tone: 'warning',
+      duration: null,
+      action: { label: 'Copy anyway', run: () => void go() },
+    });
+  };
+
+  const downloadBackup = async (board: ShelfBoard) => {
+    const name = displayName(board, names);
+    const invite = entryOf(board.id)?.invite;
+    try {
+      const snapshot = await (await loadRemote()).snapshotBoard(board.id, { title: name, access: { invite } });
+      if (!snapshot) {
+        notices$.notify({ message: `“${name}” has nothing on it to back up.`, tone: 'info' });
+        return;
+      }
+      const url = URL.createObjectURL(new Blob([snapshot.text], { type: 'application/json' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${slugify(name) || 'board'}.json`;
+      a.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      notices$.notify({
+        message: `Saved a backup of “${name}” with ${snapshot.objectCount.toLocaleString()} objects${snapshot.fromServer ? '' : ', from this device’s copy'}.`,
+        tone: 'success',
+      });
+    } catch {
+      notices$.notify({ message: `Could not reach “${name}” to back it up. Try again when you are online.`, tone: 'error' });
+    }
+  };
+
+  /** Save every address on this device as a file — the one safeguard that survives clearing site data. */
+  const saveLibrary = () => {
+    const text = serializeLibrary(readRecents(), readRemoved());
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `vega-board-list-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    notices$.notify({
+      message: `Saved ${recentRooms.length + removedRooms.length} board addresses. Keep it somewhere this browser cannot reach.`,
+      tone: 'success',
+    });
+  };
+
+  /** Fold a saved list in. A union, never a replacement. */
+  const loadLibrary = (text: string) => {
+    const parsed = parseLibrary(text);
+    if (!parsed.ok) { setRestoreError(parsed.error); return; }
+    let added = 0;
+    const boards = mutateRecents((list) => {
+      const merged = mergeLibrary(list, parsed.file.boards);
+      added = merged.added;
+      return merged.boards;
+    });
+    setRecentRooms(boards);
+    const live = new Set(boards.map((b) => b.id));
+    setRemovedRooms(mutateRemoved((list) => {
+      const shelf = new Map(list.map((r) => [r.id, r]));
+      for (const r of parsed.file.removed) if (!shelf.has(r.id)) shelf.set(r.id, r);
+      return [...shelf.values()].filter((r) => !live.has(r.id)).sort((a, b) => b.removedAt - a.removedAt);
+    }));
+    setView('boards');
+    notices$.notify({
+      message: added === 0
+        ? 'That list held nothing this device did not already have.'
+        : `Added ${added} board${added === 1 ? '' : 's'} from that list. Nothing was removed.`,
+      tone: 'success',
+    });
+  };
+
+  /** One picker and one drop target for both kinds of file, validated before anything navigates. */
+  const handleRestoreFile = async (file: File) => {
+    setRestoreError(null);
+    const text = await file.text();
+    if (looksLikeLibrary(text)) { loadLibrary(text); return; }
+    const result = parseDocumentExport(text);
+    if (!result.ok) { setRestoreError(result.error); return; }
+    stashPendingRestore(text);
+    goToBoard(`/room/${nanoid(10)}`);
+  };
+
+  const dragHasFile = (dt: DataTransfer | null) => !!dt && Array.from(dt.items).some((i) => i.kind === 'file');
+
+  /**
+   * A link or a code. A code carries a check symbol, so a mistyped one is
+   * refused rather than opening an empty board that looks like lost work.
+   */
+  const handleJoin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setJoinError(null);
+    const trimmed = joinLink.trim();
+    if (!trimmed) return;
+
+    if (trimmed.includes('/room/')) {
+      const roomId = (trimmed.split('/room/')[1] || '').split(/[/?#]/)[0].trim();
+      if (!roomId) { setJoinError('That link has no board in it. Copy the whole thing, up to and past /room/.'); return; }
+      goToBoard(`/room/${roomId}`);
+      return;
+    }
+    if (looksLikeRoomCode(trimmed)) {
+      const roomId = roomIdFromCode(trimmed);
+      if (!roomId) { setJoinError('That code is not quite right. Check it against the one you were sent.'); return; }
+      goToBoard(`/room/${roomId}`);
+      return;
+    }
+    const roomId = trimmed.split(/[/?#]/)[0].trim();
+    if (roomId) goToBoard(`/room/${roomId}`);
+  };
+
+  // ------------------------------------------------------------ keyboard
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const typing = isTyping(document.activeElement);
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setMenu(null);
+        setPaletteOpen((open) => !open);
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey || e.repeat || typing || paletteOpen || menu || renaming) return;
+      if (e.key === '/') {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      } else if ((e.key === 'n' || e.key === 'N') && !e.shiftKey) {
+        e.preventDefault();
+        openBoard();
+      } else if (e.key === 'Escape' && peekId) {
+        e.preventDefault();
+        closePeek();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [paletteOpen, menu, renaming, peekId, openBoard, closePeek]);
+
+  /** A board link pasted anywhere outside a field fills the join box. */
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
-      const el = document.activeElement as HTMLElement | null;
-      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      if (isTyping(document.activeElement)) return;
       const text = (e.clipboardData?.getData('text') || '').trim();
       if (!text || text.length > 400) return;
       if (!text.includes('/room/') && !looksLikeRoomCode(text)) return;
@@ -515,535 +681,214 @@ export const Home: React.FC = () => {
     };
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
-  }, []);
+  }, [openJoin]);
 
-  /**
-   * A link, or a code.
-   *
-   * ## Why this refuses things now
-   *
-   * It used to take whatever it was given and navigate. That is right for a
-   * link -- there is nothing to check, and an id we do not recognise may still
-   * be somebody's board -- and it was quietly wrong for everything else,
-   * because *every* string is a valid room id. A code typed with one symbol
-   * wrong did not fail; it opened a different board, which did not exist,
-   * which meant an empty canvas and a person reasonably certain their
-   * colleague's work had been lost.
-   *
-   * A room code carries a check symbol precisely so that this case can be
-   * caught. See `engine/room/roomCode.ts`. So: anything shaped like a code is
-   * verified and refused if it does not hold, and anything else is treated as
-   * a link and passed through as before.
-   */
-  const handleJoin = (e: React.FormEvent) => {
-    e.preventDefault();
-    setJoinError(null);
-
-    // Trimmed before extracting, not after: a pasted link with trailing
-    // whitespace — routine when copying out of chat — used to carry that into
-    // the room id and land on a different, brand-new empty room.
-    const trimmed = joinLink.trim();
-    if (!trimmed) return;
-
-    if (trimmed.includes('/room/')) {
-      const roomId = (trimmed.split('/room/')[1] || '').split(/[/?#]/)[0].trim();
-      if (!roomId) {
-        setJoinError('That link has no board in it. Copy the whole thing, up to and past /room/.');
-        return;
-      }
-      window.location.href = `/room/${roomId}`;
-      return;
-    }
-
-    if (looksLikeRoomCode(trimmed)) {
-      const roomId = roomIdFromCode(trimmed);
-      if (!roomId) {
-        setJoinError('That code is not quite right. Check it against the one you were sent.');
-        return;
-      }
-      window.location.href = `/room/${roomId}`;
-      return;
-    }
-
-    // Neither shape. Most likely a bare id out of somebody's address bar,
-    // which is still a legitimate way in and cannot be checked.
-    const roomId = trimmed.split(/[/?#]/)[0].trim();
-    if (!roomId) return;
-    window.location.href = `/room/${roomId}`;
+  /** Arrowing through templates while the peek is open moves the peek with you. */
+  const onStageFocus = (e: React.FocusEvent) => {
+    roving.onFocus(e);
+    if (!peekId) return;
+    const id = (e.target as HTMLElement).closest<HTMLElement>('[data-template]')?.dataset.template;
+    if (id && id !== peekId) setPeekId(id);
   };
 
-  const writeRecents = (next: RecentWorkspace[]) => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    setRecentRooms(next);
-  };
-
-  const writeRemoved = (next: RemovedWorkspace[]) => {
-    const capped = next.slice(0, REMOVED_LIMIT);
-    if (capped.length < next.length) {
-      // Never silently. Losing an address is the one consequence on this page
-      // that cannot be undone, so if the ceiling ever does discard one it is
-      // said plainly rather than discovered later by somebody looking for a
-      // board that is no longer listed anywhere.
-      notices$.notify({
-        message: `The removed list is full at ${REMOVED_LIMIT}, so the oldest entry has been dropped. Save your board list to keep a copy.`,
-        tone: 'warning',
-        duration: 14000,
-      });
-    }
-    localStorage.setItem(REMOVED_KEY, JSON.stringify(capped));
-    setRemovedRooms(capped);
-  };
-
-  /**
-   * Take a board off this device, recoverably.
-   *
-   * Nothing is deleted -- see the note on `REMOVED_KEY` for why that is the
-   * problem rather than the reassurance. The board keeps existing and this
-   * list is the only thing that knew how to reach it, so the removal is
-   * undoable twice over: from the notice, and afterwards from the shelf under
-   * the grid.
-   *
-   * Restored to its old position rather than to the front. Putting it back
-   * where it was makes undo look like nothing happened, which is the whole
-   * point of an undo; putting it at the top makes the list reorder itself as a
-   * consequence of a mistake being corrected.
-   */
-  const removeRoom = (room: RecentWorkspace) => {
-    const index = recentRooms.findIndex((r) => r.id === room.id);
-    if (index < 0) return;
-
-    writeRecents(recentRooms.filter((r) => r.id !== room.id));
-    writeRemoved([{ ...room, removedAt: Date.now() }, ...removedRooms.filter((r) => r.id !== room.id)]);
-
-    notices$.notify({
-      message: `Removed “${room.name}” from this device. The board itself is untouched.`,
-      tone: 'info',
-      // Longer than a confirmation, because this is the one action here whose
-      // consequence is not visible in what is left on screen.
-      duration: 12000,
-      action: { label: 'Undo', run: () => putBack(room.id, index) },
-    });
-  };
-
-  /** Return a removed board to the list, at `index` when we still know it. */
-  const putBack = (id: string, index?: number) => {
-    setRemovedRooms((removed) => {
-      const entry = removed.find((r) => r.id === id);
-      if (!entry) return removed;
-
-      setRecentRooms((current) => {
-        if (current.some((r) => r.id === id)) return current;
-        const { removedAt: _removedAt, ...room } = entry;
-        const next = [...current];
-        next.splice(Math.min(index ?? next.length, next.length), 0, room);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-        return next;
-      });
-
-      const nextRemoved = removed.filter((r) => r.id !== id);
-      localStorage.setItem(REMOVED_KEY, JSON.stringify(nextRemoved));
-      return nextRemoved;
-    });
-  };
-
-  /**
-   * Drop a removal for good.
-   *
-   * ## Why there has to be one
-   *
-   * There was no way to delete. The shelf only grew, and the only thing that
-   * ever shortened it was the silent cap — so the way to tidy the shelf was to
-   * remove more boards until the old ones fell off the end. The route to a
-   * clean list ran straight through the data loss the list exists to prevent,
-   * which is what a missing exit does to a design: people find one anyway, and
-   * it is the worst available.
-   *
-   * ## Why it is confirmed, when removing a board is not
-   *
-   * They are opposite actions and the asymmetry is the point. Removing a board
-   * is *recoverable* — that is what the notice and this shelf are for — so it
-   * can be a single click on a card. This one is where recovery stops, so it
-   * is the one thing on this page that asks. It names the board, because
-   * "forget this?" over a list of twelve is not a question anybody can answer.
-   */
-  const forgetRemoved = (room: RemovedWorkspace) => {
-    const ok = window.confirm(
-      `Forget “${room.name}” permanently?
-
-` +
-      'The board itself is not deleted — but this device will no longer have its ' +
-      'address, and there is no way to get it back from here. If you have the link ' +
-      'somewhere else, this is safe.'
-    );
-    if (!ok) return;
-    const next = removedRooms.filter((r) => r.id !== room.id);
-    localStorage.setItem(REMOVED_KEY, JSON.stringify(next));
-    setRemovedRooms(next);
-  };
-
-  /**
-   * Put a removed board's address on the clipboard.
-   *
-   * The shelf could only ever put a board *back*, which is one of the two
-   * things somebody wants from it. The other is to hand the link to a
-   * colleague, or paste it somewhere that will outlive this browser — and for
-   * that, restoring it to the grid first is a detour through a state you did
-   * not want.
-   */
-  const copyBoardLink = (room: RecentWorkspace) => {
-    void copyAddress(room).then(() => {
-      setCopiedBoard(room.id);
-      window.setTimeout(() => setCopiedBoard((id) => (id === room.id ? null : id)), 1800);
-    });
-  };
-
-  const copyAddress = async (room: RecentWorkspace) => {
-    const url = `${window.location.origin}/room/${room.id}`;
-    try {
-      await navigator.clipboard.writeText(url);
-      notices$.notify({ message: `Copied the link to “${room.name}”.`, tone: 'success' });
-    } catch {
-      // A denied clipboard is a permission decision, not a failure to report
-      // as one — so the address is offered instead of announced as lost.
-      notices$.notify({ message: url, tone: 'info', duration: 20000 });
-    }
-  };
-
-  /**
-   * Save the board list as a file.
-   *
-   * Every other safeguard here protects the list *in place* and assumes the
-   * `localStorage` entry still exists. None of them survives clearing site
-   * data or moving to another machine, and neither of those is an accident
-   * anybody gets to undo. A second record is the only answer to "this list is
-   * the only record", so: the index, as a file.
-   *
-   * The removed shelf goes in it too, and is arguably the more valuable half —
-   * those are the addresses this device has already stopped keeping.
-   */
-  const saveLibrary = () => {
-    const text = serializeLibrary(recentRooms, removedRooms);
-    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `vega-board-list-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    // Revoked on the next turn rather than immediately: the click is
-    // asynchronous, and revoking in the same tick races the download.
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    notices$.notify({
-      message: `Saved ${recentRooms.length + removedRooms.length} board addresses. Keep it somewhere this browser cannot reach.`,
-      tone: 'success',
-    });
-  };
-
-  /**
-   * Fold a saved list back in.
-   *
-   * A **union**, never a replacement — see `mergeLibrary`. Loading a file saved
-   * before three boards were opened must not take those three addresses away,
-   * and doing it as a side effect of an action taken to be safer would be the
-   * worst version of the loss this page is built to avoid.
-   */
-  const loadLibrary = (text: string) => {
-    const parsed = parseLibrary(text);
-    if (!parsed.ok) { setRestoreError(parsed.error); return; }
-
-    const merged = mergeLibrary(recentRooms, parsed.file.boards);
-    writeRecents(merged.boards);
-
-    // The shelf merges on the same terms, and a board restored to the grid by
-    // this load leaves the shelf: it is no longer removed.
-    const live = new Set(merged.boards.map((b) => b.id));
-    const shelf = new Map(removedRooms.map((r) => [r.id, r]));
-    for (const r of parsed.file.removed) if (!shelf.has(r.id)) shelf.set(r.id, r);
-    writeRemoved([...shelf.values()].filter((r) => !live.has(r.id)).sort((a, b) => b.removedAt - a.removedAt));
-
-    setView('boards');
-    notices$.notify({
-      message: merged.added === 0
-        ? 'That list held nothing this device did not already have.'
-        : `Added ${merged.added} board${merged.added === 1 ? '' : 's'} from that list. Nothing was removed.`,
-      tone: 'success',
-    });
-  };
-
-  // The same honest onboarding screen everywhere, rather than a second
-  // "enter your name" screen that slowly drifts from the first.
+  // The same onboarding screen as everywhere else for a visitor with no identity.
   if (!user) return <AuthModal />;
 
-  const hasRooms = recentRooms.length > 0;
-  const categoryLabel = CATEGORIES.find((c) => c.id === category)?.label;
-
-  const goTemplates = (c: TemplateCategory | null) => {
-    setView('templates');
-    setCategory(c);
+  // ----------------------------------------------------------------- menus
+  const boardMenuEntries = (board: ShelfBoard): MenuEntry[] => {
+    const missing = statusOf(board.id)?.exists === false;
+    const cannotCopy = copyBlock(board);
+    const cannotRename = renameBlock(board);
+    const remove: MenuEntry = {
+      kind: 'item', id: 'remove', label: 'Remove from this device', icon: <X size={15} />, shortcut: 'Delete', danger: true,
+      detail: 'The board itself is untouched', onSelect: () => removeRoom(board),
+    };
+    const entries: MenuEntry[] = [
+      { kind: 'item', id: 'open-tab', label: 'Open in new tab', icon: <ExternalLink size={15} />, onSelect: () => { window.open(`/room/${board.id}`, '_blank', 'noopener'); } },
+      { kind: 'item', id: 'copy-link', label: 'Copy link', icon: <Copy size={15} />, onSelect: () => void copyAddress(board) },
+      { kind: 'item', id: 'rename', label: 'Rename', icon: <Pencil size={15} />, shortcut: 'F2', disabled: Boolean(cannotRename), disabledReason: cannotRename ?? undefined, onSelect: () => setRenaming(board.id) },
+      { kind: 'item', id: 'duplicate', label: 'Duplicate', icon: <CopyPlus size={15} />, disabled: Boolean(cannotCopy), disabledReason: cannotCopy ?? undefined, onSelect: () => void duplicateBoard(board) },
+      pins[board.id]
+        ? { kind: 'item', id: 'pin', label: 'Unpin', icon: <PinOff size={15} />, shortcut: 'P', onSelect: () => togglePinned(board) }
+        : { kind: 'item', id: 'pin', label: 'Pin to top', icon: <Pin size={15} />, shortcut: 'P', onSelect: () => togglePinned(board) },
+      { kind: 'separator', id: 'sep-1' },
+      { kind: 'item', id: 'backup', label: 'Download backup', icon: <Download size={15} />, disabled: Boolean(cannotCopy), disabledReason: cannotCopy ?? undefined, onSelect: () => void downloadBackup(board) },
+      { kind: 'separator', id: 'sep-2' },
+      remove,
+    ];
+    // A board the server no longer has leads with the one thing worth doing about it.
+    return missing ? [remove, { kind: 'separator', id: 'sep-0' }, ...entries.slice(0, -2)] : entries;
   };
 
+  const menuEntries = (): MenuEntry[] => {
+    if (!menu) return [];
+    switch (menu.kind) {
+      case 'board':
+        return boardMenuEntries(menu.board);
+      case 'sort':
+        return BOARD_SORTS.map((option) => ({
+          kind: 'item' as const, id: option.id, label: option.label, detail: option.hint, checked: sort === option.id,
+          onSelect: () => setSort(option.id),
+        }));
+      case 'new':
+        return [
+          { kind: 'item', id: 'restore', label: 'From a backup file', icon: <UploadCloud size={15} />, onSelect: () => restoreInputRef.current?.click() },
+          { kind: 'item', id: 'join', label: 'Open a shared link', icon: <Link2 size={15} />, onSelect: () => { setView('boards'); openJoin(); } },
+          { kind: 'item', id: 'templates', label: 'From a template', icon: <Compass size={15} />, onSelect: () => goTemplates(null) },
+        ];
+      case 'me':
+        return [
+          { kind: 'heading', id: 'who', label: `${user.name} · ${user.isGuest ? 'Guest session' : 'Kept on this device'}` },
+          { kind: 'item', id: 'save', label: 'Save board list', icon: <Download size={15} />, detail: 'Every address on this device, as a file', onSelect: saveLibrary },
+          { kind: 'item', id: 'load', label: 'Load a board list', icon: <UploadCloud size={15} />, onSelect: () => restoreInputRef.current?.click() },
+          { kind: 'separator', id: 'sep-a' },
+          {
+            kind: 'submenu', id: 'appearance', label: 'Appearance', icon: <SunMoon size={15} />,
+            panel: () => (
+              <Suspense fallback={<div className="appearance-panel" aria-busy="true" />}>
+                <AppearancePanel />
+              </Suspense>
+            ),
+          },
+          { kind: 'separator', id: 'sep' },
+          { kind: 'item', id: 'out', label: user.isGuest ? 'End guest session' : 'Sign out', icon: <LogOut size={15} />, onSelect: logout },
+        ];
+    }
+  };
+
+  const categoryLabel = CATEGORIES.find((c) => c.id === category)?.label;
+  const pinnedSet = new Set(Object.keys(pins));
+  const shownBoards = recentRooms.map((r) => ({ ...r, name: displayName(r, names) }));
+
   // ----------------------------------------------------------------- pieces
-  const templateCard = (template: Template) => (
-    <button key={template.id} type="button" className="tcard" onClick={() => openTemplate(template)}>
-      {/* Drawn through the same component the board cards use, from the same
-          builder that makes the board — so a card's picture is the board it
-          opens, not an illustration that will drift from it. */}
-      <span className="tcard__art">
-        <WorkspaceCover
-          workspaceId={template.id}
-          name={template.name}
-          preview={templatePreviews[template.id]}
-        />
-      </span>
-      <span className="tcard__body">
-        <span className="tcard__name">{template.name}</span>
-        <span className="tcard__blurb">{template.blurb}</span>
-        {/* One fact, and only where there is one. The three word-chips that
-            used to sit here named what a board *teaches*, which was never why
-            anybody picked one, and eleven small boxes a row is a lot of
-            furniture on a page whose job is to show pictures. */}
-        {template.objectCount && (
-          <span className="tcard__meta">
-            <span className="tcard__count">{template.objectCount.toLocaleString()} objects</span>
-          </span>
-        )}
-      </span>
-    </button>
+  const templateCard = (template: Template, scope: string) => (
+    <TemplateCard
+      key={`${scope}-${template.id}`}
+      template={template}
+      preview={templatePreviews[template.id]}
+      peeking={peekId === template.id}
+      scope={scope}
+      onPeek={peek}
+      onUse={openTemplate}
+    />
   );
 
-  const templatesBody = (
+  const templatesBody = matchedTemplates.length === 0 ? (
+    <div className="stage__empty">
+      <Sparkles size={22} aria-hidden="true" />
+      <h3>No templates match “{query.trim()}”</h3>
+      <p>Try a different word, or clear the search to see all {TEMPLATES.length}.</p>
+      <button type="button" className="stage__ghost" onClick={() => setQuery('')}>Clear search</button>
+    </div>
+  ) : showFeatured ? (
     <>
-      {matchedTemplates.length === 0 ? (
-        <div className="stage__empty">
-          <Sparkles size={22} aria-hidden="true" />
-          <h3>No templates match “{query.trim()}”</h3>
-          <p>Try a different word, or clear the search to see all {TEMPLATES.length}.</p>
-          <button type="button" className="stage__ghost" onClick={() => setQuery('')}>
-            Clear search
-          </button>
-        </div>
-      ) : showFeatured ? (
-        /*
-         * The whole gallery, in sections.
-         *
-         * ## Why this stopped being one grid
-         *
-         * It was a single flat grid, which was the right answer at thirteen
-         * boards and stopped being one somewhere around thirty. Forty-odd
-         * cards in one run is a wall: there is no first thing to look at, no
-         * way to skim for the kind of board you want, and no signal that a
-         * board about a data pipeline and a board of hand-drawn shapes are
-         * different sorts of thing. People scroll to the bottom, see nothing
-         * they recognise, and leave.
-         *
-         * Sections fix that with the structure that was already there and
-         * only being used as a filter. Each category gets a heading, a line
-         * saying what it is for, and its own grid — so the page can be
-         * *read* rather than scanned, and the categories teach what is here
-         * instead of merely narrowing it.
-         *
-         * The chips above still filter, and a filtered or searched view still
-         * renders as one flat grid, because somebody who has narrowed the
-         * gallery has already said what they want and does not need it
-         * re-grouped underneath them.
-         */
+      {featured.length > 0 && (
         <>
-          {featured.length > 0 && (
-            <>
-              {/* Named rather than labelled "Featured", which is a marketing
-                  word. These are here for one reason and it is checkable by
-                  opening them: the number is the claim, so the number is the
-                  heading. */}
-              <h3 className="stage__subhead">Featured templates</h3>
-              <div className="tgrid tgrid--featured">{featured.map(templateCard)}</div>
-            </>
-          )}
-
-          {CATEGORIES.map((c) => {
-            const inCategory = rest.filter((t) => t.category === c.id);
-            if (inCategory.length === 0) return null;
-            return (
-              <section key={c.id} className="tsection">
-                <header className="tsection__head">
-                  <div>
-                    <h3 className="tsection__title">{c.label}</h3>
-                    <p className="tsection__blurb">{c.blurb}</p>
-                  </div>
-                  {/* Only past the point where the section is long enough that
-                      seeing it alone is worth a click. Below that the button
-                      would just re-render what is already on screen. */}
-                  {inCategory.length > 4 && (
-                    <button type="button" className="lbtn" onClick={() => goTemplates(c.id)}>
-                      {inCategory.length}
-                      <ChevronRight size={14} aria-hidden="true" />
-                    </button>
-                  )}
-                </header>
-                <div className="tgrid">{inCategory.map(templateCard)}</div>
-              </section>
-            );
-          })}
+          <h2 className="stage__subhead">Featured templates</h2>
+          <div className="tgrid tgrid--featured">{featured.map((t) => templateCard(t, 'featured'))}</div>
         </>
-      ) : (
-        <div className="tgrid">{rest.map(templateCard)}</div>
       )}
+      {CATEGORIES.map((c) => {
+        const inCategory = rest.filter((t) => t.category === c.id);
+        if (inCategory.length === 0) return null;
+        return (
+          <section key={c.id} className="tsection" aria-labelledby={`tsection-${c.id}`}>
+            <header className="tsection__head">
+              <div>
+                <h2 className="tsection__title" id={`tsection-${c.id}`}>{c.label}</h2>
+                <p className="tsection__blurb">{c.blurb}</p>
+              </div>
+              {inCategory.length > 4 && (
+                <button type="button" className="lbtn" onClick={() => goTemplates(c.id)} aria-label={`Show only ${c.label}, ${inCategory.length} templates`}>
+                  {inCategory.length}
+                  <ChevronRight size={14} aria-hidden="true" />
+                </button>
+              )}
+            </header>
+            <div className="tgrid">{inCategory.map((t) => templateCard(t, c.id))}</div>
+          </section>
+        );
+      })}
     </>
+  ) : (
+    <div className="tgrid">{rest.map((t) => templateCard(t, 'all'))}</div>
   );
 
-  /**
-   * Nothing here yet, and three things to do about it.
-   *
-   * It was an icon, a heading and a paragraph that *described* three actions --
-   * start from a template, create a blank board, open a link -- while offering
-   * none of them. An empty state that names the way out and then makes you go
-   * and find it is the least useful screen in a product, because it is the one
-   * shown to somebody who does not yet know where anything is.
-   *
-   * The four are the four real openings, in the order they are worth trying: a
-   * template is the fastest way to something that looks like work, a blank
-   * board is the honest default, a link is why most people arrive at all, and
-   * a backup is why somebody is looking at an empty library on a machine they
-   * have used before. That last one was missing while it was the only one this
-   * screen could be certain about — a person restoring a backup necessarily
-   * has no boards yet, so this is the screen they land on.
-   */
-  /**
-   * The library itself: how to start one, and the ones you have.
-   *
-   * ## The four openings lead, always
-   *
-   * They used to appear only on the empty state — the screen a person sees
-   * once — and to sit, the rest of the time, behind a `+` menu, a nav icon and
-   * an account menu. So the page that opens every session began with a dashed
-   * "Browse templates" tile in the first card slot: a hole where a board
-   * should be, and the first thing the eye landed on. The openings are a strip
-   * above the grid now, the same four in the same order, quiet enough to skim
-   * past and impossible to hunt for.
-   *
-   * ## And the boards are grouped by when you last had them open
-   *
-   * Which is the order a library is actually kept in. A flat grid makes the
-   * four boards you touched this morning look exactly like the one from March.
-   * See `boardShelf.ts` for when a heading earns its place.
-   */
+  const listHead = layout === 'list' && boardGroups.length > 0 && (
+    <div className="blist__head" role="group" aria-label="Sort boards">
+      <span className="blist__head-art" aria-hidden="true" />
+      <button type="button" className="blist__sort" aria-pressed={sort === 'name'} onClick={() => setSort('name')}>Name</button>
+      <span className="blist__head-size">Size</span>
+      <button type="button" className="blist__sort blist__sort--when" aria-pressed={sort === 'recent'} onClick={() => setSort('recent')}>Last opened</button>
+      <span className="blist__head-more" aria-hidden="true" />
+    </div>
+  );
+
   const boardsBody = !hasRooms ? (
     <QuickStart
       templateCount={TEMPLATES.length}
+      starters={starters}
+      previews={templatePreviews}
+      peekingId={peekId}
       onBlank={openBoard}
       onTemplates={() => goTemplates(null)}
+      onPeek={peek}
+      onUse={openTemplate}
       onJoin={() => openJoin()}
       onRestore={() => restoreInputRef.current?.click()}
     />
+  ) : boardGroups.length === 0 ? (
+    <div className="stage__empty">
+      <Search size={22} aria-hidden="true" />
+      <h3>No boards match “{query.trim()}”</h3>
+      <p>Try a different name, or clear the search.</p>
+      <button type="button" className="stage__ghost" onClick={() => setQuery('')}>Clear search</button>
+    </div>
   ) : (
     <>
-      {/*
-        The openings strip that used to sit here is gone.
-
-        It was four equal tiles — icon, name, one line of explanation — in a row
-        above the boards, and it was the first thing the eye landed on every
-        session. Three things were wrong with it. It is the shape this project's
-        own craft floor names first among the layouts to refuse: same-size cards
-        of icon plus heading plus text, used as page structure. It put chrome
-        above the work on a page whose only job is to show the work. And it
-        stated four actions at equal weight, three of which are rare, while the
-        common one already had a button.
-
-        All four openings still exist and none of them moved further away: the
-        blank board and the two homeless ones are the split control in the
-        header, and templates is a destination on the rail. The strip was the
-        fourth copy of a thing that only ever needed one.
-      */}
-
-      {matchedRooms.length === 0 ? (
-        // A filter matching nothing is a different screen from having no
-        // boards, and saying so is the difference between "there is nothing
-        // here" and "nothing here *matches*".
-        <div className="stage__empty">
-          <Search size={22} aria-hidden="true" />
-          <h3>No boards match “{query.trim()}”</h3>
-          <p>Try a different name, or clear the search.</p>
-          <button type="button" className="stage__ghost" onClick={() => setQuery('')}>
-            Clear search
-          </button>
-        </div>
-      ) : (
-        boardGroups.map((group) => (
-          <section key={group.id} className="lgroup">
-            {group.label && (
-              <h2 className="lgroup__head">
-                {group.label}
-                <span className="lgroup__count">{group.boards.length}</span>
-              </h2>
-            )}
-            <div className={group.boards.length && layout === 'list' ? 'blist' : 'tgrid'}>
-              {group.boards.map((room) => (
-                <BoardTile
-                  key={room.id}
-                  board={room}
-                  layout={layout}
-                  openMenu={boardMenu}
-                  onMenu={setBoardMenu}
-                  copied={copiedBoard === room.id}
-                  onCopyLink={copyBoardLink}
-                  onRemove={(board) => removeRoom(board)}
-                />
-              ))}
-            </div>
-          </section>
-        ))
-      )}
+      {listHead}
+      {boardGroups.map((group) => (
+        <section key={group.id} className="lgroup" aria-label={group.label || 'Your boards'}>
+          {group.label && (
+            <h2 className="lgroup__head">
+              {group.id === 'pinned' && <Pin size={13} aria-hidden="true" />}
+              {group.label}
+              <span className="lgroup__count">{group.boards.length}</span>
+            </h2>
+          )}
+          <div className={layout === 'list' ? 'blist' : 'tgrid tgrid--boards'}>
+            {group.boards.map((room) => (
+              <BoardTile
+                key={room.id}
+                board={room}
+                layout={layout}
+                status={statusOf(room.id)}
+                pinned={Boolean(pins[room.id])}
+                renaming={renaming === room.id}
+                canRename={renameBlock(room) === null}
+                menuOpen={menu?.kind === 'board' && menu.board.id === room.id}
+                onOpenMenu={(board, anchor) => setMenu({ kind: 'board', board, anchor, focusFirst: anchor.kind === 'rect' })}
+                onStartRename={(board) => setRenaming(board.id)}
+                onRename={commitRename}
+                onTogglePin={togglePinned}
+                onRemove={removeRoom}
+                onOpen={(_board, cover) => armCover(cover)}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
     </>
   );
 
+  const modKey = IS_MAC ? '⌘' : 'Ctrl';
+
   return (
-    /**
-     * A rail and a stage, and nothing above them.
-     *
-     * ## Why the top bar went
-     *
-     * It held four things -- a wordmark, a search field, a name and a sign-out
-     * button -- across the full width of the window, and none of them was worth
-     * a band of its own. A 52px strip spanning 1400px to carry a logo and an
-     * avatar is the layout of an admin console: it is what you build when the
-     * navigation has nowhere else to go.
-     *
-     * The navigation *did* have somewhere else to go. The rail was already
-     * down the left, already permanent, and already the thing people aim at.
-     * Folding the four into its head and foot costs nothing, returns the whole
-     * height of the window to the work, and puts identity, navigation and
-     * account in one column instead of an L.
-     *
-     * ## Why the rail is icons only
-     *
-     * It carried labels and counts as full rows, which is right when the rail
-     * is the page's主 furniture and wrong now that it is the page's *edge*.
-     * Two destinations do not need two hundred pixels; they need to be
-     * unmistakable and out of the way. The names are in tooltips and in the
-     * stage's own heading, which is where somebody actually reads them.
-     *
-     * The categories moved out with the labels. They belong beside the grid
-     * they filter, which is the stage, and as a row rather than a column --
-     * five short words across the top of a wall of pictures reads as a filter,
-     * where five rows down the side read as more navigation.
-     */
     <div className="lib">
       <nav className="lrail" aria-label="Library">
         <a className="lrail__brand" href="/" aria-label="Vega Studio home">
           <Logo piece="mark" size={24} />
         </a>
-
-        {/*
-          The rail navigates and nothing else.
-
-          It used to carry the accent-filled `+` as well, which put two orange
-          things in one viewport — the button and the mark against the current
-          destination — and the One Front Door Rule says a screen gets exactly
-          one accent-filled control. When two things are the accent, neither is
-          primary and the colour has become theming.
-
-          The front door moved to the stage header, beside the grid it fills,
-          where a "New board" button is both a wider target and a named one.
-          That leaves this column as what its own heading already claimed it
-          was: the page's *edge*. Brand, two destinations, and you.
-        */}
 
         <div className="lrail__nav">
           <button
@@ -1056,9 +901,8 @@ export const Home: React.FC = () => {
             aria-label="Your boards"
           >
             <Layers size={19} aria-hidden="true" />
-            {recentRooms.length > 0 && <span className="lrail__dot" aria-hidden="true" />}
+            {hasRooms && <span className="lrail__dot" aria-hidden="true" />}
           </button>
-
           <button
             type="button"
             className={`lrail__item${view === 'templates' ? ' is-on' : ''}`}
@@ -1068,76 +912,35 @@ export const Home: React.FC = () => {
             data-tooltip-pos="right"
             aria-label="Templates"
           >
-            {/* A compass, sized down a point.
-                It is drawn as a circle filling its whole viewbox, where the
-                layers glyph beside it is a flatter shape with air above and
-                below, so at a matched nominal size the compass carries more
-                ink and sits heavier on the rail. 18 against 19 evens the two
-                optically, which is the actual fix -- the glyph was never off
-                centre, its bounding box is a centred circle. */}
             <Compass size={18} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="lrail__item"
+            onClick={() => setPaletteOpen(true)}
+            data-tooltip={`Find anything · ${modKey}K`}
+            data-tooltip-pos="right"
+            aria-label={`Find a board, template or action (${modKey}+K)`}
+            aria-haspopup="dialog"
+          >
+            <Command size={17} aria-hidden="true" />
           </button>
         </div>
 
         <span className="lrail__spacer" />
 
-        {/* Identity and the session, and nothing else.
-            Opening a link and restoring a backup lived here for a while and
-            have moved to the `+`. They are about a *board*, and an avatar
-            means "things about me" — filing them under a heading that
-            describes a person is why they were never found. */}
-        <div className="lrail__me" ref={meRef}>
+        <div className="lrail__me">
           <button
+            ref={meRef}
             type="button"
             className="lrail__avatar"
-            onClick={() => setMeOpen((o) => !o)}
+            onClick={() => setMenu(menu?.kind === 'me' ? null : { kind: 'me', anchor: anchorOf(meRef.current, 'above', 'start'), focusFirst: false })}
             aria-haspopup="menu"
-            aria-expanded={meOpen}
-            aria-label={`${user.name}. Account and more`}
+            aria-expanded={menu?.kind === 'me'}
+            aria-label={`${user.name}. Account, appearance and board list`}
           >
             <Avatar name={user.name} color={user.color} size={30} />
           </button>
-
-          {meOpen && (
-            <div className="lrail__menu ctx-popover" role="menu">
-              <p className="lrail__who">
-                <span className="lrail__who-name">{user.name}</span>
-                <span className="lrail__who-sub">{user.isGuest ? 'Guest session' : 'Kept on this device'}</span>
-              </p>
-              <div className="ctx-popover__rule" role="separator" />
-              {/*
-                The board *list*, not a board.
-
-                A backup of a board is about a board, and lives with the other
-                ways into one. This is the index — every address this browser
-                holds — and it is the thing the line above it already calls
-                "Kept on this device". It is also the only safeguard here that
-                survives clearing site data or moving to another machine, which
-                is what makes it worth a permanent place rather than a note in
-                the shelf.
-              */}
-              <button
-                type="button"
-                className="ctx-menu-item"
-                role="menuitem"
-                onClick={() => { setMeOpen(false); saveLibrary(); }}
-              >
-                <Download size={15} /> Save board list
-              </button>
-              <button
-                type="button"
-                className="ctx-menu-item"
-                role="menuitem"
-                onClick={() => { setMeOpen(false); restoreInputRef.current?.click(); }}
-              >
-                <UploadCloud size={15} /> Load a board list
-              </button>
-              <div className="ctx-popover__rule" role="separator" />
-              <button type="button" className="ctx-menu-item" role="menuitem" onClick={logout}>
-                <LogOut size={15} /> {user.isGuest ? 'End guest session' : 'Sign out'}
-              </button>
-            </div>
-          )}
         </div>
 
         <input
@@ -1147,25 +950,14 @@ export const Home: React.FC = () => {
           hidden
           onChange={(e) => {
             const file = e.target.files?.[0];
-            if (file) handleRestoreFile(file);
-            // Cleared so picking the same file twice still fires a change.
+            if (file) void handleRestoreFile(file);
             e.target.value = '';
           }}
         />
       </nav>
 
-      {/*
-        The whole stage restores a backup, not just a menu item.
-        ---------------------------------------------------------------------
-        "I have a file and I want it open" is a gesture before it is a command,
-        and every other place a file goes in this product takes a drop. Routing
-        it through the same `handleRestoreFile` the picker uses means the two
-        cannot validate differently — the file is parsed and *refused here*
-        before anything navigates, so a bad drop leaves you on this page with a
-        message rather than in a new empty room.
-      */}
       <main
-        className="lstage"
+        className={`lstage${peeking ? ' lstage--peek' : ''}`}
         ref={stageRef}
         onDragEnter={(e) => {
           if (!dragHasFile(e.dataTransfer)) return;
@@ -1174,8 +966,7 @@ export const Home: React.FC = () => {
         }}
         onDragOver={(e) => {
           if (!dragHasFile(e.dataTransfer)) return;
-          // Without this the browser navigates to the file, which unloads the
-          // app — the default action for a drop that nobody claimed.
+          // Unclaimed, the browser navigates to the file and unloads the app.
           e.preventDefault();
           e.dataTransfer.dropEffect = 'copy';
         }}
@@ -1189,7 +980,7 @@ export const Home: React.FC = () => {
           dragDepth.current = 0;
           setDropping(false);
           const file = e.dataTransfer.files[0];
-          if (file) handleRestoreFile(file);
+          if (file) void handleRestoreFile(file);
         }}
       >
         {dropping && (
@@ -1201,12 +992,23 @@ export const Home: React.FC = () => {
             </div>
           </div>
         )}
-        <div className="lstage__inner">
-          {restoreError && <div className="stage__error" role="alert">{restoreError}</div>}
+
+        <div
+          className="lstage__inner"
+          ref={roving.containerRef as React.RefObject<HTMLDivElement>}
+          onKeyDown={roving.onKeyDown}
+          onFocus={onStageFocus}
+        >
+          {restoreError && (
+            <div className="stage__error" role="alert">
+              {restoreError}
+              <button type="button" className="stage__error-x" onClick={() => setRestoreError(null)} aria-label="Dismiss">
+                <X size={14} aria-hidden="true" />
+              </button>
+            </div>
+          )}
 
           {joinOpen && (
-            // Inline rather than a dialog: pasting a link needs neither
-            // interruption nor protected focus.
             <form className="lstage__join" onSubmit={handleJoin}>
               <Link2 size={16} aria-hidden="true" />
               <input
@@ -1214,6 +1016,7 @@ export const Home: React.FC = () => {
                 type="text"
                 value={joinLink}
                 onChange={(e) => { setJoinLink(e.target.value); setJoinError(null); }}
+                onKeyDown={(e) => { if (e.key === 'Escape') { setJoinOpen(false); setJoinError(null); } }}
                 placeholder="Paste a board link, or type a code"
                 aria-label="Paste a board link, or type a room code, to join"
                 aria-invalid={joinError ? true : undefined}
@@ -1226,7 +1029,6 @@ export const Home: React.FC = () => {
               </button>
             </form>
           )}
-
           {joinOpen && joinError && (
             <p className="lstage__join-error" id="join-error" role="alert">
               <AlertTriangle size={14} aria-hidden="true" />
@@ -1234,214 +1036,112 @@ export const Home: React.FC = () => {
             </p>
           )}
 
-          {/*
-            No header at all on an empty library.
-
-            It used to render regardless, so the first screen carried "Your
-            boards" at 30px over a lede explaining where boards collect, above
-            an empty state that then said the same thing again in its own
-            heading — the page titled a collection that did not exist, and said
-            it twice. With nothing to search, sort or lay out, the whole band is
-            three controls acting on nothing plus a second copy of the button
-            already at the centre of the screen.
-          */}
+          {/* An empty library has nothing to search, sort or lay out, so no header. */}
           {(view === 'templates' || hasRooms) && (
-          <header className="lstage__head">
-            <div className="lstage__titles">
-              <h1 className="lstage__title">
-                {view === 'boards' ? 'Your boards' : category ? categoryLabel : 'Templates'}
-              </h1>
-              <p className="lstage__lede">
-                {view === 'boards'
-                  ? `${recentRooms.length} on this device, kept in your browser rather than in an account.`
-                  : category
-                    ? `${matchedTemplates.length} board${matchedTemplates.length === 1 ? '' : 's'}, each one editable the moment it opens.`
-                    : 'Working boards, already filled in. Open one and change anything in it.'}
-              </p>
-            </div>
+            <header className="lstage__head">
+              <div className="lstage__titles">
+                <h1 className="lstage__title">
+                  {view === 'boards' ? 'Your boards' : category ? categoryLabel : 'Templates'}
+                </h1>
+                <p className="lstage__lede">
+                  {view === 'boards'
+                    ? `${recentRooms.length} on this device${pinnedSet.size ? `, ${pinnedSet.size} pinned` : ''}. Kept in your browser rather than in an account.`
+                    : category
+                      ? `${matchedTemplates.length} board${matchedTemplates.length === 1 ? '' : 's'}, each one editable the moment it opens.`
+                      : 'Working boards, already filled in. Click one for a closer look.'}
+                </p>
+              </div>
 
-            {/*
-              The controls for what is under them, in one row.
+              <div className="lstage__tools">
+                <label className="lstage__search">
+                  <Search size={15} aria-hidden="true" />
+                  <input
+                    ref={searchRef}
+                    type="search"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape' && query) { e.preventDefault(); setQuery(''); }
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        stageRef.current?.querySelector<HTMLElement>('[data-roving][tabindex="0"]')?.focus();
+                      }
+                    }}
+                    placeholder={view === 'boards' ? 'Search your boards' : 'Search templates'}
+                    aria-label={view === 'boards' ? 'Search your boards' : 'Search templates'}
+                  />
+                  {query ? (
+                    <button type="button" onClick={() => { setQuery(''); searchRef.current?.focus(); }} aria-label="Clear search">
+                      <X size={14} />
+                    </button>
+                  ) : (
+                    <kbd aria-hidden="true">/</kbd>
+                  )}
+                </label>
 
-              Search was behind a magnifier on the rail, and order and layout
-              were not offered at all — so a library of thirty boards had one
-              order, no way to say otherwise, and a filter you had to know was
-              there. All three live here now, beside the grid they act on, in
-              the order they are reached for: find one, then change how they
-              are arranged. `/` still puts the caret in the field.
-            */}
-            <div className="lstage__tools">
-              <label className="lstage__search">
-                <Search size={15} aria-hidden="true" />
-                <input
-                  ref={searchRef}
-                  type="search"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder={view === 'boards' ? 'Search your boards' : 'Search templates'}
-                  aria-label="Search boards and templates"
-                />
-                {query ? (
-                  <button type="button" onClick={() => { setQuery(''); searchRef.current?.focus(); }} aria-label="Clear search">
-                    <X size={14} />
-                  </button>
-                ) : (
-                  <kbd aria-hidden="true">/</kbd>
-                )}
-              </label>
-
-              {view === 'boards' && hasRooms && (
-                <>
-                  <div className="lstage__sort" ref={sortRef}>
+                {view === 'boards' && hasRooms && (
+                  <>
                     <button
+                      ref={sortRef}
                       type="button"
                       className="lbtn"
                       aria-haspopup="menu"
-                      aria-expanded={sortOpen}
-                      onClick={() => { setSortOpen((o) => !o); setBoardMenu(null); }}
+                      aria-expanded={menu?.kind === 'sort'}
+                      onClick={() => setMenu(menu?.kind === 'sort' ? null : { kind: 'sort', anchor: anchorOf(sortRef.current), focusFirst: false })}
+                      onKeyDown={(e) => {
+                        if (e.key === 'ArrowDown') { e.preventDefault(); setMenu({ kind: 'sort', anchor: anchorOf(sortRef.current), focusFirst: true }); }
+                      }}
                     >
                       {BOARD_SORTS.find((s) => s.id === sort)?.label}
                       <ChevronDown size={13} aria-hidden="true" />
                     </button>
-                    {sortOpen && (
-                      <div className="lrail__menu ctx-popover" role="menu">
-                        {BOARD_SORTS.map((option) => (
-                          <button
-                            key={option.id}
-                            type="button"
-                            className="ctx-menu-item"
-                            role="menuitemradio"
-                            aria-checked={sort === option.id}
-                            onClick={() => { setSort(option.id); setSortOpen(false); }}
-                          >
-                            {sort === option.id ? <Check size={15} /> : <span className="ctx-menu-item__gap" />}
-                            {option.label}
-                            <span className="ctx-menu-item__hint">{option.hint}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
 
-                  {/* Two layouts, one control. Pressed says which you are in. */}
-                  <div className="lstage__layout" role="group" aria-label="How boards are shown">
-                    <button
-                      type="button"
-                      className="lbtn lbtn--icon"
-                      aria-pressed={layout === 'grid'}
-                      onClick={() => setLayout('grid')}
-                      data-tooltip="Grid"
-                      aria-label="Show boards as a grid"
-                    >
-                      <LayoutGrid size={15} aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      className="lbtn lbtn--icon"
-                      aria-pressed={layout === 'list'}
-                      onClick={() => setLayout('list')}
-                      data-tooltip="List"
-                      aria-label="Show boards as a list"
-                    >
-                      <Rows3 size={15} aria-hidden="true" />
-                    </button>
-                  </div>
-                </>
-              )}
-
-              {/*
-                The page's one front door, at the end of the row.
-
-                ## Why it is here and not on the rail
-
-                It was a 38px accent square at the top of the rail, which made
-                the most common action on the page an unlabelled icon in the
-                furniture, and put the accent on the rail twice over — see the
-                note there. Here it is named, it is the widest target in the
-                header, and it sits at the end of the controls in the order
-                they are reached for: find what exists, arrange it, or make a
-                new one.
-
-                ## Still a split control, for the same reason as before
-
-                A plain click opens a blank board with no menu in the way. The
-                caret is a separate target for the two openings that have no
-                home of their own — a file you already have, and a link
-                somebody sent. Templates is not in the list: it is a permanent
-                destination on the rail, and a menu that repeats what sits one
-                click away teaches people it is a grab-bag.
-              */}
-              <div className="lstage__new" ref={newRef}>
-                <button
-                  type="button"
-                  className="lstage__new-go"
-                  onClick={openBoard}
-                  onContextMenu={(e) => { e.preventDefault(); setNewOpen((o) => !o); }}
-                >
-                  <Plus size={16} aria-hidden="true" />
-                  <span className="lstage__new-label">New board</span>
-                </button>
-
-                <button
-                  type="button"
-                  className="lstage__new-more"
-                  onClick={() => { setMeOpen(false); setNewOpen((o) => !o); }}
-                  aria-haspopup="menu"
-                  aria-expanded={newOpen}
-                  aria-label="More ways to start a board"
-                >
-                  <ChevronDown size={13} aria-hidden="true" />
-                </button>
-
-                {newOpen && (
-                  <div className="lrail__menu lstage__new-menu ctx-popover" role="menu">
-                    <button
-                      type="button"
-                      className="ctx-menu-item"
-                      role="menuitem"
-                      onClick={() => { setNewOpen(false); restoreInputRef.current?.click(); }}
-                    >
-                      <UploadCloud size={15} /> From a backup file
-                    </button>
-                    <button
-                      type="button"
-                      className="ctx-menu-item"
-                      role="menuitem"
-                      onClick={() => { setNewOpen(false); setView('boards'); openJoin(); }}
-                    >
-                      <Link2 size={15} /> Open a link
-                    </button>
-                  </div>
+                    <div className="lstage__layout" role="group" aria-label="How boards are shown">
+                      <button type="button" className="lbtn lbtn--icon" aria-pressed={layout === 'grid'} onClick={() => setLayout('grid')} data-tooltip="Grid" aria-label="Show boards as a grid">
+                        <LayoutGrid size={15} aria-hidden="true" />
+                      </button>
+                      <button type="button" className="lbtn lbtn--icon" aria-pressed={layout === 'list'} onClick={() => setLayout('list')} data-tooltip="List" aria-label="Show boards as a list">
+                        <Rows3 size={15} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </>
                 )}
+
+                {/* The page's one front door. A plain click makes a blank board; the caret holds the rarer openings. */}
+                <div className="lstage__new">
+                  <button type="button" className="lstage__new-go" onClick={openBoard} data-tooltip="New board · N">
+                    <Plus size={16} aria-hidden="true" />
+                    <span className="lstage__new-label">New board</span>
+                  </button>
+                  <button
+                    ref={newMoreRef}
+                    type="button"
+                    className="lstage__new-more"
+                    onClick={() => setMenu(menu?.kind === 'new' ? null : { kind: 'new', anchor: anchorOf(newMoreRef.current), focusFirst: false })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowDown') { e.preventDefault(); setMenu({ kind: 'new', anchor: anchorOf(newMoreRef.current), focusFirst: true }); }
+                    }}
+                    aria-haspopup="menu"
+                    aria-expanded={menu?.kind === 'new'}
+                    aria-label="More ways to start a board"
+                  >
+                    <ChevronDown size={13} aria-hidden="true" />
+                  </button>
+                </div>
               </div>
-            </div>
-          </header>
+            </header>
           )}
 
-          {/* The categories, beside the grid they filter. A row across the top
-              of a wall of pictures reads as a filter; the same five as a column
-              down the side read as more navigation. */}
           {view === 'templates' && (
             <div className="lchips" role="group" aria-label="Template categories">
-              <button
-                type="button"
-                className={`lchip${!category ? ' is-on' : ''}`}
-                aria-pressed={!category}
-                onClick={() => goTemplates(null)}
-              >
+              <button type="button" className={`lchip${!category ? ' is-on' : ''}`} aria-pressed={!category} onClick={() => goTemplates(null)}>
                 All <span>{TEMPLATES.length}</span>
               </button>
               {CATEGORIES.map((c) => {
                 const count = TEMPLATES.filter((x) => x.category === c.id).length;
                 if (count === 0) return null;
                 return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className={`lchip${category === c.id ? ' is-on' : ''}`}
-                    aria-pressed={category === c.id}
-                    onClick={() => goTemplates(c.id)}
-                  >
+                  <button key={c.id} type="button" className={`lchip${category === c.id ? ' is-on' : ''}`} aria-pressed={category === c.id} onClick={() => goTemplates(c.id)}>
                     {c.label} <span>{count}</span>
                   </button>
                 );
@@ -1451,75 +1151,53 @@ export const Home: React.FC = () => {
 
           {view === 'boards' ? boardsBody : templatesBody}
 
-
-          {/**
-            * The shelf: boards taken off this device, and the way back.
-            *
-            * Quiet, and under everything, because on almost every visit it is
-            * empty and irrelevant. It exists for the visit where it is not --
-            * where somebody tidied a list, closed the notice, and then wanted
-            * one of them back. Without this the address is gone and the board
-            * is unreachable forever, which is a lot of consequence for a small
-            * X on a card people are already aiming at.
-            */}
           {view === 'boards' && removedRooms.length > 0 && (
-            <section className="shelf">
-              <button
-                type="button"
-                className="shelf__toggle"
-                aria-expanded={shelfOpen}
-                onClick={() => setShelfOpen((o) => !o)}
-              >
+            <section className="shelf" aria-label="Removed from this device">
+              <button type="button" className="shelf__toggle" aria-expanded={shelfOpen} onClick={() => setShelfOpen((o) => !o)}>
                 <ChevronRight size={14} aria-hidden="true" className="shelf__chev" />
-                {removedRooms.length === 1
-                  ? '1 board removed from this device'
-                  : `${removedRooms.length} boards removed from this device`}
+                {removedRooms.length === 1 ? '1 board removed from this device' : `${removedRooms.length} boards removed from this device`}
               </button>
 
               {shelfOpen && (
                 <>
                   <p className="shelf__note">
-                    None of these was deleted. Each one still exists and still opens;
-                    this device simply stopped keeping the address. Copy a link to take
-                    it with you, or save your whole board list from the account menu.
+                    None of these was deleted. Each one still exists and still opens; this device simply stopped keeping the
+                    address. Copy a link to take it with you, or save your whole board list from the account menu.
                   </p>
                   <ul className="shelf__list">
                     {removedRooms.map((room) => (
-                      <li key={room.id} className="shelf__row">
+                      <li key={room.id} className="shelf__row" data-confirming={confirmForget === room.id || undefined}>
                         <span className="shelf__name">{room.name}</span>
-                        <span className="shelf__when">Removed {whenOpened(room.removedAt)}</span>
-                        {/*
-                          Three things a person wants from a row here, in the
-                          order they are worth offering: put it back, take the
-                          address away with them, or let it go.
-
-                          Forget is last and quiet — a text button rather than
-                          a filled one — because it is the only step on this
-                          page that cannot be undone. It asks before it acts,
-                          which removal itself does not: removal is
-                          recoverable, and that asymmetry is exactly what makes
-                          one a single click on a card and the other a
-                          confirmation.
-                        */}
-                        <button
-                          type="button"
-                          className="shelf__act"
-                          onClick={() => copyAddress(room)}
-                          data-tooltip="Copy this board's link"
-                        >
-                          <Link2 size={14} aria-hidden="true" /> Copy link
-                        </button>
-                        <button type="button" className="shelf__put" onClick={() => putBack(room.id)}>
-                          <Undo2 size={14} aria-hidden="true" /> Put back
-                        </button>
-                        <button
-                          type="button"
-                          className="shelf__act shelf__act--let-go"
-                          onClick={() => forgetRemoved(room)}
-                          data-tooltip="Drop this address for good"
-                        >
-                          <Trash2 size={14} aria-hidden="true" /> Forget
-                        </button>
+                        {confirmForget === room.id ? (
+                          <>
+                            <span className="shelf__ask" role="alert">Forget this address for good? It cannot be brought back from here.</span>
+                            <button type="button" className="shelf__act shelf__act--danger" onClick={() => forgetRemoved(room)}>
+                              Forget
+                            </button>
+                            <button
+                              ref={keepRef}
+                              type="button"
+                              className="shelf__put"
+                              onClick={() => setConfirmForget(null)}
+                              onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setConfirmForget(null); } }}
+                            >
+                              Keep
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <span className="shelf__when">Removed {whenOpened(room.removedAt)}</span>
+                            <button type="button" className="shelf__act" onClick={() => void copyAddress(room)} data-tooltip="Copy this board's link">
+                              <Link2 size={14} aria-hidden="true" /> Copy link
+                            </button>
+                            <button type="button" className="shelf__put" onClick={() => putBack(room.id)}>
+                              <Undo2 size={14} aria-hidden="true" /> Put back
+                            </button>
+                            <button type="button" className="shelf__act shelf__act--let-go" onClick={() => setConfirmForget(room.id)} data-tooltip="Drop this address for good">
+                              <Trash2 size={14} aria-hidden="true" /> Forget
+                            </button>
+                          </>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -1528,31 +1206,62 @@ export const Home: React.FC = () => {
             </section>
           )}
 
-          {/*
-            The way into the gallery, at the end of the boards.
-
-            A library of six boards leaves most of a 1440px screen empty, and
-            what filled it before was nothing — the page simply stopped. Four
-            real templates, drawn by the same component as everything else on
-            this page, are both the answer to "what else is here" and a better
-            use of the space than air. They appear only when there are boards
-            and nothing is being searched: on an empty library the openings
-            above already lead here, and during a search this is noise.
-          */}
           {view === 'boards' && hasRooms && !query.trim() && (
-            <section className="lseam">
+            <section className="lseam" aria-labelledby="lseam-title">
               <header className="lseam__head">
-                <h2 className="lseam__title">Start from a template</h2>
+                <h2 className="lseam__title" id="lseam-title">Start from a template</h2>
                 <button type="button" className="lbtn" onClick={() => goTemplates(null)}>
                   All {TEMPLATES.length}
                   <ChevronRight size={14} aria-hidden="true" />
                 </button>
               </header>
-              <div className="tgrid tgrid--seam">{suggestedTemplates.map(templateCard)}</div>
+              <div className="tgrid tgrid--seam">{suggestedTemplates.map((t) => templateCard(t, 'seam'))}</div>
             </section>
           )}
         </div>
+
+        {peeking && (
+          <TemplatePeek
+            template={peeking}
+            preview={templatePreviews[peeking.id]}
+            index={peekIndex}
+            count={Math.max(1, visibleTemplates.length)}
+            onStep={stepPeek}
+            onClose={closePeek}
+            onUse={openTemplate}
+            onUseInNewTab={openTemplateInNewTab}
+          />
+        )}
       </main>
+
+      {menu && (
+        <Menu
+          key={menu.kind === 'board' ? `board-${menu.board.id}` : menu.kind}
+          entries={menuEntries()}
+          label={menu.kind === 'board' ? `${menu.board.name} actions` : menu.kind === 'sort' ? 'Sort boards' : menu.kind === 'new' ? 'Start a board' : 'Account'}
+          anchor={menu.anchor}
+          focusFirst={menu.focusFirst}
+          onClose={() => setMenu(null)}
+        />
+      )}
+
+      {paletteOpen && (
+        <Suspense fallback={null}>
+          <HomePalette
+            boards={shownBoards}
+            pinned={pinnedSet}
+            templates={TEMPLATES}
+            onClose={() => setPaletteOpen(false)}
+            onNewBoard={openBoard}
+            onOpenBoard={(board) => goToBoard(`/room/${board.id}`)}
+            onPeekTemplate={(t) => { goTemplates(null); setQuery(''); setPeekId(t.id); }}
+            onBrowseTemplates={() => goTemplates(null)}
+            onJoin={() => { setView('boards'); openJoin(); }}
+            onRestore={() => restoreInputRef.current?.click()}
+            onSaveList={saveLibrary}
+          />
+        </Suspense>
+      )}
     </div>
   );
 };

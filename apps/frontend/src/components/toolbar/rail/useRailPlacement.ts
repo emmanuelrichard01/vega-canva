@@ -1,0 +1,245 @@
+import { useEffect, useRef, useState } from 'react';
+import { useStore } from '../../../hooks/useStore';
+import { cameraSystem } from '../../../engine/CameraSystem';
+import { engineEvents } from '../../../engine/EventBus';
+import { railVeil, type VeilKind } from '../../../engine/interaction/railVeil';
+import { textEditing } from '../../../engine/interaction/textEditing';
+import { inflate, placeRail, selectionHull, type RailSide } from '../../../engine/interaction/railPlacement';
+import { setRailSubject } from '../railSubject';
+import { DEFAULT_HEADER_H, EDGE_MARGIN, chromeInset, freeStrip, readPx, type ChromeMetrics } from './railBounds';
+
+/** The rail's resting height, used before it has been measured. */
+const RAIL_HEIGHT = 40;
+
+/**
+ * Clearance between the rail and the selection, per side.
+ *
+ * Larger below than above: `--shadow-float` falls downward, and a rail under
+ * an object reads as a caption attached to it, so it wants more air there.
+ * `placeRail` widens all four as the subject gets thin.
+ */
+const STANDOFF = { top: 26, bottom: 34, left: 20, right: 20 };
+
+/** How far the transformer's handles stand proud of the object's box. */
+const HANDLE_REACH = 6;
+
+/** The chrome the rail measures, by selector. */
+const LEFT_PANEL = '.hierarchy-panel';
+const RIGHT_PANEL = '.context-inspector';
+const DOCK = '.tool-dock';
+
+export interface RailPlacement {
+  /** The outer anchor, positioned by writing its transform directly. */
+  anchorRef: React.RefObject<HTMLDivElement | null>;
+  /** The rail itself, whose measured size is an input to where it goes. */
+  railRef: React.RefObject<HTMLDivElement | null>;
+  placement: RailSide;
+  /** False when the selection left nowhere to stand, so the rail rests veiled. */
+  clear: boolean;
+  isVisible: boolean;
+}
+
+/**
+ * Where the rail goes, recomputed only when something that decides it changes.
+ *
+ * The triggers are the camera, the selection's objects moving or changing,
+ * the chrome resizing (side panels, the dock and its shelf, the rail itself),
+ * the window, and the gesture veil. Each burst of them costs at most one
+ * placement on the next frame. Nothing runs between them, and nothing runs at
+ * all while the rail is hidden or veiled.
+ *
+ * Position is written to the anchor's transform, never through React. Only the
+ * side, the veiled state and visibility are state, because they decide what is
+ * rendered and change a handful of times a session.
+ */
+export function useRailPlacement(opts: {
+  activeId: string | null;
+  isBulk: boolean;
+  selectedIds: readonly string[] | undefined;
+  sidebarsVisible: boolean;
+}): RailPlacement {
+  const { activeId, isBulk, selectedIds, sidebarsVisible } = opts;
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const railRef = useRef<HTMLDivElement>(null);
+  const [placement, setPlacement] = useState<RailSide>('top');
+  const [clear, setClear] = useState(true);
+  const [isVisible, setIsVisible] = useState(false);
+
+  const bulkIdsRef = useRef<readonly string[]>(selectedIds ?? []);
+  bulkIdsRef.current = selectedIds ?? [];
+  // A different set of objects is a different placement, even at the same count.
+  const bulkKey = isBulk ? (selectedIds ?? []).join(',') : '';
+
+  const lastRef = useRef({ x: -9999, y: -9999, placement: 'top' as RailSide, clear: true, visible: false });
+  /** The element the last transform went to: a remounted rail must get its first write. */
+  const wroteToRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!activeId && !isBulk) {
+      setIsVisible(false);
+      return;
+    }
+    lastRef.current = { ...lastRef.current, x: -9999, y: -9999, visible: false };
+
+    const chrome: ChromeMetrics = { headerH: DEFAULT_HEADER_H, dockH: 0, insetLeft: EDGE_MARGIN, insetRight: EDGE_MARGIN };
+    const stageOrigin = { left: 0, top: 0 };
+
+    /** Chrome geometry: read on resize, not on every placement. */
+    const measureChrome = () => {
+      const left = document.querySelector(LEFT_PANEL)?.getBoundingClientRect() ?? null;
+      const right = document.querySelector(RIGHT_PANEL)?.getBoundingClientRect() ?? null;
+      chrome.insetLeft = chromeInset(left, 'left', window.innerWidth);
+      chrome.insetRight = chromeInset(right, 'right', window.innerWidth);
+      // The dock's own top edge, shelf included, rather than a token about it.
+      const dock = document.querySelector(DOCK)?.getBoundingClientRect();
+      chrome.dockH = dock && dock.height > 0 ? Math.max(0, window.innerHeight - dock.top) : 0;
+      chrome.headerH = readPx(getComputedStyle(document.documentElement).getPropertyValue('--header-h'), DEFAULT_HEADER_H);
+      const canvas = document.querySelector('.konvajs-content')?.getBoundingClientRect();
+      if (canvas) {
+        stageOrigin.left = canvas.left;
+        stageOrigin.top = canvas.top;
+      }
+    };
+
+    const hide = () => {
+      if (lastRef.current.visible) {
+        lastRef.current.visible = false;
+        setIsVisible(false);
+      }
+    };
+
+    const place = () => {
+      if (railVeil.held) return hide();
+      const ids = isBulk ? bulkIdsRef.current : activeId ? [activeId] : [];
+      const store = useStore.getState().objects;
+      const hull = selectionHull(ids.map((id) => store[id]).filter(Boolean));
+      if (!hull) return hide();
+
+      const zoom = cameraSystem.zoom;
+      const onScreen = inflate(
+        {
+          x: stageOrigin.left + hull.x * zoom + cameraSystem.x,
+          y: stageOrigin.top + hull.y * zoom + cameraSystem.y,
+          width: hull.width * zoom,
+          height: hull.height * zoom,
+        },
+        HANDLE_REACH
+      );
+      const bounds = freeStrip(chrome, { width: window.innerWidth, height: window.innerHeight }, sidebarsVisible);
+      const rail = {
+        width: railRef.current?.offsetWidth || 0,
+        height: railRef.current?.offsetHeight || RAIL_HEIGHT,
+      };
+      // Published for the popovers, which must not open onto the artwork.
+      setRailSubject({ subject: onScreen, bounds });
+
+      const spot = placeRail(onScreen, rail, bounds, STANDOFF, lastRef.current.placement);
+      const rx = Math.round(spot.x);
+      const ry = Math.round(spot.y);
+      const last = lastRef.current;
+      if (anchorRef.current && (wroteToRef.current !== anchorRef.current || last.x !== rx || last.y !== ry)) {
+        wroteToRef.current = anchorRef.current;
+        last.x = rx;
+        last.y = ry;
+        anchorRef.current.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
+      }
+      if (last.placement !== spot.side) {
+        last.placement = spot.side;
+        setPlacement(spot.side);
+      }
+      if (last.clear !== spot.clear) {
+        last.clear = spot.clear;
+        setClear(spot.clear);
+      }
+      if (!last.visible) {
+        last.visible = true;
+        setIsVisible(true);
+        // The rail mounts on this state change; place again once it has a size.
+        schedule();
+      }
+    };
+
+    // One placement per frame at most, however many triggers arrive in it.
+    let frame = 0;
+    let chromeDirty = true;
+    const schedule = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (chromeDirty) {
+          chromeDirty = false;
+          measureChrome();
+        }
+        place();
+        observeRail();
+      });
+    };
+    const scheduleChrome = () => {
+      chromeDirty = true;
+      schedule();
+    };
+
+    const observer = new ResizeObserver(scheduleChrome);
+    for (const sel of [LEFT_PANEL, RIGHT_PANEL, DOCK]) {
+      const el = document.querySelector(sel);
+      if (el) observer.observe(el);
+    }
+    // The rail's own size decides where it fits; its element changes with the subject.
+    let observedRail: HTMLElement | null = null;
+    const railObserver = new ResizeObserver(schedule);
+    const observeRail = () => {
+      const el = railRef.current;
+      if (el === observedRail) return;
+      if (observedRail) railObserver.unobserve(observedRail);
+      observedRail = el;
+      if (el) railObserver.observe(el);
+    };
+
+    const onVeil = () => {
+      if (railVeil.held) hide();
+      else schedule();
+    };
+    const handleDragStart = (e: Event) => {
+      railVeil.begin((e as CustomEvent<{ kind?: VeilKind }>).detail?.kind ?? 'gesture');
+    };
+    const handleDragEnd = () => railVeil.end();
+    // A gesture that never announced its end is falsified by the pointer coming
+    // up with nothing being typed into.
+    const handlePointerRelease = () => {
+      railVeil.settle(textEditing.getSnapshot());
+    };
+    const onObjectChange = (node: { id?: string } | undefined) => {
+      if (!node?.id) return schedule();
+      const ids = isBulk ? bulkIdsRef.current : activeId ? [activeId] : [];
+      if (ids.includes(node.id)) schedule();
+    };
+
+    const unsubscribeVeil = railVeil.subscribe(onVeil);
+    engineEvents.on('CameraChanged', schedule);
+    engineEvents.on('ObjectMoved', onObjectChange);
+    engineEvents.on('ObjectModified', onObjectChange);
+    window.addEventListener('resize', scheduleChrome);
+    window.addEventListener('canvas-drag-start', handleDragStart);
+    window.addEventListener('canvas-drag-end', handleDragEnd);
+    window.addEventListener('pointerup', handlePointerRelease, true);
+    window.addEventListener('pointercancel', handlePointerRelease, true);
+    schedule();
+
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      unsubscribeVeil();
+      observer.disconnect();
+      railObserver.disconnect();
+      engineEvents.off('CameraChanged', schedule);
+      engineEvents.off('ObjectMoved', onObjectChange);
+      engineEvents.off('ObjectModified', onObjectChange);
+      window.removeEventListener('resize', scheduleChrome);
+      window.removeEventListener('canvas-drag-start', handleDragStart);
+      window.removeEventListener('canvas-drag-end', handleDragEnd);
+      window.removeEventListener('pointerup', handlePointerRelease, true);
+      window.removeEventListener('pointercancel', handlePointerRelease, true);
+    };
+  }, [activeId, isBulk, bulkKey, sidebarsVisible]);
+
+  return { anchorRef, railRef, placement, clear, isVisible };
+}

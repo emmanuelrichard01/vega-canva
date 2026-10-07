@@ -1,15 +1,8 @@
 import React from 'react';
-import { Droplets, MoveHorizontal, MoveVertical, Sun } from 'lucide-react';
-import { Accordion, Row, SubGroup } from '../panelPrimitives';
-import { ColorPickerPopover } from '../../ui/ColorPickerPopover';
-import { EyedropperButton } from '../../ui/EyedropperButton';
-import { NumberStepper } from '../../ui/NumberStepper';
-import { Slider } from '../../ui/Slider';
-import {
-  DEFAULT_SHADOW_COLOR,
-  type Appearance,
-  type Shadow,
-} from '../../../engine/model/schema';
+import { Droplets, Minus, MoveHorizontal, MoveVertical, Scan, Sun, SunDim } from 'lucide-react';
+import { ColorChip, NumberField, Note, PairRow, Section } from '../grammar';
+import type { MenuEntry } from '../../menu/menuModel';
+import { DEFAULT_SHADOW_COLOR, type Appearance, type Shadow } from '../../../engine/model/schema';
 import { fillsInterior } from '../../../engine/model/rough';
 import type { Shared } from '../../../engine/model/selection';
 
@@ -31,6 +24,22 @@ const DEFAULT_INNER_SHADOW: Shadow = {
   opacity: 0.35,
 };
 
+type EffectId = 'shadow' | 'innerShadow' | 'blur' | 'backdropBlur';
+
+const EFFECT_LABELS: Record<EffectId, string> = {
+  shadow: 'Drop shadow',
+  innerShadow: 'Inner shadow',
+  blur: 'Layer blur',
+  backdropBlur: 'Background blur',
+};
+
+const EFFECT_ICONS: Record<EffectId, React.ReactNode> = {
+  shadow: <Sun size={14} />,
+  innerShadow: <SunDim size={14} />,
+  blur: <Droplets size={14} />,
+  backdropBlur: <Scan size={14} />,
+};
+
 interface EffectsSectionProps {
   capabilities: {
     supportsShadow?: boolean;
@@ -47,6 +56,88 @@ interface EffectsSectionProps {
   setInnerShadow: (patch: Partial<Shadow>) => void;
 }
 
+/** The heading of one effect in the list, with its remove control. */
+const EffectHead: React.FC<{ id: EffectId; onRemove: () => void }> = ({ id, onRemove }) => (
+  <div className="pg-effect__head">
+    <span className="pg-effect__icon" aria-hidden="true">{EFFECT_ICONS[id]}</span>
+    <span className="pg-effect__name">{EFFECT_LABELS[id]}</span>
+    <button
+      type="button"
+      className="pg-icon-btn"
+      aria-label={`Remove ${EFFECT_LABELS[id].toLowerCase()}`}
+      data-tooltip="Remove"
+      onClick={onRemove}
+    >
+      <Minus size={14} aria-hidden="true" />
+    </button>
+  </div>
+);
+
+const ShadowFields: React.FC<{
+  name: string;
+  shadow: Shadow;
+  colorMixed: boolean;
+  allowSpread: boolean;
+  onChange: (patch: Partial<Shadow>) => void;
+}> = ({ name, shadow, colorMixed, allowSpread, onChange }) => (
+  <>
+    <ColorChip
+      label={name}
+      value={colorMixed ? 'mixed' : shadow.color}
+      opacity={shadow.opacity ?? 1}
+      allowNone={false}
+      onChange={(color) => onChange({ color })}
+      onOpacityChange={(opacity) => onChange({ opacity })}
+    />
+    <PairRow>
+      <NumberField
+        label={`${name} offset X`}
+        glyph={<MoveHorizontal size={13} />}
+        unit="px"
+        value={Math.round(shadow.offsetX)}
+        onChange={(v) => onChange({ offsetX: v })}
+      />
+      <NumberField
+        label={`${name} offset Y`}
+        glyph={<MoveVertical size={13} />}
+        unit="px"
+        value={Math.round(shadow.offsetY)}
+        onChange={(v) => onChange({ offsetY: v })}
+      />
+    </PairRow>
+    <PairRow>
+      <NumberField
+        label={`${name} blur`}
+        glyph="B"
+        unit="px"
+        min={0}
+        max={200}
+        value={Math.round(shadow.blur)}
+        onChange={(v) => onChange({ blur: v })}
+      />
+      {allowSpread ? (
+        <NumberField
+          label={`${name} spread`}
+          glyph="S"
+          unit="px"
+          min={0}
+          max={100}
+          value={Math.round(shadow.spread ?? 0)}
+          onChange={(v) => onChange({ spread: v })}
+        />
+      ) : (
+        <span aria-hidden />
+      )}
+    </PairRow>
+  </>
+);
+
+/**
+ * Effects: shadows and blurs, as a list.
+ *
+ * Only what is applied is shown; `+` offers what can still be added. A plain
+ * shape with no effects is one header line.
+ */
 export const EffectsSection: React.FC<EffectsSectionProps> = ({
   capabilities,
   appearance,
@@ -60,313 +151,112 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
 }) => {
   if (!appearance) return null;
 
-  /**
-   * Whether this shape's interior is drawn with pen marks rather than filled.
-   *
-   * Hachure, cross-hatch, zigzag and dots leave the shape *open*: the marks are
-   * the fill, and there is no enclosed region for an edge effect to sit inside.
-   * A solid fill does have one — including a sketched solid fill, which clips
-   * against the drawn silhouette rather than the ruled outline beneath it.
-   */
   const penShaded = Boolean(appearance.sketch) && !fillsInterior(appearance.fillStyle);
+  const edge = Boolean(capabilities.supportsEdgeEffects) && !openShape;
 
-  const canInnerShadow = Boolean(capabilities.supportsEdgeEffects) && !openShape;
+  const available: Record<EffectId, boolean> = {
+    shadow: Boolean(capabilities.supportsShadow),
+    innerShadow: edge && !penShaded,
+    blur: !hasConnector && !hasImage,
+    backdropBlur: !hasConnector && edge,
+  };
+  const present: Record<EffectId, boolean> = {
+    shadow: Boolean(appearance.shadow),
+    innerShadow: Boolean(appearance.innerShadow),
+    blur: Boolean(appearance.blur),
+    backdropBlur: Boolean(appearance.backdropBlur),
+  };
 
-  /** Which sides are lit, without either sub-section being opened. */
-  const shadowBadge =
-    appearance.shadow && appearance.innerShadow
-      ? 'Drop + Inner'
-      : appearance.shadow
-        ? 'Drop'
-        : appearance.innerShadow
-          ? 'Inner'
-          : undefined;
+  const ids = (Object.keys(EFFECT_LABELS) as EffectId[]).filter((id) => available[id] || present[id]);
+  if (ids.length === 0) return null;
+
+  const addable = ids.filter((id) => available[id] && !present[id]);
+  const applied = ids.filter((id) => present[id]);
+
+  const add = (id: EffectId) => {
+    if (id === 'shadow') setAppearance({ shadow: { ...DEFAULT_SHADOW } });
+    if (id === 'innerShadow') setAppearance({ innerShadow: { ...DEFAULT_INNER_SHADOW } });
+    if (id === 'blur') setAppearance({ blur: 4 });
+    if (id === 'backdropBlur') setAppearance({ backdropBlur: 12 });
+  };
+  const remove = (id: EffectId) => setAppearance({ [id]: undefined } as Partial<Appearance>);
+
+  const entries: MenuEntry[] = addable.map((id) => ({
+    kind: 'item',
+    id,
+    label: EFFECT_LABELS[id],
+    icon: EFFECT_ICONS[id],
+    onSelect: () => add(id),
+  }));
+
+  const blur = sharedPaint((a) => a.blur ?? 0);
+  const backdrop = sharedPaint((a) => a.backdropBlur ?? 0);
 
   return (
-    <>
-      {/*
-        One question, asked once.
-
-        Drop shadow and inner shadow were two top-level accordions sitting
-        beside Blur and Typography, so the panel offered "shadow" twice at the
-        same rank and never said the two were related — while a shape carrying
-        both showed two badges four rows apart with nothing to say they were the
-        same light. They are one decision seen from either side of an edge, and
-        the badge now reports which sides are lit without either being opened.
-
-        ## Why the two are no longer accordions of their own
-
-        Each was a *nested accordion* containing a row labelled "Enabled" with
-        a switch in it — so turning on a drop shadow meant opening a section to
-        find a control whose only job was to reveal the rest of that section.
-        Three affordances for one fact, and two of them redundant: the switch
-        already knows whether the shadow exists, and "open but off" and "closed
-        but on" are both states the panel could get into and neither means
-        anything.
-
-        A `SubGroup` is the switch *as* the disclosure, which is what the text
-        effects below already use for exactly this shape. Turning it on reveals
-        its controls; turning it off puts them away. One control, one fact, and
-        no state that can disagree with itself.
-      */}
-      {(capabilities.supportsShadow || canInnerShadow) && (
-        <Accordion
-          title="Shadow"
-          icon={<Sun size={13} />}
-          defaultOpen={Boolean(appearance.shadow || appearance.innerShadow)}
-          badge={shadowBadge}
-        >
-          {capabilities.supportsShadow && (
-            <SubGroup
-              label="Drop"
-              hint="A shadow cast outward, behind the object."
-              on={Boolean(appearance.shadow)}
-              onToggle={(on) => setAppearance({ shadow: on ? { ...DEFAULT_SHADOW } : undefined })}
-            >
-              {appearance.shadow && (
-                <>
-                  <Row label="Colour">
-                    {/*
-                      A pipette, like every other colour in the panel.
-
-                      A shadow's colour is the one most often sampled *from the
-                      scene* — it is usually a darker relative of the surface
-                      it falls on, not a neutral grey — and it was the last
-                      colour here still offered without one.
-                    */}
-                    <div className="prop-inline">
-                      <ColorPickerPopover
-                        color={appearance.shadow.color}
-                        mixed={sharedPaint((a) => a.shadow?.color).mixed}
-                        onChange={(color) => setShadow({ color })}
-                      />
-                      <EyedropperButton
-                        label="Pick a shadow colour from the screen"
-                        onPick={(color) => setShadow({ color })}
-                      />
-                    </div>
-                  </Row>
-                  {/*
-                    Where the light is, as two offsets rather than an angle and
-                    a distance.
-
-                    Illustrator's effect dialog offers the polar pair and Figma
-                    offers this one; the reason to follow Figma here is that
-                    everything else on a canvas is already Cartesian — the
-                    Transform block above is X and Y, nudging is X and Y, and
-                    an offset that reads "8 down" composes with those. An angle
-                    would be the better control for matching several objects to
-                    one light source, which is a feature this does not have yet
-                    and which wants a document-level setting rather than a
-                    second spelling of the same field.
-
-                    Two numbers that mean one thing, so they share a row.
-                  */}
-                  <div className="prop-grid">
-                    <NumberStepper
-                      aria-label="Shadow offset X"
-                      glyph={<MoveHorizontal size={13} />}
-                      suffix="px"
-                      value={Math.round(appearance.shadow.offsetX)}
-                      onChange={(v) => setShadow({ offsetX: v })}
-                    />
-                    <NumberStepper
-                      aria-label="Shadow offset Y"
-                      glyph={<MoveVertical size={13} />}
-                      suffix="px"
-                      value={Math.round(appearance.shadow.offsetY)}
-                      onChange={(v) => setShadow({ offsetY: v })}
-                    />
-                  </div>
-                  {/*
-                    Blur, spread and opacity are tracks; the offsets are not.
-
-                    The distinction is what you know when you arrive. An offset
-                    is a *position* — "eight down and four across" is a thing
-                    you can mean exactly. Softness and strength are the other
-                    kind: nobody wants 37% opacity, they want "a little
-                    lighter", and finding that by pressing an arrow while
-                    looking at the canvas is the worst version of this control.
-
-                    No tick marks on any of the three. Blur carried two, at 8
-                    and 24 — the contact shadow and the lifted one — and they
-                    sat crowded against the left end of a track that runs to
-                    200, annotating a tenth of it and saying nothing about the
-                    rest.
-                  */}
-                  <Slider
-                    label="Blur"
-                    unit="px"
-                    value={Math.round(appearance.shadow.blur)}
-                    min={0}
-                    max={200}
-                    onChange={(v) => setShadow({ blur: v })}
-                    hint="How soft the edge is. Zero is a hard-edged copy of the shape."
-                  />
-                  {capabilities.supportsShadowSpread && !openShape && (
-                    <Slider
-                      label="Spread"
-                      unit="px"
-                      value={Math.round(appearance.shadow.spread ?? 0)}
-                      min={0}
-                      max={100}
-                      onChange={(v) => setShadow({ spread: v })}
-                      hint="Grows the shadow's own silhouette before it is blurred."
-                    />
-                  )}
-                  <Slider
-                    label="Opacity"
-                    unit="%"
-                    value={Math.round((appearance.shadow.opacity ?? 1) * 100)}
-                    min={0}
-                    max={100}
-                    onChange={(v) => setShadow({ opacity: v / 100 })}
-                  />
-                </>
-              )}
-            </SubGroup>
+    <Section
+      id="effects"
+      title="Effects"
+      empty={applied.length === 0}
+      addMenu={addable.length > 1 ? entries : undefined}
+      onAdd={addable.length === 1 ? () => add(addable[0]) : undefined}
+      addLabel={addable.length === 1 ? `Add ${EFFECT_LABELS[addable[0]].toLowerCase()}` : 'Add an effect'}
+    >
+      {applied.map((id) => (
+        <div key={id} className="pg-effect">
+          <EffectHead id={id} onRemove={() => remove(id)} />
+          {id === 'shadow' && appearance.shadow && (
+            <ShadowFields
+              name="Drop shadow"
+              shadow={appearance.shadow}
+              colorMixed={sharedPaint((a) => a.shadow?.color).mixed}
+              allowSpread={Boolean(capabilities.supportsShadowSpread) && !openShape}
+              onChange={setShadow}
+            />
           )}
-
-          {canInnerShadow &&
-            (penShaded ? (
-              /*
-                Withdrawn on a pen-shaded sketch, rather than left to do nothing.
-
-                An inner shadow falls across the inside of an edge, and a
-                hachured, cross-hatched, zigzagged or stippled shape has no
-                inside — the marks *are* the fill. A solid fill does have one,
-                and a sketch with a solid fill now casts against its drawn
-                silhouette rather than the ruled outline beneath it.
-
-                Saying why matters here more than usual: this control used to be
-                offered on every sketched shape and honoured on none of them,
-                because the renderer's sketch branch returns before its effects.
-              */
-              <p className="prop-note">
-                Inner shadow needs an inside. Pen shading leaves the shape open —
-                the marks are the fill — so set the fill to Solid to use one.
-              </p>
+          {id === 'innerShadow' && appearance.innerShadow && (
+            penShaded ? (
+              <Note>
+                Inner shadow needs an inside. Pen shading leaves the shape open, so set the fill to Solid to see it.
+              </Note>
             ) : (
-              <SubGroup
-                label="Inner"
-                hint="A shadow cast inward, as though the shape were a hole."
-                on={Boolean(appearance.innerShadow)}
-                onToggle={(on) =>
-                  setAppearance({ innerShadow: on ? { ...DEFAULT_INNER_SHADOW } : undefined })
-                }
-              >
-                {appearance.innerShadow && (
-                  <>
-                    <Row label="Colour">
-                      <div className="prop-inline">
-                        <ColorPickerPopover
-                          color={appearance.innerShadow.color}
-                          mixed={sharedPaint((a) => a.innerShadow?.color).mixed}
-                          onChange={(color) => setInnerShadow({ color })}
-                        />
-                        <EyedropperButton
-                          label="Pick an inner shadow colour from the screen"
-                          onPick={(color) => setInnerShadow({ color })}
-                        />
-                      </div>
-                    </Row>
-                    <div className="prop-grid">
-                      <NumberStepper
-                        aria-label="Inner shadow offset X"
-                        glyph={<MoveHorizontal size={13} />}
-                        suffix="px"
-                        value={Math.round(appearance.innerShadow.offsetX)}
-                        onChange={(v) => setInnerShadow({ offsetX: v })}
-                      />
-                      <NumberStepper
-                        aria-label="Inner shadow offset Y"
-                        glyph={<MoveVertical size={13} />}
-                        suffix="px"
-                        value={Math.round(appearance.innerShadow.offsetY)}
-                        onChange={(v) => setInnerShadow({ offsetY: v })}
-                      />
-                    </div>
-                    {/* The same three as the drop shadow, and the same
-                        reasoning — see the note there. Two shadow panels whose
-                        identical controls behaved differently would be a worse
-                        inconsistency than either choice. */}
-                    <Slider
-                      label="Blur"
-                      unit="px"
-                      value={Math.round(appearance.innerShadow.blur)}
-                      min={0}
-                      max={200}
-                        onChange={(v) => setInnerShadow({ blur: v })}
-                      hint="How soft the inner edge is."
-                    />
-                    <Slider
-                      label="Spread"
-                      unit="px"
-                      value={Math.round(appearance.innerShadow.spread ?? 0)}
-                      min={0}
-                      max={100}
-                      onChange={(v) => setInnerShadow({ spread: v })}
-                      hint="How far into the shape the shadow reaches before it is blurred."
-                    />
-                    <Slider
-                      label="Opacity"
-                      unit="%"
-                      value={Math.round((appearance.innerShadow.opacity ?? 1) * 100)}
-                      min={0}
-                      max={100}
-                        onChange={(v) => setInnerShadow({ opacity: v / 100 })}
-                    />
-                  </>
-                )}
-              </SubGroup>
-            ))}
-        </Accordion>
-      )}
-
-      {!hasConnector && (!hasImage || (capabilities.supportsEdgeEffects && !openShape)) && (
-        <Accordion
-          title="Blur"
-          icon={<Droplets size={13} />}
-          defaultOpen={Boolean(appearance.blur || appearance.backdropBlur)}
-        >
-          {!hasImage && (
-            <Row label="Layer" hint="Blurs this object itself.">
-              {(() => {
-                const blur = sharedPaint((a) => a.blur ?? 0);
-                return (
-                  <NumberStepper
-                    value={Math.round(blur.value ?? 0)}
-                    mixed={blur.mixed}
-                    onChange={(v) => setAppearance({ blur: v > 0 ? v : undefined })}
-                    min={0}
-                    max={100}
-                    step={2}
-                    suffix="px"
-                  />
-                );
-              })()}
-            </Row>
+              <ShadowFields
+                name="Inner shadow"
+                shadow={appearance.innerShadow}
+                colorMixed={sharedPaint((a) => a.innerShadow?.color).mixed}
+                allowSpread
+                onChange={setInnerShadow}
+              />
+            )
           )}
-          {capabilities.supportsEdgeEffects && !openShape && (
-            <Row label="Backdrop" hint="Blurs the board behind this object. Only visible through a fill that is not fully opaque.">
-              {(() => {
-                const backdrop = sharedPaint((a) => a.backdropBlur ?? 0);
-                return (
-                  <NumberStepper
-                    value={Math.round(backdrop.value ?? 0)}
-                    mixed={backdrop.mixed}
-                    onChange={(v) => setAppearance({ backdropBlur: v > 0 ? v : undefined })}
-                    min={0}
-                    max={100}
-                    step={2}
-                    suffix="px"
-                  />
-                );
-              })()}
-            </Row>
+          {id === 'blur' && (
+            <NumberField
+              label="Layer blur"
+              glyph={<Droplets size={13} />}
+              unit="px"
+              min={0}
+              max={100}
+              step={2}
+              value={blur.mixed ? 'mixed' : Math.round(blur.value ?? 0)}
+              onChange={(v) => setAppearance({ blur: v > 0 ? v : undefined })}
+            />
           )}
-        </Accordion>
-      )}
-    </>
+          {id === 'backdropBlur' && (
+            <>
+              <NumberField
+                label="Background blur"
+                glyph={<Scan size={13} />}
+                unit="px"
+                min={0}
+                max={100}
+                step={2}
+                value={backdrop.mixed ? 'mixed' : Math.round(backdrop.value ?? 0)}
+                onChange={(v) => setAppearance({ backdropBlur: v > 0 ? v : undefined })}
+              />
+              <Note>Shows through a fill that is not fully opaque.</Note>
+            </>
+          )}
+        </div>
+      ))}
+    </Section>
   );
 };

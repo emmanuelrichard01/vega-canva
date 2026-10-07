@@ -51,6 +51,9 @@ import { caretAt, layoutText } from '../engine/text/layout';
 import { measurerFor } from '../engine/text/measure';
 import { applyTextCase } from '../engine/model/textCase';
 import { liveTransformStore, useLiveTransform } from '../engine/model/liveTransformStore';
+import { useCameraZoom } from '../engine/useCameraZoom';
+import { frameClipCorners } from '../engine/interaction/frameClip';
+import { onEditRequest } from '../engine/interaction/editRequests';
 import { connectorDragPatch, syncConnectedConnectors } from '../engine/model/connectorTargets';
 import { fitPathToBox } from '../engine/model/pathGeometry';
 import { duplicationSet, travelledEnough } from '../engine/interaction/altDuplicate';
@@ -108,7 +111,6 @@ interface ObjectRendererProps {
    */
   selectable?: boolean;
   onThrow?: (id: string, x: number, y: number, vx: number, vy: number) => void;
-  stageScale?: number;
   /**
    * Whether Alt-drag duplication is permitted.
    * Only true when the active tool is the Select tool ('select' / V).
@@ -138,6 +140,8 @@ interface SiblingDragState {
    */
   nodeStartX: number | null;
   nodeStartY: number | null;
+  /** Its Konva node, looked up once at drag start rather than on every move. */
+  konva: Konva.Node | null;
 }
 
 /**
@@ -235,6 +239,39 @@ function setDuplicateCursor(_stage: Konva.Stage | null | undefined, on: boolean)
   claimCursor('alt-duplicate', on ? 'copy' : null);
 }
 
+/** How recently the pointer must have moved for a release to count as a throw. */
+const THROW_RELEASE_WINDOW_MS = 50;
+
+/**
+ * The drag in progress, for the one shared Alt listener below.
+ *
+ * Only one object is ever the drag's target, so one window listener serves the
+ * whole board; each mounted object no longer registers its own.
+ */
+let altKeyTarget: {
+  objId: string;
+  isSelected: boolean;
+  selectedIdsRef?: React.MutableRefObject<string[]>;
+  shape: Konva.Group | null;
+  altRef: React.MutableRefObject<boolean>;
+} | null = null;
+let altKeyListening = false;
+
+function listenForAltDuringDrag() {
+  if (altKeyListening || typeof window === 'undefined') return;
+  altKeyListening = true;
+  const toggle = (down: boolean) => (e: KeyboardEvent) => {
+    if (e.key !== 'Alt' || !altKeyTarget?.shape?.isDragging()) return;
+    const t = altKeyTarget;
+    t.altRef.current = down;
+    if (down) altDragState.set(duplicationSet(t.objId, t.isSelected, t.selectedIdsRef?.current));
+    else altDragState.clear();
+    setDuplicateCursor(t.shape?.getStage(), down);
+  };
+  window.addEventListener('keydown', toggle(true));
+  window.addEventListener('keyup', toggle(false));
+}
+
 const altDragState = {
   activeIds: new Set<string>(),
   listeners: new Set<() => void>(),
@@ -264,7 +301,6 @@ export const ObjectRenderer = React.memo(
     isSelected,
     onSelect,
     onThrow,
-    stageScale = 1,
     selectedIdsRef,
     selectable = true,
     canDuplicate = true,
@@ -288,10 +324,33 @@ export const ObjectRenderer = React.memo(
     const ownerFrame = useStore((state) =>
       node?.frameId ? state.objects[node.frameId] : undefined
     );
-    const clipRect =
-      node?.type !== 'connector' && ownerFrame && ownerFrame.type === 'frame'
-        ? { x: ownerFrame.x, y: ownerFrame.y, width: ownerFrame.width, height: ownerFrame.height }
-        : null;
+    const ownerLive = useLiveTransform(ownerFrame?.type === 'frame' ? ownerFrame.id : undefined);
+    /**
+     * The owning frame's outline in world space, while this object is in it.
+     *
+     * Read through the frame's live transform, so a frame being dragged,
+     * resized or rotated clips its children where it is now rather than where
+     * it was committed. And only while this object's centre is actually inside
+     * that outline: `frameId` is stored and can go stale (two people moving the
+     * frame and dropping into it at once), and a stale owner must not cut an
+     * object out of sight on every screen.
+     */
+    const clipCorners = useMemo(() => {
+      if (!node || node.type === 'connector' || !ownerFrame || ownerFrame.type !== 'frame') return null;
+      return frameClipCorners(
+        {
+          x: ownerLive?.x ?? ownerFrame.x,
+          y: ownerLive?.y ?? ownerFrame.y,
+          width: ownerLive?.width ?? ownerFrame.width,
+          height: ownerLive?.height ?? ownerFrame.height,
+          rotation: ownerLive?.rotation ?? ownerFrame.rotation ?? 0,
+        },
+        {
+          x: (live?.x ?? node.x) + (live?.width ?? node.width) / 2,
+          y: (live?.y ?? node.y) + (live?.height ?? node.height) / 2,
+        }
+      );
+    }, [node, ownerFrame, ownerLive, live]);
 
     /**
      * The grid module a picture is sitting in, when it is in one.
@@ -385,10 +444,10 @@ export const ObjectRenderer = React.memo(
     }), [objId]);
 
     // Layer blur, and the Konva cache it requires. The dependency list is
-    // everything the cached bitmap depends on: the object's size, and the
-    // paint drawn into it. `appearance` is a stable reference between changes
-    // because the store hands back the node itself.
-    useLayerFilters(shapeRef, appearance?.blur, [node?.width, node?.height, appearance]);
+    // everything the cached bitmap depends on: the whole node (a stable
+    // reference between changes, so text, geometry and paint all count) and
+    // the live size of a resize in progress.
+    useLayerFilters(shapeRef, appearance?.blur, [node, live?.width, live?.height]);
 
     // A tag filter is a way of looking, so it lives outside the document —
     // narrowing to `risk` must not empty everyone else's board.
@@ -404,14 +463,7 @@ export const ObjectRenderer = React.memo(
     // shared subscription publishing an id-keyed map.
     const flight = useFlight(objId);
 
-    useEffect(() => {
-      const handleRequestEdit = (e: Event) => {
-        const detail = (e as CustomEvent<{ id: string }>).detail;
-        if (detail?.id === objId) setIsEditing(true);
-      };
-      document.addEventListener('requestEditNode', handleRequestEdit);
-      return () => document.removeEventListener('requestEditNode', handleRequestEdit);
-    }, [objId]);
+    useEffect(() => onEditRequest(objId, () => setIsEditing(true)), [objId]);
 
     useEffect(() => {
       if (!isEditing) return;
@@ -468,6 +520,10 @@ export const ObjectRenderer = React.memo(
          */
         if (isAlt) altDragState.set(duplicationSet(objId, isSelected, selectedIdsRef?.current));
         setDuplicateCursor(e.target.getStage(), isAlt);
+        if (canDuplicate) {
+          altKeyTarget = { objId, isSelected, selectedIdsRef, shape: shapeRef.current, altRef: altDragRef };
+          listenForAltDuringDrag();
+        }
 
         const currentObj = useStore.getState().objects[objId];
         const halfW = currentObj ? currentObj.width / 2 : 0;
@@ -496,6 +552,14 @@ export const ObjectRenderer = React.memo(
 
         if (toMoveIds.size > 0) {
           const siblings: Record<string, SiblingDragState> = {};
+          // One walk of the tree for every sibling, instead of a `findOne`
+          // per sibling (each of which walks the whole tree).
+          const konvaById = new Map<string, Konva.Node>();
+          stage?.find((n: Konva.Node) => {
+            const nid = n.id();
+            if (nid && toMoveIds.has(nid) && !konvaById.has(nid)) konvaById.set(nid, n);
+            return false;
+          });
           connectorDragRef.current = [];
           const batch: Array<[string, { x: number; y: number }]> = [
             [objId, { x: e.target.x() - halfW, y: e.target.y() - halfH }],
@@ -510,7 +574,7 @@ export const ObjectRenderer = React.memo(
               connectorDragRef.current.push(sid);
               return;
             }
-            const konvaNode = stage?.findOne('#' + sid);
+            const konvaNode = konvaById.get(sid) ?? null;
             const sHalfW = sibling.width / 2;
             const sHalfH = sibling.height / 2;
             const sx = konvaNode ? konvaNode.x() - sHalfW : sibling.x;
@@ -521,6 +585,7 @@ export const ObjectRenderer = React.memo(
               rawY: sibling.y,
               nodeStartX: konvaNode ? konvaNode.x() : null,
               nodeStartY: konvaNode ? konvaNode.y() : null,
+              konva: konvaNode,
             };
           });
           liveTransformStore.setBatch(batch);
@@ -583,10 +648,9 @@ export const ObjectRenderer = React.memo(
             const sHalfW = sibling ? sibling.width / 2 : 0;
             const sHalfH = sibling ? sibling.height / 2 : 0;
             batch.push([sid, { x: sx - sHalfW, y: sy - sHalfH }]);
-            const konvaNode = stage?.findOne('#' + sid);
-            if (konvaNode) {
-              konvaNode.x(sx);
-              konvaNode.y(sy);
+            if (s.konva) {
+              s.konva.x(sx);
+              s.konva.y(sy);
             }
           });
           liveTransformStore.setBatch(batch);
@@ -598,38 +662,13 @@ export const ObjectRenderer = React.memo(
       [canDuplicate, isSelected, objId, selectedIdsRef]
     );
 
-    useEffect(() => {
-      const handleKeyDown = (e: KeyboardEvent) => {
-        if (e.key === 'Alt' && canDuplicate) {
-          if (shapeRef.current?.isDragging()) {
-            altDragRef.current = true;
-            altDragState.set(duplicationSet(objId, isSelected, selectedIdsRef?.current));
-            setDuplicateCursor(shapeRef.current.getStage(), true);
-          }
-        }
-      };
-      const handleKeyUp = (e: KeyboardEvent) => {
-        if (e.key === 'Alt') {
-          if (shapeRef.current?.isDragging()) {
-            altDragRef.current = false;
-            altDragState.clear();
-            setDuplicateCursor(shapeRef.current.getStage(), false);
-          }
-        }
-      };
-      window.addEventListener('keydown', handleKeyDown);
-      window.addEventListener('keyup', handleKeyUp);
-      return () => {
-        window.removeEventListener('keydown', handleKeyDown);
-        window.removeEventListener('keyup', handleKeyUp);
-      };
-    }, [canDuplicate, isSelected, objId, selectedIdsRef]);
 
     const handleDragEnd = useCallback(
       (e: Konva.KonvaEventObject<DragEvent>) => {
         window.dispatchEvent(new CustomEvent('canvas-drag-end'));
         presenceManager.updateActivity(null);
         clearSnapGuides();
+        if (altKeyTarget?.objId === objId) altKeyTarget = null;
         // Batch-clear all live transforms for the drag group in one notification pass.
         const idsToClean = [objId];
         if (groupDragRef.current) {
@@ -655,13 +694,10 @@ export const ObjectRenderer = React.memo(
             const stage = e.target.getStage();
             e.target.x(groupDragRef.current.startX);
             e.target.y(groupDragRef.current.startY);
-            Object.entries(groupDragRef.current.siblings).forEach(([sid, sib]) => {
+            Object.values(groupDragRef.current.siblings).forEach((sib) => {
               if (sib.nodeStartX === null || sib.nodeStartY === null) return;
-              const kn = stage?.findOne('#' + sid);
-              if (kn) {
-                kn.x(sib.nodeStartX);
-                kn.y(sib.nodeStartY);
-              }
+              sib.konva?.x(sib.nodeStartX);
+              sib.konva?.y(sib.nodeStartY);
             });
             stage?.batchDraw();
 
@@ -733,8 +769,22 @@ export const ObjectRenderer = React.memo(
           return;
         }
 
+        // A release is a throw only with physics on, for a body the simulation
+        // can carry, and only when the pointer was still moving as it let go:
+        // a fast drag that stopped before release is an ordinary drop and must
+        // take the commit path below, which keeps frame, grid and connector
+        // membership in step.
         const speed = Math.hypot(velocity.current.x, velocity.current.y);
-        if (speed > 0.5 && onThrow) {
+        const movingAtRelease = performance.now() - lastPos.current.time < THROW_RELEASE_WINDOW_MS;
+        const throwable =
+          current?.type !== 'frame' && current?.type !== 'connector' && current?.type !== 'grid';
+        if (
+          onThrow &&
+          throwable &&
+          useStore.getState().physicsEnabled &&
+          movingAtRelease &&
+          speed > 0.5
+        ) {
           onThrow(objId, e.target.x(), e.target.y(), velocity.current.x * 15, velocity.current.y * 15);
         } else if (current?.type === 'connector') {
           /**
@@ -780,9 +830,10 @@ export const ObjectRenderer = React.memo(
             moveFrameWithChildren(objId, nextX - current.x, nextY - current.y);
           }
           reassignFrame(objId);
-          // Where a picture came to rest decides whether it is in a grid
+          // Where an object came to rest decides whether it is in a grid
           // module, on the same geometric-membership rule as frames above.
-          if (current?.type === 'image') reassignGridSlot(objId);
+          // `reassignGridSlot` ignores types that cannot sit in a module.
+          reassignGridSlot(objId);
         }
       },
       [objId, onThrow, canDuplicate]
@@ -1091,7 +1142,7 @@ export const ObjectRenderer = React.memo(
             listening={false}
             name={EXPORT_CHROME}
           >
-            <NodeContent node={node} isEditing={false} stageScale={stageScale} />
+            <NodeContent node={node} isEditing={false} />
           </Group>
         )}
 
@@ -1230,7 +1281,7 @@ export const ObjectRenderer = React.memo(
                   for (let i = 1; i < slotClip.length; i++) ctx.lineTo(slotClip[i].x, slotClip[i].y);
                   ctx.closePath();
                 }
-              : clipRect
+              : clipCorners
               ? (ctx: Konva.Context) => {
                   const group = shapeRef.current;
                   const stage = group?.getStage();
@@ -1242,12 +1293,7 @@ export const ObjectRenderer = React.memo(
                   // this clip path is drawn in.
                   const toAbsolute = stage.getAbsoluteTransform();
                   const toLocal = group.getAbsoluteTransform().copy().invert();
-                  const corners = [
-                    { x: clipRect.x, y: clipRect.y },
-                    { x: clipRect.x + clipRect.width, y: clipRect.y },
-                    { x: clipRect.x + clipRect.width, y: clipRect.y + clipRect.height },
-                    { x: clipRect.x, y: clipRect.y + clipRect.height },
-                  ].map((corner) => toLocal.point(toAbsolute.point(corner)));
+                  const corners = clipCorners.map((corner) => toLocal.point(toAbsolute.point(corner)));
                   ctx.beginPath();
                   ctx.moveTo(corners[0].x, corners[0].y);
                   for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
@@ -1354,22 +1400,13 @@ export const ObjectRenderer = React.memo(
             };
           }}
         >
-          <NodeContent node={liveNode} isEditing={isEditing} stageScale={stageScale} />
+          <NodeContent node={liveNode} isEditing={isEditing} />
 
           {isHovered && selectable && !isSelected && (
             // Sized from the node's real bounds. This used to read
             // `content.width`, which is undefined for shapes, text and
             // stickies — so the hover affordance was an 8x8px stub.
-            <Rect
-              x={-4}
-              y={-4}
-              width={node.width + 8}
-              height={node.height + 8}
-              stroke="#3B82F6"
-              strokeWidth={1.5 / stageScale}
-              listening={false}
-              name={EXPORT_CHROME}
-            />
+            <HoverOutline width={node.width} height={node.height} />
           )}
 
           {/* `ObjectPresenceIndicator` was mounted here on every object. It
@@ -1388,34 +1425,16 @@ export const ObjectRenderer = React.memo(
     );
   },
   /**
-   * Every prop this component's *output* depends on has to be here.
-   *
-   * `selectable` was missing, and that turned out to matter enormously once it
-   * started gating selection. It changes when the active tool does — the whole
-   * point of it — but the comparator said "nothing changed", so an object that
-   * had not re-rendered for some other reason kept the old value: `draggable`
-   * stayed false and the press handler kept a closure over `selectable ===
-   * false`. Clicking it did nothing.
-   *
-   * The symptom was maddeningly selective, and the selectivity is the tell:
-   * objects that happened to re-render for another reason — moved, edited, or
-   * unmounted by culling and remounted on the way back — picked up the fresh
-   * prop and behaved. Ones that had sat untouched did not. "It refuses to
-   * select things that have been sitting there a while" is exactly what a
-   * stale memo looks like from the outside.
-   *
-   * It was wrong before too, and invisible: `selectable` only gated the hover
-   * outline, so a stale one meant an outline that failed to appear. Making it
-   * gate the click promoted a cosmetic bug to a functional one — which is the
-   * general hazard in widening what an existing prop controls, and worth
-   * checking the memo for every time.
+   * Every prop this component's *output* depends on has to be here; a prop
+   * left out goes stale on objects that have not re-rendered for some other
+   * reason. `onSelect` and `onThrow` are stable callbacks, and zoom is read
+   * through `useCameraZoom` by the few children that need it.
    */
   (prev, next) =>
     prev.objId === next.objId &&
     prev.isSelected === next.isSelected &&
     prev.selectable === next.selectable &&
-    prev.canDuplicate === next.canDuplicate &&
-    prev.stageScale === next.stageScale
+    prev.canDuplicate === next.canDuplicate
 );
 
 ObjectRenderer.displayName = 'ObjectRenderer';
@@ -1427,11 +1446,24 @@ ObjectRenderer.displayName = 'ObjectRenderer';
  * drawn once, above, for every object type. The sticky was the last holdout
  * with a look of its own.
  */
-const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean; stageScale?: number }> = ({
-  node,
-  isEditing,
-  stageScale = 1,
-}) => {
+/** The hover ring, a constant hairline on screen at any zoom. */
+const HoverOutline: React.FC<{ width: number; height: number }> = ({ width, height }) => {
+  const zoom = useCameraZoom();
+  return (
+    <Rect
+      x={-4}
+      y={-4}
+      width={width + 8}
+      height={height + 8}
+      stroke="#3B82F6"
+      strokeWidth={1.5 / zoom}
+      listening={false}
+      name={EXPORT_CHROME}
+    />
+  );
+};
+
+const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean }> = ({ node, isEditing }) => {
   switch (node.type) {
     case 'text':
       return <TextRenderer node={node} visible={!isEditing} />;
@@ -1461,7 +1493,7 @@ const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean; stageScale?: nu
         </Group>
       );
     case 'frame':
-      return <FrameRenderer node={node} stageScale={stageScale} />;
+      return <FrameRenderer node={node} />;
     case 'connector':
       return <ConnectorRenderer node={node} />;
     case 'grid':

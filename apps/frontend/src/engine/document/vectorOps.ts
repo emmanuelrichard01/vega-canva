@@ -17,6 +17,7 @@
 import { createNode, deleteNode, updateNode } from './mutations';
 import { doc } from './doc';
 import { useStore } from '../../hooks/useStore';
+import { compareStacking } from '../model/stacking';
 import { booleanPaths, BOOLEAN_OPS, type BooleanOp, type BooleanOperand } from '../model/pathBoolean';
 import { mapPath, reframePath, type ContourGeometry } from '../model/pathGeometry';
 import { shapeToPath } from '../model/shapeToPath';
@@ -110,7 +111,7 @@ function inZOrder(ids: readonly string[]): AnyNode[] {
   return ids
     .map((id) => objects[id])
     .filter((n): n is AnyNode => Boolean(n))
-    .sort((a, b) => (b.zIndex ?? 0) - (a.zIndex ?? 0));
+    .sort((a, b) => compareStacking(b, a));
 }
 
 /**

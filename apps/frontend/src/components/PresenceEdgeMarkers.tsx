@@ -310,6 +310,8 @@ export const PresenceEdgeMarkers: React.FC = () => {
               );
             }}
             aria-label={`Jump to ${person.name}`}
+            // What they are up to, for a hover: away, or what they are listening to.
+            title={[person.name, person.away ? 'Away' : null, person.listening].filter(Boolean).join(' · ')}
           >
             <span className="presence-marker-avatar" aria-hidden="true">
               {person.initials}

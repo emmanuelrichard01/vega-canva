@@ -1,6 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import { cursorOverride } from './cursorOverride';
-import { chromeVisual, cursorVisual, precisionVisual } from './cursorVisual';
+import {
+  chromeVisual,
+  cursorVisual,
+  precisionVisual,
+  setCursorTheme,
+  INK,
+  PAPER,
+  type CursorOptions,
+} from './cursorVisual';
+import { drawSettings } from '../tools/drawSettings';
+import { useStore } from '../../hooks/useStore';
+import { canvasChromeContrast, useContrast } from '../ui/contrast';
 import { cursorCss, FALLBACK } from './cursorCss';
 import type { CursorMode } from './toolCursor';
 
@@ -122,6 +133,26 @@ const ROOT_VARS = ['--cursor-arrow', '--cursor-text'] as const;
 export const LocalCursor: React.FC<Props> = ({ mode, containerRef, activeTool }) => {
   const { dark, accent } = useCursorTheme();
   const native = useNativePointer();
+  const { enhanced } = useContrast();
+  const weight = canvasChromeContrast(enhanced).strokeScale;
+  const draw = useSyncExternalStore(drawSettings.subscribe, drawSettings.get, drawSettings.get);
+  const eraserSize = useStore((s) => s.eraserSize);
+
+  // The pen's ink is only read for the pen, so a colour change does not
+  // redraw the select arrow.
+  const ink =
+    activeTool === 'pen'
+      ? draw.brush === 'highlighter'
+        ? draw.highlight
+        : (draw.ink ?? (dark ? PAPER : INK))
+      : undefined;
+  const brush = activeTool === 'pen' ? draw.brush : undefined;
+
+  // A layout effect runs before the effects below build any visual, so claimed
+  // cursors elsewhere (resize, rotate, the pen signs) share this theme and weight.
+  useLayoutEffect(() => {
+    setCursorTheme({ dark, weight });
+  }, [dark, weight]);
 
   /**
    * The cursors, written as custom properties on the container and the root.
@@ -149,9 +180,10 @@ export const LocalCursor: React.FC<Props> = ({ mode, containerRef, activeTool })
     }
 
     const fallback = FALLBACK[mode] ?? 'default';
+    const options: CursorOptions = { brush, ink, eraserSize };
     container.style.setProperty(
       '--cursor-tool',
-      cursorCss(cursorVisual(mode, activeTool, accent, dark), fallback)
+      cursorCss(cursorVisual(mode, activeTool, accent, dark, options), fallback)
     );
     // The closed hand, for `:active` while panning. A swap, not an animation —
     // which is why the one press response worth having survives the move to
@@ -200,7 +232,7 @@ export const LocalCursor: React.FC<Props> = ({ mode, containerRef, activeTool })
     root.style.setProperty('--cursor-text', cursorCss(chromeVisual('text', dark), 'text'));
 
     return clear;
-  }, [containerRef, mode, activeTool, accent, dark, native]);
+  }, [containerRef, mode, activeTool, accent, dark, native, weight, brush, ink, eraserSize]);
 
   /**
    * Alt held, as an attribute on the root.

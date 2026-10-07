@@ -1,29 +1,34 @@
-import React, { useState, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
-import { initialsFor } from '../engine/presence/collaborators';
+import React, { useCallback, useState, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import ReactDOM from 'react-dom';
-import { Check, X, Send, Pencil, Trash2, CornerDownLeft } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, RotateCcw, Pencil, Trash2, X, ArrowUp } from 'lucide-react';
+import { initialsFor } from '../engine/presence/collaborators';
+import { contrastInk } from '../engine/model/color';
 import { cameraSystem } from '../engine/CameraSystem';
 import { engineEvents } from '../engine/EventBus';
-import type { CommentThread } from '../hooks/useComments';
+import { useComments, type CommentThread } from '../hooks/useComments';
 import {
   anchorPoint,
   isUnread,
   lastMessage,
   mentionsMe,
+  messageReactions,
   relativeTime,
   type MentionCandidate,
 } from '../engine/comments/threads';
 import { readMarks } from '../engine/comments/readMarks';
 import { commentView } from '../engine/comments/commentView';
 import { useCollaborators } from '../engine/presence/useCollaborators';
+import { liveTransformStore } from '../engine/model/liveTransformStore';
+import { canPostComments, getRoomRole, subscribeRoomRole } from '../engine/model/permissions';
 import { MentionInput } from './comments/MentionInput';
 import { EmojiPicker } from './comments/EmojiPicker';
 import { MessageBody } from './comments/MessageBody';
+import './comments/comments.css';
 
 interface CommentsOverlayProps {
   comments: CommentThread[];
   objects: Record<string, any>;
-  onAddComment: (x: number, y: number, body: string, objectId?: string) => void;
+  onAddComment: (x: number, y: number, body: string, objectId?: string, anchor?: { u: number; v: number }) => void;
   onAddReply: (commentId: string, text: string) => void;
   onEditMessage: (commentId: string, messageId: string, body: string) => void;
   onDeleteMessage: (commentId: string, messageId: string) => void;
@@ -31,11 +36,69 @@ interface CommentsOverlayProps {
   currentAuthorId: string;
 }
 
-/** The expanded thread's box, used to decide which way it opens. */
-const THREAD_WIDTH = 320;
-const THREAD_MAX_HEIGHT = 420;
+/** The thread card's box, used to decide which way it opens. */
+const CARD_WIDTH = 336;
+const CARD_MAX_HEIGHT = 480;
+const COMPOSER_WIDTH = 300;
 /** Keep-out band at the viewport edge. */
 const EDGE_GAP = 16;
+
+/** Reactions offered in one click; the picker covers the rest. */
+const QUICK_REACTIONS = ['👍', '❤️', '🎉', '👀'];
+
+interface Draft {
+  x: number;
+  y: number;
+  objectId?: string;
+  anchor?: { u: number; v: number };
+}
+
+/**
+ * Re-render when any anchored object is mid-gesture.
+ *
+ * During a drag the document is deliberately stale (see `liveTransformStore`),
+ * so a pin reading only the committed position would stay behind and jump on
+ * release. Subscribing per anchored id keeps the pin on its object while it
+ * moves.
+ */
+function useLiveAnchors(ids: readonly string[]): number {
+  const versionRef = useRef(0);
+  const key = ids.join('|');
+  // Re-created when the anchored set changes, which re-subscribes.
+  const subscribe = useCallback(
+    (notify: () => void) => {
+      const offs = key
+        ? key.split('|').map((id) =>
+            liveTransformStore.subscribe(id, () => {
+              versionRef.current += 1;
+              notify();
+            })
+          )
+        : [];
+      return () => offs.forEach((off) => off());
+    },
+    [key]
+  );
+  const read = useCallback(() => versionRef.current, []);
+  return useSyncExternalStore(subscribe, read, read);
+}
+
+function useRole() {
+  return useSyncExternalStore(subscribeRoomRole, getRoomRole, getRoomRole);
+}
+
+function Avatar({ name, color, small }: { name: string; color: string; small?: boolean }) {
+  return (
+    <span
+      className={small ? 'cmt-avatar cmt-avatar--sm' : 'cmt-avatar'}
+      // Data-driven: each person's presence colour.
+      style={{ background: color, color: contrastInk(color) }}
+      aria-hidden="true"
+    >
+      {initialsFor(name)}
+    </span>
+  );
+}
 
 export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
   comments,
@@ -49,45 +112,36 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
 }) => {
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const marks = useSyncExternalStore(readMarks.subscribe, readMarks.getSnapshot, readMarks.getSnapshot);
-  const showResolved = useSyncExternalStore(
-    commentView.subscribe,
-    commentView.getSnapshot,
-    commentView.getSnapshot
-  );
+  const showResolved = useSyncExternalStore(commentView.subscribe, commentView.getSnapshot, commentView.getSnapshot);
   const collaborators = useCollaborators();
+  const { toggleMessageReaction } = useComments();
+  useRole();
+  const canWrite = canPostComments();
 
   /**
-   * Who can be mentioned: everyone in the room right now, plus everyone who
-   * has ever written in this document's comments.
-   *
-   * The second half matters more than the first. Comments outlive sessions —
-   * the person you most want to reply to is usually the one who left the note
-   * and then closed the tab, and a picker built only from live awareness
-   * cannot offer them at all.
+   * Who can be mentioned: everyone in the room now, plus everyone who has
+   * written in this board's comments. Comments outlive sessions, and the
+   * person you most want to reply to has often closed the tab.
    */
   const mentionCandidates = useMemo<MentionCandidate[]>(() => {
     const byId = new Map<string, MentionCandidate>();
     for (const person of collaborators) {
-      // The durable author id, never `clientId`. A mention has to still name
-      // the same person tomorrow, and `mentionsMe` compares against this one.
-      byId.set(person.id, {
-        id: person.id,
-        name: person.name,
-        color: person.color,
-      });
+      byId.set(person.id, { id: person.id, name: person.name, color: person.color });
     }
     for (const thread of comments) {
       for (const message of thread.messages ?? []) {
         if (message.authorId === currentAuthorId) continue;
-        byId.set(message.authorId, {
-          id: message.authorId,
-          name: message.authorName,
-          color: message.authorColor,
-        });
+        byId.set(message.authorId, { id: message.authorId, name: message.authorName, color: message.authorColor });
       }
     }
     return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [collaborators, comments, currentAuthorId]);
+
+  const nameOf = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const c of mentionCandidates) names.set(c.id, c.name);
+    return (id: string) => (id === currentAuthorId ? 'You' : names.get(id) ?? 'Someone');
+  }, [mentionCandidates, currentAuthorId]);
 
   /** Opening a thread is what marks it read. */
   useEffect(() => {
@@ -97,10 +151,7 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
     if (newest) readMarks.markRead(activeCommentId, newest);
   }, [activeCommentId, comments]);
 
-  // The inbox asks for a thread by event rather than by prop, matching how the
-  // rest of the app talks across the Room/Canvas boundary (`navigateViewport`,
-  // `requestEditNode`). The camera fly-to is dispatched by the inbox; this only
-  // has to expand the right thread when it arrives.
+  // The inbox asks for a thread by event; the camera fly-to is its own.
   useEffect(() => {
     const onFocus = (e: Event) => {
       const id = (e as CustomEvent<{ id: string }>).detail?.id;
@@ -111,41 +162,37 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
     window.addEventListener('focusCommentThread', onFocus);
     return () => window.removeEventListener('focusCommentThread', onFocus);
   }, []);
+
   const [replyText, setReplyText] = useState('');
   const [, setForceRender] = useState(0);
-  const expandedPanelRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
 
-  // A pending thread that hasn't been committed to the doc yet. Keeping the draft
-  // local means an abandoned composer never leaves an empty pin behind for everyone.
-  const [draft, setDraft] = useState<{ x: number; y: number; objectId?: string } | null>(null);
+  // A thread that hasn't been written yet. Kept local, so an abandoned
+  // composer never leaves an empty pin behind for everyone.
+  const [draft, setDraft] = useState<Draft | null>(null);
   const [draftText, setDraftText] = useState('');
-  /**
-   * How the emoji button reaches the caret.
-   *
-   * One per composer, because there are two — a new thread and a reply — and
-   * they are never open at once but are separate components with separate
-   * carets. Sharing a ref would mean the reply box inserting into the draft
-   * box's text on whichever mounted last.
-   */
+  // One insert hook per composer: the new-thread box and the reply box have
+  // separate carets.
   const draftInsert = useRef<((text: string) => void) | null>(null);
   const replyInsert = useRef<((text: string) => void) | null>(null);
   const draftInputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Inline message editing (author-only).
+  // Inline editing of one's own message.
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
 
   useEffect(() => {
-    const handleCameraChange = () => setForceRender(r => r + 1);
+    const handleCameraChange = () => setForceRender((r) => r + 1);
     engineEvents.on('CameraChanged', handleCameraChange);
     return () => engineEvents.off('CameraChanged', handleCameraChange);
   }, []);
 
-  // The CommentTool emits this when the user clicks the canvas with the tool active.
+  // The Comment tool (and "Comment" in the context menu) ask for a composer.
   useEffect(() => {
     const handleDraft = (payload: any) => {
+      if (!canPostComments()) return;
       setActiveCommentId(null);
-      setDraft({ x: payload.x, y: payload.y, objectId: payload.objectId });
+      setDraft({ x: payload.x, y: payload.y, objectId: payload.objectId, anchor: payload.anchor });
       setDraftText('');
       setTimeout(() => draftInputRef.current?.focus(), 0);
     };
@@ -153,51 +200,96 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
     return () => engineEvents.off('CommentDraftRequested', handleDraft);
   }, []);
 
-  // Escape cancels whatever is open, innermost first.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      if (editingMessageId) setEditingMessageId(null);
-      else if (draft) setDraft(null);
-      else if (activeCommentId) setActiveCommentId(null);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [draft, activeCommentId, editingMessageId]);
-
-  // replyText was a single field shared by every thread — switching from
-  // replying in one thread to opening another left your half-typed reply
-  // sitting in the new thread's box instead of the one you were actually
-  // writing to.
+  // A half-typed reply belongs to the thread it was typed in.
   useEffect(() => {
     setReplyText('');
+    setEditingMessageId(null);
   }, [activeCommentId]);
 
-  // Clicking anywhere outside the expanded thread (but not another pin, which
-  // has its own toggle logic) closes it — matches Figma/Notion; previously
-  // only Escape or the explicit X button could dismiss it.
+  // A click outside the open card (and not on a pin, which toggles itself)
+  // closes it.
   useEffect(() => {
     if (!activeCommentId) return;
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as Node;
-      if (expandedPanelRef.current?.contains(target)) return;
-      // The pin lives in the canvas overlay and the thread is portaled above
-      // the chrome, so they are no longer in one subtree. Without this, the
-      // pin's own mousedown counts as "outside", closing the thread a moment
-      // before its click reopens it — the toggle appears dead.
-      if (target instanceof Element && target.closest('[data-comment-pin]')) return;
+      if (cardRef.current?.contains(target)) return;
+      if (target instanceof Element && target.closest('[data-comment-pin], .emoji-picker, .mention-picker')) return;
       setActiveCommentId(null);
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [activeCommentId]);
 
+  const visibleComments = useMemo(
+    () => comments.filter((c) => showResolved || !c.resolved),
+    [comments, showResolved]
+  );
+
+  const anchoredIds = useMemo(
+    () => visibleComments.map((c) => c.objectId).filter((id): id is string => Boolean(id)),
+    [visibleComments]
+  );
+  useLiveAnchors(anchoredIds);
+
+  /** A thread's pin, in world space, following its object through a gesture. */
+  const worldPointOf = (thread: CommentThread) => {
+    const object = thread.objectId ? objects[thread.objectId] : null;
+    if (!object) return anchorPoint(thread, null);
+    const live = liveTransformStore.get(object.id);
+    return anchorPoint(thread, {
+      x: live?.x ?? object.x,
+      y: live?.y ?? object.y,
+      width: live?.width ?? object.width * Math.abs(object.scaleX || 1),
+      height: live?.height ?? object.height * Math.abs(object.scaleY || 1),
+      rotation: live?.rotation ?? object.rotation ?? 0,
+    });
+  };
+
+  /** Threads in reading order of their pins, for Alt+↑/↓. */
+  const ordered = useMemo(() => {
+    return [...visibleComments]
+      .map((t) => ({ t, p: worldPointOf(t) }))
+      .sort((a, b) => a.p.y - b.p.y || a.p.x - b.p.x || (a.t.id < b.t.id ? -1 : 1))
+      .map(({ t }) => t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reading order from committed positions is enough here
+  }, [visibleComments, objects]);
+
+  const goToThread = (step: 1 | -1) => {
+    if (ordered.length === 0) return;
+    const index = ordered.findIndex((t) => t.id === activeCommentId);
+    const next = ordered[(index + step + ordered.length) % ordered.length];
+    const p = worldPointOf(next);
+    window.dispatchEvent(
+      new CustomEvent('navigateViewport', { detail: { x: p.x, y: p.y, zoom: cameraSystem.zoom } })
+    );
+    setActiveCommentId(next.id);
+  };
+
+  // Escape closes innermost-first; Alt+↑/↓ walks threads while one is open.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (editingMessageId) setEditingMessageId(null);
+        else if (draft) setDraft(null);
+        else if (activeCommentId) setActiveCommentId(null);
+        return;
+      }
+      if (activeCommentId && e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        e.preventDefault();
+        e.stopPropagation();
+        goToThread(e.key === 'ArrowDown' ? 1 : -1);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
   const commitDraft = () => {
     if (!draft || !draftText.trim()) {
       setDraft(null);
       return;
     }
-    onAddComment(draft.x, draft.y, draftText.trim(), draft.objectId);
+    onAddComment(draft.x, draft.y, draftText.trim(), draft.objectId, draft.anchor);
     setDraft(null);
     setDraftText('');
   };
@@ -209,556 +301,346 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
     setReplyText('');
   };
 
-  const visibleComments = comments.filter(c => showResolved || !c.resolved);
-
-
   const toScreen = (wx: number, wy: number) => ({
     x: wx * cameraSystem.zoom + cameraSystem.x,
     y: wy * cameraSystem.zoom + cameraSystem.y,
   });
 
+  /**
+   * Viewport position for a portaled surface opening from a pin.
+   *
+   * The overlay is offset from the viewport by the stage's origin (header,
+   * rulers), so the screen point is translated by that rect before it is used
+   * as `position: fixed` coordinates. The card flips across the anchor rather
+   * than clamping, so it stays attached to its pin near an edge.
+   */
+  const placeFrom = (s: { x: number; y: number }, width: number, height: number) => {
+    const host = document.querySelector('.konvajs-content')?.getBoundingClientRect();
+    const vx = s.x + (host?.left ?? 0);
+    const vy = s.y + (host?.top ?? 0);
+    const flipX = vx + width + EDGE_GAP > window.innerWidth;
+    const flipY = vy + height + EDGE_GAP > window.innerHeight;
+    return {
+      left: flipX ? undefined : vx + 8,
+      right: flipX ? window.innerWidth - vx + 8 : undefined,
+      top: flipY ? undefined : Math.max(EDGE_GAP, vy - 12),
+      bottom: flipY ? Math.max(EDGE_GAP, window.innerHeight - vy - 12) : undefined,
+    };
+  };
+
+  const activeThread = activeCommentId ? comments.find((c) => c.id === activeCommentId) ?? null : null;
+
   return (
-    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 40, overflow: 'hidden' }}>
-      {/* The floating "Show Resolved" pill used to live here, pinned to the
-          bottom-right — the same corner the comment inbox occupies, so opening
-          the inbox buried it. It was also a second control for a preference
-          the inbox already exposes as a filter. One control now, in the inbox,
-          backed by `commentView`. */}
-
-      {/* New-thread composer */}
-      {draft && (() => {
-        const s = toScreen(draft.x, draft.y);
-        // Portaled for the same reason the thread is: a new comment dropped
-        // near a panel opened its composer underneath that panel.
-        const flip = s.x + 280 + EDGE_GAP > window.innerWidth;
-        return ReactDOM.createPortal(
+    <div className="cmt-layer">
+      {draft &&
+        ReactDOM.createPortal(
           <div
-            style={{
-              position: 'fixed',
-              left: flip ? undefined : s.x,
-              right: flip ? window.innerWidth - s.x : undefined,
-              top: Math.min(s.y, window.innerHeight - 220),
-              pointerEvents: 'auto',
-              zIndex: 200,
-              animation: 'popIn 180ms var(--ease-settle)',
-            }}
+            className="cmt-composer"
+            role="dialog"
+            aria-label="New comment"
+            // Placement is data-driven.
+            style={placeFrom(toScreen(draft.x, draft.y), COMPOSER_WIDTH, 200)}
           >
-            <div
-              className="panel-surface"
-              style={{ width: 280, borderRadius: 12, padding: 12, boxShadow: 'var(--shadow-float)' }}
-            >
-              <div
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: 'var(--text-tertiary)',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.06em',
-                  marginBottom: 8,
-                }}
-              >
-                New comment
-              </div>
-              <MentionInput
-                inputRef={draftInputRef}
-                insertRef={draftInsert}
-                value={draftText}
-                onChange={setDraftText}
-                onSubmit={commitDraft}
-                onCancel={() => setDraft(null)}
-                candidates={mentionCandidates}
-                placeholder="Add a comment…  @ to mention, : for emoji"
-                aria-label="New comment"
-              />
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
-                {/*
-                  The hint and the emoji button share the left of the row.
-
-                  The button is here rather than inside the textarea because it
-                  belongs to the row of *actions* — it is a thing you do to the
-                  message, like posting it. Floating it inside the field is the
-                  other convention and it costs a corner of the writing area
-                  permanently, on a composer three lines tall.
-                */}
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <EmojiPicker onPick={(char) => draftInsert.current?.(char)} placement="down" />
-                  <span style={{ fontSize: 10, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <CornerDownLeft size={11} /> to post
-                  </span>
-                </span>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button
-                    onClick={() => setDraft(null)}
-                    style={{
-                      background: 'transparent',
-                      border: 'none',
-                      color: 'var(--text-secondary)',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      padding: '6px 10px',
-                      borderRadius: 6,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={commitDraft}
-                    disabled={!draftText.trim()}
-                    style={{
-                      background: draftText.trim() ? 'var(--text-primary)' : 'var(--surface-secondary)',
-                      color: draftText.trim() ? 'var(--surface-primary)' : 'var(--text-tertiary)',
-                      border: 'none',
-                      borderRadius: 6,
-                      padding: '6px 12px',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: draftText.trim() ? 'pointer' : 'not-allowed',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                    }}
-                  >
-                    <Send size={12} /> Post
-                  </button>
-                </div>
-              </div>
+            <MentionInput
+              inputRef={draftInputRef}
+              insertRef={draftInsert}
+              value={draftText}
+              onChange={setDraftText}
+              onSubmit={commitDraft}
+              onCancel={() => setDraft(null)}
+              candidates={mentionCandidates}
+              placeholder={draft.objectId ? 'Comment on this…' : 'Add a comment…'}
+              aria-label="New comment"
+            />
+            <div className="cmt-composer__foot">
+              <span className="cmt-hint">
+                <EmojiPicker onPick={(char) => draftInsert.current?.(char)} placement="down" />
+                <span>@ to mention</span>
+              </span>
+              <span className="cmt-hint">
+                <button type="button" className="cmt-btn" onClick={() => setDraft(null)}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="cmt-btn cmt-btn--primary"
+                  onClick={commitDraft}
+                  disabled={!draftText.trim()}
+                >
+                  Post
+                </button>
+              </span>
             </div>
           </div>,
           document.body
-        );
-      })()}
+        )}
 
-      {visibleComments.map(comment => {
-        // Rotation-aware, so a pin stays on the corner of a rotated object
-        // instead of hanging in the air where that corner used to be.
-        const world = anchorPoint(
-          comment,
-          comment.objectId ? objects[comment.objectId] : null
-        );
+      {visibleComments.map((comment) => {
+        const world = worldPointOf(comment);
         const s = toScreen(world.x, world.y);
-
         const unread = isUnread(comment, marks, currentAuthorId);
         const forMe = mentionsMe(comment, marks, currentAuthorId);
-        const isExpanded = activeCommentId === comment.id;
-
-        // Which way the thread opens. Pinned below-right of the pin by
-        // default, but a comment near the right edge — which is exactly where
-        // people leave comments, because that is where the work is — opened a
-        // 320px panel straight off the screen with no way to read or scroll
-        // it. Same failure the cursor name chips had, same fix: flip across
-        // the anchor rather than clamp, so the panel stays attached to its pin.
-        const flipX = s.x + THREAD_WIDTH + EDGE_GAP > window.innerWidth;
-        const flipY = s.y + THREAD_MAX_HEIGHT + EDGE_GAP > window.innerHeight;
-
-        // The thread's identity color comes from whoever started it, so you can tell
-        // at a glance whose comment a pin belongs to without opening it.
-        // Falls back to the accent when an author left no presence colour —
-        // the role rather than the palette value behind it, so a theme
-        // change cannot leave this one thread a different orange.
-        const threadColor = comment.messages?.[0]?.authorColor || 'var(--text-accent)';
-        const threadAuthor = comment.messages?.[0]?.authorName || 'Unknown';
+        const isOpen = activeCommentId === comment.id;
+        const first = comment.messages?.[0];
+        const author = first?.authorName || 'Unknown';
+        const color = first?.authorColor || 'var(--text-secondary)';
+        const count = comment.messages?.length || 0;
 
         return (
           <div
             key={comment.id}
-            style={{
-              position: 'absolute',
-              left: s.x,
-              top: s.y,
-              transform: 'translate(-50%, -50%)',
-              pointerEvents: 'auto',
-              zIndex: isExpanded ? 100 : 50,
-            }}
+            className="cmt-pin-anchor"
+            data-open={isOpen}
+            // Position is data-driven.
+            style={{ left: s.x, top: s.y }}
           >
-            {/* Collapsed pin — author-colored, with avatar initials */}
             <button
+              type="button"
+              className="cmt-pin"
               data-comment-pin={comment.id}
-              onClick={() => setActiveCommentId(isExpanded ? null : comment.id)}
-              title={`${threadAuthor} · ${comment.messages?.length || 0} message${(comment.messages?.length || 0) === 1 ? '' : 's'}${unread ? ' · unread' : ''}`}
-              aria-label={`${forMe ? 'You were mentioned. ' : ''}${unread ? 'Unread thread' : 'Thread'} by ${threadAuthor}, ${comment.messages?.length || 0} messages`}
-              style={{
-                position: 'relative',
-                background: 'var(--surface-elevated)',
-                border: `2px solid ${threadColor}`,
-                borderRadius: '16px 16px 16px 4px',
-                padding: '3px 8px 3px 3px',
-                // An unread thread carries a ring in the accent colour. Colour
-                // alone would be the only signal, so the dot below repeats it
-                // as a shape — the pin is already author-coloured, and "which
-                // shade of border is this" is not a distinction anyone can make
-                // across a board.
-                boxShadow: unread
-                  ? `0 0 0 3px var(--surface-primary), 0 0 0 5px ${
-                      forMe ? 'var(--text-accent)' : threadColor
-                    }, var(--shadow-md)`
-                  : isExpanded
-                    ? 'var(--shadow-float)'
-                    : 'var(--shadow-md)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                color: 'var(--text-primary)',
-                fontSize: 12,
-                fontWeight: 600,
-                /**
-                 * The board's own arrow, not the browser's hand.
-                 *
-                 * A pin is furniture *on the canvas*, not chrome beside it, and
-                 * `cursor: pointer` punched the OS hand through the cursor
-                 * system every other thing over the board goes through — so
-                 * with the Comment tool active you got the crosshair in the few
-                 * pixels around a pin and a pointing hand the moment you were
-                 * over it.
-                 *
-                 * It does need to differ from the tool's crosshair, and that is
-                 * the part worth keeping: clicking a pin **opens the thread**
-                 * rather than placing a new comment, so a crosshair here would
-                 * be a lie about what the click does. The arrow says "this is a
-                 * thing, not a place", which is the same thing Figma shows over
-                 * a pin and the same mark this app uses everywhere else for it.
-                 *
-                 * `--cursor-arrow` is published on `<html>` by `LocalCursor`,
-                 * so it is theme-aware and follows the rest of the set.
-                 */
-                cursor: 'var(--cursor-arrow, default)',
-                transition: 'transform var(--motion-hover), box-shadow var(--motion-hover)',
-                transform: isExpanded ? 'scale(1.08) translateY(-2px)' : 'scale(1)',
-                opacity: comment.resolved ? 0.55 : 1,
-              }}
+              data-open={isOpen}
+              data-resolved={comment.resolved}
+              onClick={() => setActiveCommentId(isOpen ? null : comment.id)}
+              aria-expanded={isOpen}
+              aria-label={`${forMe ? 'You were mentioned. ' : ''}${unread ? 'Unread thread' : 'Thread'} by ${author}, ${count} ${count === 1 ? 'message' : 'messages'}${comment.resolved ? ', resolved' : ''}`}
+              title={`${author} · ${relativeTime(lastMessage(comment)?.createdAt ?? comment.createdAt)}`}
             >
-              {unread && (
-                <span
-                  aria-hidden="true"
-                  style={{
-                    position: 'absolute',
-                    top: -4,
-                    right: -4,
-                    width: 10,
-                    height: 10,
-                    borderRadius: '50%',
-                    background: forMe ? 'var(--text-accent)' : threadColor,
-                    border: '2px solid var(--surface-elevated)',
-                  }}
-                />
-              )}
-              <span
-                style={{
-                  width: 20,
-                  height: 20,
-                  borderRadius: '50%',
-                  background: threadColor,
-                  color: '#fff',
-                  fontSize: 9,
-                  fontWeight: 700,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                }}
-              >
-                {initialsFor(threadAuthor)}
-              </span>
-              <span>{comment.messages?.length || 0}</span>
+              {unread && <span className="cmt-pin__unread" data-for-me={forMe} aria-hidden="true" />}
+              <Avatar name={author} color={color} />
+              <span>{count}</span>
             </button>
+          </div>
+        );
+      })}
 
-            {/* Expanded thread.
-                Portaled to <body>, not rendered inside the pin. The comments
-                overlay sits at z-index 40 *inside* the canvas, beneath both
-                side panels — so an open thread anywhere near the left or right
-                edge rendered underneath the Layers or Properties column and
-                could not be read or typed into. It is also clipped by the
-                overlay's own `overflow: hidden`. An open thread is a focused,
-                transient surface; it belongs above the chrome, and the pins
-                stay below it where they belong. */}
-            {isExpanded &&
-              ReactDOM.createPortal(
-                <div
-                  ref={expandedPanelRef}
-                  className="panel-surface"
-                  style={{
-                    position: 'fixed',
-                    left: flipX ? undefined : s.x,
-                    right: flipX ? window.innerWidth - s.x : undefined,
-                    top: flipY ? undefined : s.y + 26,
-                    bottom: flipY ? window.innerHeight - s.y + 26 : undefined,
-                    width: THREAD_WIDTH,
-                    maxHeight: THREAD_MAX_HEIGHT,
-                    overflowY: 'auto',
-                    zIndex: 200,
-                    borderRadius: 12,
-                    padding: 14,
-                    color: 'var(--text-primary)',
-                    fontSize: 13,
-                    fontFamily: 'var(--font-sans)',
-                    boxShadow: 'var(--shadow-overlay)',
-                    animation: 'popIn 180ms var(--ease-settle)',
-                  }}
-                >
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    marginBottom: 12,
-                    paddingBottom: 10,
-                    borderBottom: '1px solid var(--border-divider)',
-                  }}
-                >
-                  <span style={{ fontWeight: 600 }}>Thread</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    {!comment.resolved ? (
-                      <button
-                        onClick={() => {
-                          onResolveComment(comment.id);
-                          setActiveCommentId(null);
-                        }}
-                        style={{
-                          // The accent pair. This was `--amber-500` with white
-                          // on it, which is 2.15:1 — unreadable, and a raw
-                          // palette primitive where a role belongs.
-                          background: 'var(--accent)',
-                          border: 'none',
-                          color: 'var(--accent-on)',
-                          borderRadius: 6,
-                          padding: '4px 8px',
-                          fontSize: 11,
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 4,
-                        }}
-                        title="Mark as resolved"
-                      >
-                        <Check size={12} /> Resolve
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => onResolveComment(comment.id)}
-                        style={{
-                          color: 'var(--text-accent)',
-                          fontSize: 11,
-                          fontWeight: 600,
-                          padding: '4px 8px',
-                          background: 'var(--surface-hover)',
-                          borderRadius: 6,
-                          border: 'none',
-                          cursor: 'pointer',
-                        }}
-                        title="Reopen thread"
-                      >
-                        Reopen
-                      </button>
-                    )}
-                    <button
-                      onClick={() => setActiveCommentId(null)}
-                      style={{ background: 'transparent', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex' }}
-                    >
-                      <X size={16} />
-                    </button>
+      {activeThread &&
+        ReactDOM.createPortal(
+          (() => {
+            const s = toScreen(worldPointOf(activeThread).x, worldPointOf(activeThread).y);
+            const replies = Math.max(0, (activeThread.messages?.length || 0) - 1);
+            return (
+              <div
+                ref={cardRef}
+                className="cmt-card"
+                role="dialog"
+                aria-label={`Comment thread by ${activeThread.messages?.[0]?.authorName ?? 'Unknown'}`}
+                style={placeFrom(s, CARD_WIDTH, CARD_MAX_HEIGHT)}
+              >
+                <div className="cmt-card__head">
+                  <div className="cmt-card__title">
+                    {activeThread.resolved ? 'Resolved' : 'Comment'}{' '}
+                    <span>
+                      · {replies} {replies === 1 ? 'reply' : 'replies'}
+                    </span>
                   </div>
+                  <button
+                    type="button"
+                    className="cmt-icon-btn"
+                    onClick={() => goToThread(-1)}
+                    disabled={ordered.length < 2}
+                    aria-label="Previous thread"
+                    title="Previous thread (Alt+↑)"
+                  >
+                    <ChevronUp size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className="cmt-icon-btn"
+                    onClick={() => goToThread(1)}
+                    disabled={ordered.length < 2}
+                    aria-label="Next thread"
+                    title="Next thread (Alt+↓)"
+                  >
+                    <ChevronDown size={16} />
+                  </button>
+                  {canWrite && (
+                    <button
+                      type="button"
+                      className="cmt-icon-btn"
+                      onClick={() => {
+                        onResolveComment(activeThread.id);
+                        if (!activeThread.resolved && !showResolved) setActiveCommentId(null);
+                      }}
+                      aria-label={activeThread.resolved ? 'Reopen thread' : 'Resolve thread'}
+                      title={activeThread.resolved ? 'Reopen' : 'Resolve'}
+                    >
+                      {activeThread.resolved ? <RotateCcw size={15} /> : <Check size={16} />}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="cmt-icon-btn"
+                    onClick={() => setActiveCommentId(null)}
+                    aria-label="Close thread"
+                    title="Close (Esc)"
+                  >
+                    <X size={16} />
+                  </button>
                 </div>
 
-                {comment.messages && comment.messages.length > 0 && (
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 10,
-                      marginBottom: 14,
-                      maxHeight: 240,
-                      overflowY: 'auto',
-                      paddingRight: 4,
-                    }}
-                    className="custom-scrollbar"
-                  >
-                    {comment.messages.map(msg => {
-                      const isMine = msg.authorId === currentAuthorId;
-                      const isEditingThis = editingMessageId === msg.id;
-
-                      return (
-                        <div
-                          key={msg.id}
-                          style={{
-                            background: 'var(--surface-hover)',
-                            borderRadius: 8,
-                            padding: '10px 12px',
-                            // A subtle left rule in the author's color makes it scannable
-                            // who said what without reading every name.
-                            borderLeft: `3px solid ${msg.authorColor}`,
-                          }}
-                        >
-                          <div
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 6,
-                              marginBottom: 6,
-                              fontSize: 11,
-                              color: 'var(--text-tertiary)',
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: 16,
-                                height: 16,
-                                borderRadius: '50%',
-                                background: msg.authorColor,
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontWeight: 700,
-                                fontSize: 8,
-                                color: 'white',
-                                flexShrink: 0,
-                              }}
-                            >
-                              {initialsFor(msg.authorName)}
-                            </div>
-                            <span style={{ color: msg.authorColor, fontWeight: 600 }}>
-                              {msg.authorName}
-                              {isMine && <span style={{ color: 'var(--text-tertiary)', fontWeight: 500 }}> (you)</span>}
-                            </span>
-                            <span title={new Date(msg.createdAt).toLocaleString()}>
-                              · {relativeTime(msg.createdAt)}
-                            </span>
-                            {(msg as any).editedAt && (
-                              <span style={{ fontStyle: 'italic' }}>· edited</span>
-                            )}
-
-                            {/* Author-only controls */}
-                            {isMine && !isEditingThis && (
-                              <div style={{ marginLeft: 'auto', display: 'flex', gap: 2 }}>
-                                <button
-                                  onClick={() => {
-                                    setEditingMessageId(msg.id);
-                                    setEditingText(msg.body);
-                                  }}
-                                  title="Edit your message"
-                                  style={{ background: 'transparent', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', padding: 2 }}
-                                >
-                                  <Pencil size={11} />
-                                </button>
-                                <button
-                                  onClick={() => onDeleteMessage(comment.id, msg.id)}
-                                  title="Delete your message"
-                                  style={{ background: 'transparent', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', padding: 2 }}
-                                >
-                                  <Trash2 size={11} />
-                                </button>
-                              </div>
-                            )}
+                <div className="cmt-card__body custom-scrollbar">
+                  {activeThread.messages.map((msg) => {
+                    const isMine = msg.authorId === currentAuthorId;
+                    const isEditing = editingMessageId === msg.id;
+                    const reactions = messageReactions(activeThread.reactions, msg.id);
+                    return (
+                      <div key={msg.id} className="cmt-msg">
+                        <Avatar name={msg.authorName} color={msg.authorColor} small />
+                        <div>
+                          <div className="cmt-msg__meta">
+                            <span className="cmt-msg__name">{isMine ? 'You' : msg.authorName}</span>
+                            <span title={new Date(msg.createdAt).toLocaleString()}>{relativeTime(msg.createdAt)}</span>
+                            {msg.editedAt && <span>· edited</span>}
                           </div>
 
-                          {isEditingThis ? (
-                            <div>
+                          {isEditing ? (
+                            <>
                               <textarea
                                 value={editingText}
-                                onChange={e => setEditingText(e.target.value)}
-                                onKeyDown={e => {
+                                onChange={(e) => setEditingText(e.target.value)}
+                                onKeyDown={(e) => {
                                   if (e.key === 'Enter' && !e.shiftKey) {
                                     e.preventDefault();
-                                    if (editingText.trim()) onEditMessage(comment.id, msg.id, editingText.trim());
+                                    if (editingText.trim()) onEditMessage(activeThread.id, msg.id, editingText.trim());
                                     setEditingMessageId(null);
                                   }
                                 }}
                                 rows={2}
                                 autoFocus
-                                style={{
-                                  width: '100%',
-                                  resize: 'none',
-                                  background: 'var(--surface-primary)',
-                                  border: '1px solid var(--border-divider)',
-                                  borderRadius: 6,
-                                  padding: '6px 8px',
-                                  color: 'var(--text-primary)',
-                                  fontSize: 13,
-                                  fontFamily: 'Inter, sans-serif',
-                                  outline: 'none',
-                                }}
+                                aria-label="Edit message"
+                                className="comment-edit-field"
                               />
-                              <div style={{ display: 'flex', gap: 6, marginTop: 6, justifyContent: 'flex-end' }}>
-                                <button
-                                  onClick={() => setEditingMessageId(null)}
-                                  style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
-                                >
+                              <div className="cmt-msg__edit-row">
+                                <button type="button" className="cmt-btn" onClick={() => setEditingMessageId(null)}>
                                   Cancel
                                 </button>
                                 <button
+                                  type="button"
+                                  className="cmt-btn cmt-btn--primary"
+                                  disabled={!editingText.trim()}
                                   onClick={() => {
-                                    if (editingText.trim()) onEditMessage(comment.id, msg.id, editingText.trim());
+                                    if (editingText.trim()) onEditMessage(activeThread.id, msg.id, editingText.trim());
                                     setEditingMessageId(null);
-                                  }}
-                                  style={{
-                                    background: 'var(--text-primary)',
-                                    color: 'var(--surface-primary)',
-                                    border: 'none',
-                                    borderRadius: 6,
-                                    padding: '4px 10px',
-                                    fontSize: 11,
-                                    fontWeight: 600,
-                                    cursor: 'pointer',
                                   }}
                                 >
                                   Save
                                 </button>
                               </div>
-                            </div>
+                            </>
                           ) : (
-                            <div style={{ color: 'var(--text-secondary)' }}>
+                            <div className="cmt-msg__text">
                               <MessageBody body={msg.body} myAuthorId={currentAuthorId} />
                             </div>
                           )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
 
-                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <MentionInput
-                      value={replyText}
-                      onChange={setReplyText}
-                      insertRef={replyInsert}
-                      onSubmit={submitReply}
-                      candidates={mentionCandidates}
-                      placeholder="Reply…  @ or : to search"
-                      aria-label="Reply to thread"
-                      rows={2}
-                    />
-                  </div>
-                  {/* Opens upward here: the reply box is at the foot of the
-                      thread, and a panel dropping from it would leave the
-                      window rather than the thread. */}
-                  <EmojiPicker onPick={(char) => replyInsert.current?.(char)} placement="up" />
-                  <button
-                    type="button"
-                    onClick={submitReply}
-                    disabled={!replyText.trim()}
-                    aria-label="Send reply"
-                    style={{
-                      background: replyText.trim() ? 'var(--text-primary)' : 'var(--surface-secondary)',
-                      border: 'none',
-                      borderRadius: 8,
-                      padding: '8px 12px',
-                      color: replyText.trim() ? 'var(--surface-primary)' : 'var(--text-tertiary)',
-                      cursor: replyText.trim() ? 'pointer' : 'not-allowed',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <Send size={14} />
-                  </button>
+                          {(reactions.length > 0 || canWrite) && !isEditing && (
+                            <div className="cmt-reactions">
+                              {reactions.map(({ emoji, authorIds }) => {
+                                const mine = authorIds.includes(currentAuthorId);
+                                const who = authorIds.map(nameOf).join(', ');
+                                return (
+                                  <button
+                                    key={emoji}
+                                    type="button"
+                                    className="cmt-reaction"
+                                    aria-pressed={mine}
+                                    disabled={!canWrite}
+                                    onClick={() => toggleMessageReaction(activeThread.id, msg.id, emoji)}
+                                    title={who}
+                                    aria-label={`${emoji} ${authorIds.length}, from ${who}`}
+                                  >
+                                    <span className="cmt-reaction__emoji">{emoji}</span>
+                                    {authorIds.length}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+
+                        {canWrite && !isEditing && (
+                          <div className="cmt-msg__actions">
+                            {QUICK_REACTIONS.map((emoji) => (
+                              <button
+                                key={emoji}
+                                type="button"
+                                className="cmt-icon-btn"
+                                onClick={() => toggleMessageReaction(activeThread.id, msg.id, emoji)}
+                                aria-label={`React with ${emoji}`}
+                              >
+                                <span className="cmt-reaction__emoji">{emoji}</span>
+                              </button>
+                            ))}
+                            <EmojiPicker
+                              onPick={(char) => toggleMessageReaction(activeThread.id, msg.id, char)}
+                              placement="down"
+                            />
+                            {isMine && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="cmt-icon-btn"
+                                  onClick={() => {
+                                    setEditingMessageId(msg.id);
+                                    setEditingText(msg.body);
+                                  }}
+                                  aria-label="Edit your message"
+                                  title="Edit"
+                                >
+                                  <Pencil size={13} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="cmt-icon-btn"
+                                  onClick={() => onDeleteMessage(activeThread.id, msg.id)}
+                                  aria-label="Delete your message"
+                                  title="Delete"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-                </div>,
-                document.body
-              )}
-          </div>
-        );
-      })}
+
+                {canWrite ? (
+                  <div className="cmt-card__foot">
+                    <div className="cmt-grow">
+                      <MentionInput
+                        value={replyText}
+                        onChange={setReplyText}
+                        insertRef={replyInsert}
+                        onSubmit={submitReply}
+                        candidates={mentionCandidates}
+                        placeholder="Reply…"
+                        aria-label="Reply to thread"
+                        rows={1}
+                      />
+                    </div>
+                    <EmojiPicker onPick={(char) => replyInsert.current?.(char)} placement="up" />
+                    <button
+                      type="button"
+                      className="cmt-btn cmt-btn--primary"
+                      onClick={submitReply}
+                      disabled={!replyText.trim()}
+                      aria-label="Send reply"
+                    >
+                      <ArrowUp size={14} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="cmt-readonly">You can read comments on this board but not reply.</div>
+                )}
+              </div>
+            );
+          })(),
+          document.body
+        )}
     </div>
   );
 };
+

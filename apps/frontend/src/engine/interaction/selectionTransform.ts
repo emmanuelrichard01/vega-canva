@@ -59,23 +59,39 @@ interface Sized {
 /**
  * The axis-aligned box a set of objects occupies.
  *
- * Deliberately *unrotated*: it is the frame the proxy starts in, and the proxy
- * carries any rotation itself. Measuring a rotated hull here would mean the
- * proxy started turned, and every angle afterwards would be relative to a
- * baseline nobody chose.
+ * For one object it is that object's own *unrotated* box: the proxy starts
+ * there and carries the object's angle itself, so the handles sit square to it.
+ * For several it is the hull of every object as drawn, rotation included —
+ * the proxy starts unturned, and a rotated member must not stick out of it.
  */
 export function selectionBox(nodes: readonly Sized[]): Box | null {
   if (nodes.length === 0) return null;
+  const hull = nodes.length > 1;
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
   for (const n of nodes) {
     if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) continue;
-    minX = Math.min(minX, n.x);
-    minY = Math.min(minY, n.y);
-    maxX = Math.max(maxX, n.x + (n.width || 0));
-    maxY = Math.max(maxY, n.y + (n.height || 0));
+    const w = n.width || 0;
+    const h = n.height || 0;
+    const deg = hull ? n.rotation || 0 : 0;
+    if (deg === 0) {
+      minX = Math.min(minX, n.x);
+      minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + w);
+      maxY = Math.max(maxY, n.y + h);
+      continue;
+    }
+    const cx = n.x + w / 2;
+    const cy = n.y + h / 2;
+    for (const [px, py] of [[n.x, n.y], [n.x + w, n.y], [n.x + w, n.y + h], [n.x, n.y + h]]) {
+      const c = rotateAbout(px, py, cx, cy, deg);
+      minX = Math.min(minX, c.x);
+      minY = Math.min(minY, c.y);
+      maxX = Math.max(maxX, c.x);
+      maxY = Math.max(maxY, c.y);
+    }
   }
   if (!Number.isFinite(minX)) return null;
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };

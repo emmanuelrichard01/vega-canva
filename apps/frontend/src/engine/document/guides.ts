@@ -7,7 +7,9 @@
  * is a fact about a gesture and rides on ephemeral state. A ruler guide is
  * something a person deliberately placed and expects to find again — and
  * expects their collaborators to see, because "line it up with the guide" is a
- * thing people say to each other. So it is document state, and it undoes.
+ * thing people say to each other. So it is document state. It is outside the
+ * undo scope (`undoManager` tracks only objects and groups), so adding or moving
+ * a guide is not an undo step.
  *
  * ## A root type, so two clients cannot each create it
  *
@@ -24,6 +26,7 @@
  */
 
 import { doc } from './doc';
+import { canEditObjects } from '../model/permissions';
 
 export type GuideAxis = 'x' | 'y';
 
@@ -58,7 +61,8 @@ export function readGuides(): RulerGuide[] {
 const round = (n: number) => Math.round(n * 10) / 10;
 
 export function addGuide(axis: GuideAxis, position: number): void {
-  if (!Number.isFinite(position)) return;
+  // Viewers' writes would be dropped by the server and fork their local copy.
+  if (!canEditObjects() || !Number.isFinite(position)) return;
   rulerGuidesArray.push([{ axis, position: round(position) }]);
 }
 
@@ -72,6 +76,7 @@ export function addGuide(axis: GuideAxis, position: number): void {
  * Travel.
  */
 export function moveGuide(index: number, position: number): void {
+  if (!canEditObjects()) return;
   const guides = rulerGuidesArray.toArray();
   const existing = guides[index];
   if (!existing || !isValid(existing) || !Number.isFinite(position)) return;
@@ -83,6 +88,7 @@ export function moveGuide(index: number, position: number): void {
 }
 
 export function removeGuide(index: number): void {
+  if (!canEditObjects()) return;
   if (index < 0 || index >= rulerGuidesArray.length) return;
   rulerGuidesArray.delete(index, 1);
 }

@@ -37,6 +37,11 @@ export interface SvgDocumentInput {
   background: string | null;
   /** One entry per node, already in stacking order. */
   body: string[];
+  /**
+   * CSS for the file, such as `@font-face` rules for embedded fonts. Written
+   * first, inside `<defs>`, so every text node below can resolve its face.
+   */
+  styles?: string;
 }
 
 /**
@@ -48,12 +53,17 @@ export interface SvgDocumentInput {
  * the backdrop, because it is behind everything by definition. Then the
  * artwork, which is already ordered by z-index.
  */
-export function assembleSvg({ bounds, defs, background, body }: SvgDocumentInput): string {
+export function assembleSvg({ bounds, defs, background, body, styles }: SvgDocumentInput): string {
   const backdrop = background
     ? `<rect x="${bounds.x}" y="${bounds.y}" width="${bounds.width}" height="${bounds.height}" fill="${background}" />`
     : '';
 
-  const layers = [defs.markup(), backdrop, body.filter(Boolean).join('\n')].filter(Boolean);
+  // CDATA keeps the CSS literal. The rules are base64 and cleaned family
+  // names, so `]]>` cannot occur; it is stripped anyway.
+  const styleBlock = styles
+    ? `<defs><style><![CDATA[\n${styles.replace(/]]>/g, '')}\n]]></style></defs>`
+    : '';
+  const layers = [styleBlock, defs.markup(), backdrop, body.filter(Boolean).join('\n')].filter(Boolean);
 
   /**
    * `viewBox` and an explicit `width`/`height` together.

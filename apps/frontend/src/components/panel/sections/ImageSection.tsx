@@ -1,12 +1,14 @@
-import React from 'react';
-import { Sliders } from 'lucide-react';
-import { Accordion } from '../panelPrimitives';
-import { Slider } from '../../ui/Slider';
+import React, { useEffect, useState } from 'react';
+import { AlertTriangle, Contrast, Droplets, Palette, RotateCw, Sun } from 'lucide-react';
+import { Note, NumberField, PairRow, Row, Section } from '../grammar';
+import { retryUpload, canRetryUpload, useUploadState } from '../../../engine/media/upload';
+import { uploadIdFromSrc } from '../../../utils/pendingMedia';
+import { canEditObjects } from '../../../engine/model/permissions';
+import { MAX_ALT_LENGTH } from '../../../engine/model/schema';
 import {
   ADJUSTMENT_IDS,
   ADJUSTMENT_LABELS,
   ADJUSTMENT_MIN,
-  ADJUSTMENT_HINTS,
   ADJUSTMENT_UNITS,
   hasAdjustments,
   type AdjustmentId,
@@ -20,63 +22,118 @@ interface ImageSectionProps {
   affords: (id: AffordanceId) => boolean;
   setAdjustment: (id: AdjustmentId, value: number) => void;
   set: (updates: Partial<AnyNode>) => void;
+  /** One image selected: alt text and upload state describe one picture. */
+  single: boolean;
 }
 
-export const ImageSection: React.FC<ImageSectionProps> = ({
-  node,
-  adjustments,
-  affords,
-  setAdjustment,
-  set,
-}) => {
-  if (!affords('image-adjust') || node.type !== 'image') return null;
+const GLYPHS: Record<string, React.ReactNode> = {
+  brightness: <Sun size={12} />,
+  contrast: <Contrast size={12} />,
+  saturation: <Palette size={12} />,
+  blur: <Droplets size={12} />,
+};
 
+/** Alt text, written when the field is left or Enter is pressed. */
+const AltText: React.FC<{ value: string; onCommit: (alt: string | undefined) => void }> = ({ value, onCommit }) => {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const commit = () => {
+    const next = draft.trim().slice(0, MAX_ALT_LENGTH);
+    if (next !== value) onCommit(next || undefined);
+  };
   return (
-    <Accordion title="Adjust" icon={<Sliders size={13} />}>
-      {/*
-        Four sliders, and the differences between them are the design.
+    <textarea
+      className="pg-textarea"
+      aria-label="Alt text"
+      placeholder="Describe what the picture shows"
+      rows={2}
+      maxLength={MAX_ALT_LENGTH}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          commit();
+          e.currentTarget.blur();
+        } else if (e.key === 'Escape') {
+          setDraft(value);
+          e.currentTarget.blur();
+        }
+      }}
+    />
+  );
+};
 
-        `origin: 0` puts the fill's anchor at as-shot rather than at the bottom
-        of the range, so the bar shows the *departure* — which is the quantity —
-        instead of an absolute position on a scale nobody is thinking in. On
-        blur, where zero is also the minimum, that is the same thing and the
-        bar simply fills from the left.
-
-        The only mark is the origin, and it is the one that carries something:
-        as-shot is the value you keep coming back to and the one a double-click
-        returns to, and it was the single position on the track you could not
-        see. Marks at ±50 were tried and removed — three ticks cut a bar into
-        four equal segments, which reads as four separate things rather than
-        one continuous quantity, and "half a turn" is not a fact anybody needs
-        pointing out.
-
-        Shift gives a tenth of a step, which matters here more than anywhere
-        else in the app: the whole 200-point range is about a hundred pixels of
-        track, so a pixel of movement is two points and there was no way to ask
-        for one.
-      */}
-      {ADJUSTMENT_IDS.map((id) => (
-        <Slider
-          key={id}
-          label={ADJUSTMENT_LABELS[id]}
-          hint={ADJUSTMENT_HINTS[id]}
-          unit={ADJUSTMENT_UNITS[id]}
-          value={adjustments[id]}
-          min={ADJUSTMENT_MIN[id]}
-          max={100}
-          origin={0}
-          onChange={(v) => setAdjustment(id, v)}
-        />
-      ))}
-      {hasAdjustments(adjustments) && (
-        <button
-          type="button"
-          className="adjustments__reset"
-          onClick={() => set({ filters: undefined } as Partial<AnyNode>)}
-        >
-          Reset adjustments
+/** An upload that failed: why, and a Retry for editors while this device still has the bytes. */
+const UploadProblem: React.FC<{ src: string }> = ({ src }) => {
+  const state = useUploadState(src);
+  if (!state || state.phase !== 'failed') return null;
+  const id = uploadIdFromSrc(src);
+  const retryable = Boolean(id && canRetryUpload(id)) && canEditObjects();
+  return (
+    <div className="pg-alert" role="alert">
+      <AlertTriangle size={14} aria-hidden="true" className="pg-alert__icon" />
+      <p className="pg-alert__text">Upload failed: {state.reason}</p>
+      {retryable && id && (
+        <button type="button" className="pg-alert__action" onClick={() => void retryUpload(id)}>
+          <RotateCw size={12} aria-hidden="true" />
+          Retry
         </button>
       )}
-    </Accordion>
+    </div>
+  );
+};
+
+/**
+ * Image: its upload state and alt text, then Adjust (brightness, contrast,
+ * saturation and blur, two to a row; zero is as shot). Each field scrubs,
+ * previews live and is one undo step.
+ */
+export const ImageSection: React.FC<ImageSectionProps> = ({ node, adjustments, affords, setAdjustment, set, single }) => {
+  if (node.type !== 'image') return null;
+  const adjustable = affords('image-adjust');
+
+  const fields = ADJUSTMENT_IDS.map((id) => (
+    <NumberField
+      key={id}
+      label={ADJUSTMENT_LABELS[id]}
+      glyph={GLYPHS[id] ?? ADJUSTMENT_LABELS[id].charAt(0)}
+      unit={ADJUSTMENT_UNITS[id] || undefined}
+      min={ADJUSTMENT_MIN[id]}
+      max={100}
+      value={adjustments[id]}
+      onChange={(v) => setAdjustment(id, v)}
+    />
+  ));
+  const rows: React.ReactNode[] = [];
+  for (let i = 0; i < fields.length; i += 2) rows.push(<PairRow key={i}>{fields.slice(i, i + 2)}</PairRow>);
+
+  return (
+    <>
+      {single && (
+        <Section id="image" title="Image">
+          <UploadProblem src={node.src} />
+          <Row stack label="Alt text" hint="Read aloud by screen readers, and used in exports.">
+            <AltText value={node.alt ?? ''} onCommit={(alt) => set({ alt } as Partial<AnyNode>)} />
+          </Row>
+          {!node.alt && <Note>Without alt text, a screen reader announces only "image".</Note>}
+        </Section>
+      )}
+      {adjustable && (
+        <Section
+          id="adjust"
+          title="Adjust"
+          menu={
+            hasAdjustments(adjustments)
+              ? [{ kind: 'item', id: 'reset', label: 'Reset adjustments', onSelect: () => set({ filters: undefined } as Partial<AnyNode>) }]
+              : undefined
+          }
+        >
+          {rows}
+        </Section>
+      )}
+    </>
   );
 };

@@ -302,14 +302,25 @@ function edge(
  * For shapes whose corners are real. Each edge is its own subpath: the strokes
  * deliberately do not meet, and welding them into one contour would both lose
  * that and make the result fillable, which is not what this is.
+ *
+ * `asCurve` is for a run that is a flattened curve (a spline, an arc, a plot of
+ * a function): drawn edge by edge that comes out as a row of short dashes, so
+ * it is handed to `roughLoop` as one continuous stroke. The caller says so;
+ * nothing here guesses, because a dense data line looks like a curve and must
+ * keep every vertex.
+ *
+ * `passes` caps the laps. A dashed stroke takes one, because two laps with
+ * independent dash phases fill each other's gaps.
  */
 export function roughPolyline(
   points: readonly Point[],
-  options: { seed: number; closed?: boolean; level?: SketchLevel; width?: number }
+  options: { seed: number; closed?: boolean; level?: SketchLevel; width?: number; asCurve?: boolean; passes?: number }
 ): string {
-  const { seed, closed = true, level, width } = options;
+  const { seed, closed = true, level, width, asCurve, passes } = options;
   if (points.length < 2) return '';
-  const prof = penFor(level, width);
+  if (asCurve) return roughLoop(points, { seed, closed, level, width, passes });
+  const base = penFor(level, width);
+  const prof = passes ? { ...base, passes: Math.max(1, Math.min(base.passes, passes)) } : base;
   const rand = rng(seed);
   const out: string[] = [];
   const count = closed ? points.length : points.length - 1;
@@ -375,8 +386,8 @@ function spline(points: readonly Point[]): string {
  * And the displacement was in x and y, which on a curve is mostly *tangential*:
  * it slides samples along the outline, bunching and stretching them, rather
  * than varying the radius. A hand-drawn circle is out of round — the radius
- * drifts — it is not unevenly paced. `roughLoop` drifts along the normal with a
- * low-pass filtered offset, which is what "a hand does not shake, it drifts"
+ * drifts — it is not unevenly paced. `roughLoop` displaces along the normal by a
+ * few slow, seeded waves, which is what "a hand does not shake, it drifts"
  * means in arithmetic.
  *
  * So an ellipse is now a loop like any other closed curve, and the two are
@@ -388,7 +399,7 @@ export function roughEllipse(
   cy: number,
   rx: number,
   ry: number,
-  options: { seed: number; level?: SketchLevel; width?: number }
+  options: { seed: number; level?: SketchLevel; width?: number; passes?: number }
 ): string {
   /**
    * Forty-eight samples of the true ellipse, handed to the loop sketcher.
@@ -399,43 +410,61 @@ export function roughEllipse(
    * the curve. It is the same ring the hachure fills against, which is why the
    * shading and the outline agree about where the edge is.
    */
-  return roughLoop(ellipseRing(cx, cy, rx, ry), { ...options, closed: true });
+  // A thin ellipse needs more samples, or its tips flatten into false corners.
+  const ratio = Math.max(rx, ry) / Math.max(Math.min(rx, ry), 1e-6);
+  const steps = Math.min(384, 48 * Math.max(1, Math.ceil(Math.sqrt(ratio))));
+  return roughLoop(ellipseRing(cx, cy, rx, ry, steps), { ...options, closed: true });
 }
 
 /**
  * A closed curve of any shape, drawn as a wandering loop.
  *
- * ## Why a curve cannot go through `roughPolyline`
+ * A curve arrives here flattened into many short segments, none of which is a
+ * corner, so it cannot go through the edge-by-edge sketcher, which overshoots
+ * every vertex. Instead the outline is resampled by arc length, each sample is
+ * pushed along the outline's normal by a smooth offset, and one continuous
+ * spline is drawn through the result per pass.
  *
- * That function treats every vertex as a corner and overshoots past it, which
- * is exactly right for a rectangle or a hexagon where the corners are real. A
- * curve arrives here already flattened into a hundred-odd tiny segments, none
- * of which is a corner — so it overshot a hundred times, and a heart came out
- * bristling. Same reason `roughEllipse` exists rather than sketching a
- * hundred-sided polygon.
+ * ## The offset
  *
- * This is `roughEllipse` generalised: sample the outline evenly *by arc
- * length*, jitter the samples, run past the start, and spline through them.
- * Evenly by arc length rather than by index is what keeps the wobble the same
- * size everywhere — a flattener puts its points close together on tight
- * curvature and far apart on straights, so sampling by index would make the
- * lobes of a heart shake and its long sides lie still.
+ * Each pass's offset is two low harmonics with seeded phases, weighted toward
+ * the slowest, so a lap wanders wide two or three times and comes back with
+ * no shake and no S-bends along a straight side, at any size. A very short run
+ * uses only the slowest.
+ * On a closed loop the harmonics are whole cycles per lap, so a lap meets its
+ * own start exactly.
+ *
+ * The wander is capped by the outline's local radius of curvature, so a tight
+ * end or a small ring stays round instead of wobbling out of shape, and the
+ * cap is smoothed along the run so it never steps.
+ *
+ * ## Sampling
+ *
+ * Samples are evenly spaced by arc length, and an interval over which the
+ * outline turns more than 25° is subdivided, so a capsule's ends and a thin
+ * ellipse's tips are followed rather than cut across.
+ *
+ * Real corners (a turn over 55°) are placed twice, so the spline arrives along
+ * one direction and leaves along the other. A closed outline with corners
+ * starts and ends its lap *at* one of them, which is where a hand puts the pen
+ * down on a heart or a cloud; the run past the start continues into the next
+ * edge rather than curling at the cusp. A closed outline without corners starts
+ * anywhere, landing just beside the line and lifting off a little past it.
+ *
+ * An open run tapers its offset to zero at both ends, so a connector still
+ * starts and ends exactly on its anchors.
  */
 export function roughLoop(
   outline: readonly Point[],
-  options: { seed: number; level?: SketchLevel; closed?: boolean; width?: number }
+  options: { seed: number; level?: SketchLevel; closed?: boolean; width?: number; passes?: number }
 ): string {
   const closed = options.closed !== false;
   if (outline.length < (closed ? 3 : 2)) return '';
   const prof = penFor(options.level, options.width);
+  const passes = Math.max(1, Math.min(prof.passes, options.passes ?? prof.passes));
   const rand = rng(options.seed);
 
-  // Cumulative arc length around the closed loop, so a position can be asked
-  // for as a distance rather than as an index.
   const n = outline.length;
-  // A closed run has one more segment than it has points — the one that gets
-  // back to the start. An open one does not, and walking off the end of it is
-  // how a hand-drawn line would acquire a stroke back to where it began.
   const spans = closed ? n : n - 1;
   const cum: number[] = [0];
   for (let i = 1; i <= spans; i += 1) {
@@ -444,29 +473,271 @@ export function roughLoop(
     cum.push(cum[i - 1] + Math.hypot(b.x - a.x, b.y - a.y));
   }
   const total = cum[spans];
-  if (total === 0) return '';
+  if (!(total > 0)) return '';
+
+  const { corners, turnAt, turnTotal } = turningOf(outline, closed, cum);
+
+  /** Segment index containing arc length `d`, which lies in [0, total]. */
+  const segmentAt = (d: number): number => {
+    let lo = 1;
+    let hi = spans;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (cum[mid] < d) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  const normalOf = (i: number): { nx: number; ny: number } => {
+    const a = outline[(i - 1 + n) % n];
+    const b = outline[i % n];
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    return { nx: -(b.y - a.y) / len, ny: (b.x - a.x) / len };
+  };
+  const wrap = (distance: number): number => {
+    if (!closed) return Math.max(0, Math.min(total, distance));
+    const d = distance % total;
+    return d < 0 ? d + total : d;
+  };
+  /** Turning accumulated from the start of the run up to an unwrapped distance. */
+  const turnUpTo = (distance: number): number => {
+    if (!closed) return turnAt(Math.max(0, Math.min(total, distance)));
+    const laps = Math.floor(distance / total);
+    return laps * turnTotal + turnAt(distance - laps * total);
+  };
+
+  /** A point on the outline with its unit normal. */
+  const at = (distance: number): Point & { nx: number; ny: number } => {
+    const d = wrap(distance);
+    const i = segmentAt(d);
+    const a = outline[(i - 1) % n];
+    const b = outline[i % n];
+    const span = cum[i] - cum[i - 1];
+    const t = span === 0 ? 0 : (d - cum[i - 1]) / span;
+    const { nx, ny } = normalOf(i);
+    return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, nx, ny };
+  };
+  /** A corner vertex, pushed along the bisector of its two edges. */
+  const atCorner = (index: number): Point & { nx: number; ny: number } => {
+    const into = normalOf(index === 0 && closed ? spans : index);
+    const out = normalOf(closed ? (index % spans) + 1 : Math.min(spans, index + 1));
+    const sx = into.nx + out.nx;
+    const sy = into.ny + out.ny;
+    const sl = Math.hypot(sx, sy);
+    // Scaled so offset strokes stay parallel to both edges through the turn,
+    // capped so a hairpin does not throw the point far out.
+    const scale = sl > 1e-6 ? Math.min(2, 2 / sl) / sl : 0;
+    return { ...outline[index % n], nx: sx * scale, ny: sy * scale };
+  };
+
+  let cx = 0;
+  let cy = 0;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of outline) {
+    cx += p.x;
+    cy += p.y;
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  cx /= n;
+  cy /= n;
+  // A closed shape's thinner side; an open run has no thickness to protect.
+  const thickness = closed ? Math.min(maxX - minX, maxY - minY) : Infinity;
+
+  /** Even spacing; density follows size, never the sketch level. */
+  const samples = Math.max(20, Math.min(80, Math.round(total / 22)));
+  const step = total / samples;
 
   /**
-   * Where the run genuinely turns, in arc length.
-   *
-   * ## Why this is measured rather than passed in
-   *
-   * The drift sampler draws one continuous stroke through arc-length samples,
-   * which is what a curve wants and what a *corner* does not: a spline through
-   * samples either side of a right angle rounds it off over a sample's width.
-   * So a run that mixes the two — a multi-point line with three sharp turns and
-   * one bent segment — had no correct sketcher. The polyline one bristled every
-   * sample of the arc; this one flattened every corner.
-   *
-   * A corner is a local property of the outline, so it is found here rather
-   * than plumbed down from a caller who would have to compute it from the
-   * geometry and keep it in step. Forty degrees separates them cleanly: a
-   * densely sampled curve turns a few degrees per sample, and a real corner in
-   * a drawn line is nearer ninety. It also finds the cusp between a heart's two
-   * lobes, which this function has always rounded off.
+   * How far the pen strays (RMS), capped by the run and by the shape's
+   * thickness so small and thin shapes are drawn with a steadier hand.
    */
-  const TURN = Math.cos((40 * Math.PI) / 180);
-  const cornerAt: number[] = [];
+  const amplitude = Math.min(prof.offset * 0.55, total / 90, thickness * 0.05);
+  /** How far apart two laps sit on average, so the second is visible. */
+  const separation = Math.min(4, Math.max(0.5, options.width ?? NIB_REFERENCE) * 0.5);
+
+  /** Bows per lap: whole cycles on a loop; fewer on a short run. */
+  const harmonics: number[] = closed
+    ? total < 150 ? [2] : [2, 3]
+    : (() => {
+        const base = Math.max(0.6, Math.min(3, total / 240));
+        return total < 150 ? [base] : [base, base * 1.7];
+      })();
+
+  /** A smooth seeded wave of unit RMS along the run. */
+  const wave = (): ((d: number) => number) => {
+    const terms = harmonics.map((k) => ({
+      k,
+      amp: (0.6 + rand() * 0.8) / (k * k),
+      phase: rand() * Math.PI * 2,
+    }));
+    const rms = Math.sqrt(terms.reduce((sum, term) => sum + (term.amp * term.amp) / 2, 0)) || 1;
+    return (d: number) => {
+      let v = 0;
+      for (const term of terms) v += term.amp * Math.sin((2 * Math.PI * term.k * d) / total + term.phase);
+      return v / rms;
+    };
+  };
+
+  /** Local radius of curvature around an unwrapped distance. */
+  const window = Math.max(step, (2 * total) / spans);
+  const radiusAt = (distance: number): number => {
+    const turned = turnUpTo(distance + window / 2) - turnUpTo(distance - window / 2);
+    return turned > 1e-6 ? window / turned : Infinity;
+  };
+
+  const ramp = Math.min(total / 2, 36);
+  const smoothstep = (x: number) => {
+    const t = Math.max(0, Math.min(1, x));
+    return t * t * (3 - 2 * t);
+  };
+  const envelope = (s: number) => (closed ? 1 : smoothstep(s / ramp) * smoothstep((total - s) / ramp));
+
+  const tailBase = Math.max(6, Math.min(30, total * 0.03));
+  const tail = closed ? tailBase * (0.5 + 0.3 * prof.overshoot) : 0;
+  // Stops across a seam, counted from the shape alone so every level samples a
+  // lap equally densely; the level only changes how long the seam is.
+  const seamStops = Math.max(2, Math.ceil(tailBase / Math.max(step / 2, 1)));
+  const kickBase = (0.6 + 0.5 * prof.overshoot) * Math.max(separation, amplitude);
+  const STOP_BUDGET = 200;
+  const SUBDIVIDE = (25 * Math.PI) / 180;
+  const PIECE = (12 * Math.PI) / 180;
+
+  const laps: string[] = [];
+  for (let pass = 0; pass < passes; pass += 1) {
+    const offset = wave();
+    const swell = closed ? 1 + jitter(0.006, rand) : 1;
+    const bias = passes > 1 ? (pass % 2 === 0 ? -0.5 : 0.5) * separation : 0;
+    const startPick = rand();
+    const startCorner = closed && corners.length > 0 ? corners[Math.floor(startPick * corners.length)] : null;
+    const from = startCorner ? startCorner.d : closed ? startPick * total : 0;
+    const side = rand() < 0.5 ? -1 : 1;
+    // Starting at a corner the pen lands on it; elsewhere it lands just beside
+    // the line. Either way it lifts off a little past where it began.
+    const kickIn = startCorner ? 0 : side * kickBase * (0.2 + rand() * 0.15);
+    const kickOut = -side * kickBase * (0.35 + rand() * 0.25);
+    const lapLength = total + tail;
+
+    // Stops along this lap, in distance from `from`.
+    type Stop = { s: number; corner: number };
+    const NONE = -1;
+    const regular: number[] = [];
+    for (let i = 0; i <= samples; i += 1) regular.push(i * step);
+    if (closed) {
+      for (let j = 1; j < seamStops; j += 1) regular.push((tailBase * j) / seamStops);
+      for (let j = 1; j <= seamStops; j += 1) regular.push(total + (tail * j) / seamStops);
+    }
+    regular.sort((a, b) => a - b);
+
+    // Subdivide wherever the outline turns sharply between two stops.
+    const fine: number[] = [];
+    let budget = STOP_BUDGET - regular.length - corners.length * 4;
+    for (let i = 0; i < regular.length; i += 1) {
+      const a = regular[i];
+      fine.push(a);
+      const b = regular[i + 1];
+      if (b === undefined || b - a < 1e-9 || budget <= 0) continue;
+      const turned = turnUpTo(from + b) - turnUpTo(from + a);
+      if (turned > SUBDIVIDE) {
+        const pieces = Math.min(16, budget + 1, Math.ceil(turned / PIECE));
+        for (let j = 1; j < pieces; j += 1) fine.push(a + ((b - a) * j) / pieces);
+        budget -= pieces - 1;
+      }
+    }
+
+    const cornerStops: Stop[] = [];
+    for (const c of corners) {
+      const rel = closed ? (((c.d - from) % total) + total) % total : c.d;
+      if (closed && (rel < 1e-6 || total - rel < 1e-6)) {
+        cornerStops.push({ s: 0, corner: c.index }, { s: total, corner: c.index });
+        continue;
+      }
+      if (rel <= 0 || rel >= total) continue;
+      cornerStops.push({ s: rel, corner: c.index });
+      if (closed && rel <= tail) cornerStops.push({ s: total + rel, corner: c.index });
+    }
+
+    // Regular stops give way to a corner within half a unit of it.
+    const merged: Stop[] = cornerStops.slice();
+    for (const s of fine) {
+      if (s > lapLength + 1e-9) continue;
+      if (cornerStops.some((c) => Math.abs(c.s - s) < 0.5)) continue;
+      merged.push({ s, corner: NONE });
+    }
+    merged.sort((p, q) => p.s - q.s);
+
+    const stops: Stop[] = [];
+    for (const stop of merged) {
+      const prev = stops[stops.length - 1];
+      if (prev && stop.s - prev.s < 0.05) {
+        if (stop.corner !== NONE) stops[stops.length - 1] = stop;
+        continue;
+      }
+      stops.push(stop);
+    }
+
+    // The wander cap at each stop, smoothed so it never steps.
+    let cap = stops.map((stop) => Math.min(amplitude, 0.04 * radiusAt(from + stop.s)));
+    // Spread a tight spot one stop either way, then blur, so the cap ramps
+    // down before a tight end rather than stepping at it.
+    for (let round = 0; round < 2; round += 1) {
+      const prev = cap;
+      cap = prev.map((c, i) => Math.min(c, prev[Math.max(0, i - 1)], prev[Math.min(prev.length - 1, i + 1)]));
+    }
+    for (let round = 0; round < 3; round += 1) {
+      const prev = cap.slice();
+      for (let i = 0; i < cap.length; i += 1) {
+        const l = prev[Math.max(0, i - 1)];
+        const r2 = prev[Math.min(cap.length - 1, i + 1)];
+        cap[i] = Math.min(prev[i], (l + 2 * prev[i] + r2) / 4);
+      }
+    }
+
+    const pts: Point[] = [];
+    stops.forEach((stop, i) => {
+      const p = stop.corner === NONE ? at(from + stop.s) : atCorner(stop.corner);
+      const d = wrap(from + stop.s);
+      let o = (bias + offset(d) * cap[i]) * envelope(stop.s);
+      if (closed) {
+        // Shrunk where the curvature cap is, so a seam on a tight end stays round.
+        const tight = amplitude > 0 ? Math.min(1, cap[i] / amplitude) : 1;
+        if (stop.s < tailBase) o += kickIn * tight * (1 - stop.s / tailBase) ** 2;
+        if (stop.s > total) o += kickOut * tight * ((stop.s - total) / (tail || 1)) ** 2;
+      }
+      const x = cx + (p.x - cx) * swell + p.nx * o;
+      const y = cy + (p.y - cy) * swell + p.ny * o;
+      pts.push({ x, y });
+      if (stop.corner !== NONE) pts.push({ x, y });
+    });
+    laps.push(splineOpen(pts));
+  }
+  return laps.join(' ');
+}
+
+/**
+ * Where an outline turns: its real corners (a turn over 55° at one vertex) and
+ * the accumulated turning of everything else, as a function of arc length.
+ */
+function turningOf(
+  outline: readonly Point[],
+  closed: boolean,
+  cum: readonly number[]
+): {
+  corners: Array<{ d: number; index: number }>;
+  turnAt: (d: number) => number;
+  turnTotal: number;
+} {
+  const n = outline.length;
+  const CORNER = (55 * Math.PI) / 180;
+  const corners: Array<{ d: number; index: number }> = [];
+  const at: number[] = [];
+  const sum: number[] = [];
+  let running = 0;
   for (let i = closed ? 0 : 1; i < (closed ? n : n - 1); i += 1) {
     const before = outline[(i - 1 + n) % n];
     const here = outline[i];
@@ -475,288 +746,99 @@ export function roughLoop(
     const ay = here.y - before.y;
     const bx = after.x - here.x;
     const by = after.y - here.y;
-    const la = Math.hypot(ax, ay);
-    const lb = Math.hypot(bx, by);
-    if (la < 1e-9 || lb < 1e-9) continue;
-    if ((ax * bx + ay * by) / (la * lb) < TURN) cornerAt.push(cum[i]);
+    if (Math.hypot(ax, ay) < 1e-9 || Math.hypot(bx, by) < 1e-9) continue;
+    const turn = Math.abs(Math.atan2(ax * by - ay * bx, ax * bx + ay * by));
+    if (turn > CORNER) {
+      corners.push({ d: cum[i], index: i });
+      continue;
+    }
+    running += turn;
+    at.push(cum[i]);
+    sum.push(running);
   }
-
-  /** A point on the outline, with the unit normal there. */
-  const at = (distance: number): Point & { nx: number; ny: number } => {
-    // Clamped on an open run, wrapped on a closed one: running past the end of
-    // a line has to stop at the end, not reappear at its beginning.
-    let d = closed ? distance % total : Math.max(0, Math.min(total, distance));
-    if (d < 0) d += total;
-    // Linear scan is fine: this runs once per sample per pass, a few dozen
-    // times, and a binary search here would be more code than it saves.
-    let i = 1;
-    while (i <= spans && cum[i] < d) i += 1;
-    const a = outline[(i - 1) % n];
-    const b = outline[i % n];
-    const span = cum[i] - cum[i - 1];
-    const t = span === 0 ? 0 : (d - cum[i - 1]) / span;
-    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-    return {
-      x: a.x + (b.x - a.x) * t,
-      y: a.y + (b.y - a.y) * t,
-      // Perpendicular to the run, which is the only direction a lap can be
-      // moved in without changing where along the shape it is.
-      nx: -(b.y - a.y) / len,
-      ny: (b.x - a.x) / len,
-    };
+  const turnAt = (d: number): number => {
+    let lo = 0;
+    let hi = at.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (at[mid] <= d) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo === 0 ? 0 : sum[lo - 1];
   };
-
-  // The centroid, so each pass can breathe in and out around the shape the way
-  // `roughEllipse` varies its radii.
-  let cx = 0;
-  let cy = 0;
-  for (const p of outline) {
-    cx += p.x;
-    cy += p.y;
-  }
-  cx /= n;
-  cy /= n;
-  // An open run has no interior to breathe in and out of, so the swell is
-  // suppressed rather than pulling the line toward an arbitrary centroid.
-  const swellable = closed;
-
-  /**
-   * How many samples the loop is drawn from.
-   *
-   * `prof.steps` is a *per-edge* count in the polyline sketcher, so it is far
-   * too few for a whole outline. Scaling with the shape's size keeps the
-   * wobble at a consistent physical wavelength — a large heart gets more
-   * samples rather than the same number stretched into long, mechanical bows.
-   */
-  /**
-   * Sample density and wobble amplitude are independent, and conflating them
-   * is what made the first version of this both squiggly *and* a poor heart.
-   *
-   * Density decides how faithfully the lap follows the true outline: too few
-   * samples and the spline cuts across the cusp between the lobes and rounds
-   * off the tip, so the shape stops being a heart before it starts looking
-   * hand-drawn. Amplitude decides how far the pen wanders, and is `prof.offset`
-   * alone. Sampling generously and letting the drift below do the smoothing
-   * gives a line that is both faithful and calm — which is what a confident
-   * hand-drawn heart is.
-   */
-  const samples = Math.max(20, Math.min(80, Math.round(total / 22)));
-  const step = total / samples;
-
-  /**
-   * A drifting offset rather than an independent one per sample.
-   *
-   * Jittering each sample on its own is white noise: every point pulls a fresh
-   * random number, so the line changes direction at every control point and the
-   * result is a *shaky* line — which is what a heart came out as. A hand does
-   * not shake; it drifts. Its errors are slow and correlated, so the stroke
-   * wanders wide of the true curve for a while and then comes back.
-   *
-   * One pole of low-pass filtering gives exactly that: each offset is mostly
-   * the previous one with a little new noise mixed in. The wobble keeps its
-   * amplitude and loses its frequency, which is the whole difference between
-   * "drawn by hand" and "drawn by someone nervous".
-   */
-  /**
-   * How far the pen wanders before it comes back, in world units.
-   *
-   * The retention is derived from it rather than being a fixed number, so the
-   * wobble keeps the same physical wavelength however densely the outline is
-   * sampled. A constant retention would tie the wavelength to the sample
-   * count, and raising the density to make the shape faithful — which is
-   * exactly what the note above does — would silently make the line shakier.
-   */
-  /**
-   * How many slow bows a lap makes, rather than how long each one is.
-   *
-   * ## The bug: a fixed wavelength
-   *
-   * This was 58 world units, absolute. So the number of undulations was the
-   * shape's perimeter divided by 58 — a 240px circle got **thirteen** of them,
-   * and a small one got three. Thirteen deviations round a ring is not a
-   * drawn circle, it is a noisy one: the eye reads the individual wobbles
-   * rather than the stroke, which is exactly "small rough lines that make up
-   * the curve".
-   *
-   * Look at what the corner sketcher does, which nobody complains about: a
-   * rectangle is four edges and each edge gets **one** bow. Four slow
-   * deviations per lap. A circle should be the same — an artist's ring wanders
-   * wide two or three times and comes back, and the second pass separates and
-   * re-crosses it a few times over its length. That is the "continuous
-   * imperfect stroke" this was missing, and it is a *frequency* problem, not
-   * an amplitude one.
-   *
-   * So the wavelength is a fraction of the run: about three and a half bows,
-   * whatever the shape's size, with a floor so a very small shape does not go
-   * rigid.
-   */
-  const wander = Math.max(70, total / 3.5);
-  /**
-   * How far the stroke strays, once the frequency stopped deciding it.
-   *
-   * Halved from the first attempt at this. With thirteen wobbles a lap the
-   * amplitude was doing the work of making a circle read as drawn; with three
-   * slow bows it is doing the work of making it read as *wonky*, which is a
-   * different thing and not the one wanted. A hand is confident and slightly
-   * off, not unsteady — the deviation should be visible when looked for and
-   * invisible when the shape is being read.
-   */
-  const WOBBLE = 0.7;
-  /**
-   * How far the two laps sit apart, which is a different quantity from how far
-   * either of them strays.
-   *
-   * ## Why the drift alone could not do this
-   *
-   * The gone-over look — two strokes that separate, cross, and separate again —
-   * was left entirely to chance: each pass started at a random offset and
-   * drifted independently, so on a good seed the laps parted and on a bad one
-   * they sat on top of each other and the shape read as a single slightly
-   * furry line. At a two-pixel stroke the typical drift is about one unit, so
-   * *most* seeds were bad ones: the second pass was hidden underneath the
-   * first, and the single most recognisable thing about a hand-drawn shape
-   * was invisible.
-   *
-   * Turning the drift up would fix the doubling and break the shape — that is
-   * the same amplitude that was just halved for making curves look wonky
-   * rather than drawn. They are genuinely two knobs. Straying is how far the
-   * pen is from where it meant to be, and too much of it looks unsteady.
-   * Separation is how far the second attempt is from the first, and it costs
-   * the shape nothing: both laps stay equally faithful, they simply straddle
-   * the true outline instead of hiding one another. A hand going over a line
-   * does exactly this — it does not retrace, it leans to one side.
-   *
-   * Tied to the pen because that is what has to be cleared. Two strokes half a
-   * nib apart are one stroke; a nib apart, they are two.
-   *
-   * ## And why it is not a constant offset
-   *
-   * The first version of this leaned each pass a fixed distance off the
-   * normal, and a fixed normal offset is the definition of a parallel curve —
-   * so the pair never met, and two strokes that hold a constant gap for a
-   * whole lap read as a ruled double line rather than as one line drawn twice.
-   * The separation has to *vary*: the laps part, cross, and part the other
-   * way, a few times over the run. So the lean drifts, through the same
-   * low-pass filter the wander uses, around a small per-pass bias — the bias
-   * decides which side each lap spends most of its time on, and the drift is
-   * what makes them cross.
-   */
-  const separation = Math.min(4, Math.max(0.5, options.width ?? NIB_REFERENCE) * 0.5);
-  const retention = Math.exp(-step / wander);
-  /**
-   * Amplitude that does not move when the frequency does.
-   *
-   * An AR(1) process `x = a·x₋₁ + b·e` has a stationary spread of
-   * `b·σ / √(1 − a²)`. The old form used `b = (1 − a)·2.4`, so raising the
-   * retention — which is the whole of the fix above — would silently have
-   * flattened the wobble to nothing, and the fix would have looked like it did
-   * not work. Taking `b = √(1 − a²)` cancels the denominator exactly: the
-   * spread is then `2·σ` at any retention, and the two parameters are finally
-   * independent, which is the same separation of density from amplitude that
-   * this file has already had to make twice.
-   */
-  const drift = (previous: number, amount: number): number =>
-    previous * retention + jitter(amount, rand) * Math.sqrt(1 - retention * retention) * WOBBLE;
-
-  const laps: string[] = [];
-  for (let pass = 0; pass < prof.passes; pass += 1) {
-    // A whole-shape swell, from the centroid, so the second pass is a slightly
-    // different heart rather than the same one traced twice.
-    const swell = swellable ? 1 + jitter(0.008, rand) : 1;
-    /**
-     * Which side of the true outline this lap spends most of its time on.
-     *
-     * Alternating rather than random: two passes that both happen to favour
-     * the same side are the merged pair this exists to prevent, and a coin
-     * flip gets that half the time. Only a bias, though — well under the
-     * lean's own swing below, so the laps still cross.
-     */
-    const bias = prof.passes > 1 ? (pass % 2 === 0 ? -0.5 : 0.5) * separation : 0;
-    let lean = bias;
-    // A lap of a closed shape can start anywhere; an open run starts at its
-    // start, because that is where the pen was put down.
-    const from = closed ? rand() * total : 0;
-    const overlap = step * (0.25 + prof.overshoot * 0.4) * (0.7 + rand() * 0.6);
-
-    const pts: Point[] = [];
-    // Seeded from the same noise the drift is made of, so a lap does not
-    // always begin exactly on the true curve.
-    let ox = jitter(prof.offset, rand);
-    let oy = jitter(prof.offset, rand);
-    const place = (distance: number, pull: number) => {
-      const p = at(distance);
-      const sx = cx + (p.x - cx) * swell * pull;
-      const sy = cy + (p.y - cy) * swell * pull;
-      ox = drift(ox, prof.offset);
-      oy = drift(oy, prof.offset);
-      // Around the bias rather than around zero, so a lap returns to its own
-      // side rather than to the true outline.
-      lean = drift(lean - bias, separation) + bias;
-      pts.push({ x: sx + ox + p.nx * lean, y: sy + oy + p.ny * lean });
-    };
-
-    /**
-     * The sample distances, with the run's real corners forced in among them.
-     *
-     * A corner is placed **twice**. In a Catmull-Rom the tangent at a point
-     * comes from the vector between its neighbours, so a repeated point makes
-     * the tangent on one side the incoming direction and on the other the
-     * outgoing one — the curve arrives, stops, and leaves in a new direction,
-     * which is a corner. Without it the spline cuts the turn over a sample's
-     * width and a hand-drawn zigzag loses the thing that makes it a zigzag.
-     *
-     * Sorted rather than interleaved by construction: a corner can fall
-     * anywhere between two samples, and the lap starts at a random distance on
-     * a closed run, so the two sequences do not line up.
-     */
-    const stops: Array<{ d: number; corner: boolean }> = [];
-    for (let i = 0; i < samples; i += 1) stops.push({ d: from + i * step, corner: false });
-    for (const c of cornerAt) {
-      // Relative to where this lap began, so a corner lands in the right place
-      // whichever point the pen was put down at.
-      const rel = closed ? (((c - from) % total) + total) % total : c - from;
-      if (rel > step * 0.25 && rel < total - step * 0.25) {
-        stops.push({ d: from + rel, corner: true });
-      }
-    }
-    stops.sort((p, q) => p.d - q.d);
-    for (const stop of stops) {
-      place(stop.d, 1);
-      // The second copy takes the same drift the first did -- a corner is one
-      // place, not two a hair apart.
-      if (stop.corner) pts.push({ ...pts[pts.length - 1] });
-    }
-
-    if (closed) {
-      // Past its own beginning, then pulled very slightly inward, so the
-      // crossing reads as a hand closing a loop rather than as a bulge.
-      place(from + total + overlap * 0.5, 1);
-      place(from + overlap, 0.98);
-    } else {
-      // An open run ends *on* its end. Overshooting a connector would push its
-      // line out past the arrowhead it is supposed to stop under.
-      place(total, 1);
-    }
-
-    laps.push(splineOpen(pts));
-  }
-  return laps.join(' ');
+  return { corners, turnAt, turnTotal: running };
 }
 
-/** The spline above, left open — an ellipse's lap must not snap shut. */
+/**
+ * Whether a run of points looks like a flattened curve: four consecutive
+ * vertices that each turn under 20° between edges shorter than a twelfth of
+ * the run. Relative to the run, so a shape is classified the same at any size.
+ * A fallback for callers that cannot say; every caller in this codebase that
+ * knows passes the answer explicitly.
+ */
+export function isSampledCurve(points: readonly Point[], closed: boolean): boolean {
+  const n = points.length;
+  if (n < 5) return false;
+  let perimeter = 0;
+  for (let i = 1; i < (closed ? n + 1 : n); i += 1) {
+    const a = points[i - 1];
+    const b = points[i % n];
+    perimeter += Math.hypot(b.x - a.x, b.y - a.y);
+  }
+  const SMOOTH = Math.cos((20 * Math.PI) / 180);
+  const SHORT = perimeter / 12;
+  let run = 0;
+  const limit = closed ? n + 3 : n - 1;
+  for (let k = 1; k < limit; k += 1) {
+    const before = points[(k - 1) % n];
+    const here = points[k % n];
+    const after = points[(k + 1) % n];
+    const ax = here.x - before.x;
+    const ay = here.y - before.y;
+    const bx = after.x - here.x;
+    const by = after.y - here.y;
+    const la = Math.hypot(ax, ay);
+    const lb = Math.hypot(bx, by);
+    const smooth =
+      la > 1e-9 && lb > 1e-9 && la < SHORT && lb < SHORT && (ax * bx + ay * by) / (la * lb) > SMOOTH;
+    run = smooth ? run + 1 : 0;
+    if (run >= 4) return true;
+  }
+  return false;
+}
+
+/**
+ * An open spline through `points`, as cubics.
+ *
+ * Catmull-Rom with tangents weighted by the neighbouring spacing, so samples
+ * that are unevenly spaced (the fine stops at a lap's seam) do not make the
+ * curve overshoot, and a repeated point — a corner — makes the curve leave
+ * along its outgoing chord. With even spacing this is the standard
+ * Catmull-Rom construction.
+ */
 function splineOpen(points: readonly Point[]): string {
   const n = points.length;
-  if (n < 3) return '';
+  if (n < 2) return '';
+  if (n === 2) return `M ${r(points[0].x)} ${r(points[0].y)} L ${r(points[1].x)} ${r(points[1].y)}`;
   const at = (i: number) => points[Math.max(0, Math.min(n - 1, i))];
+  const dist = (a: Point, b: Point) => Math.hypot(b.x - a.x, b.y - a.y);
   let d = `M ${r(points[0].x)} ${r(points[0].y)}`;
   for (let i = 0; i < n - 1; i++) {
     const p0 = at(i - 1);
     const p1 = at(i);
     const p2 = at(i + 1);
     const p3 = at(i + 2);
+    const d12 = dist(p1, p2);
+    if (d12 < 1e-9) continue;
+    const w1 = dist(p0, p1) + d12;
+    const w2 = d12 + dist(p2, p3);
+    const t1x = w1 > 1e-9 ? (p2.x - p0.x) / w1 : 0;
+    const t1y = w1 > 1e-9 ? (p2.y - p0.y) / w1 : 0;
+    const t2x = w2 > 1e-9 ? (p3.x - p1.x) / w2 : 0;
+    const t2y = w2 > 1e-9 ? (p3.y - p1.y) / w2 : 0;
     d +=
-      ` C ${r(p1.x + (p2.x - p0.x) / 6)} ${r(p1.y + (p2.y - p0.y) / 6)}` +
-      ` ${r(p2.x - (p3.x - p1.x) / 6)} ${r(p2.y - (p3.y - p1.y) / 6)}` +
+      ` C ${r(p1.x + (t1x * d12) / 3)} ${r(p1.y + (t1y * d12) / 3)}` +
+      ` ${r(p2.x - (t2x * d12) / 3)} ${r(p2.y - (t2y * d12) / 3)}` +
       ` ${r(p2.x)} ${r(p2.y)}`;
   }
   return d;
@@ -1373,6 +1455,64 @@ export function shapeFill(
 }
 
 /**
+ * A sampled ring displaced along its normals by a few slow, closed waves —
+ * the fill boundary that matches `roughLoop`'s outline. The wander is capped
+ * by the local radius of curvature, smoothed round the ring, so small rings
+ * stay round and cusps stay sharp.
+ */
+function smoothSilhouette(points: readonly Point[], prof: SketchProfile, rand: Rand): string {
+  const n = points.length;
+  const cum: number[] = [0];
+  for (let i = 1; i <= n; i += 1) {
+    const a = points[i - 1];
+    const b = points[i % n];
+    cum.push(cum[i - 1] + Math.hypot(b.x - a.x, b.y - a.y));
+  }
+  const total = cum[n];
+  if (!(total > 0)) return '';
+  const amplitude = Math.min(prof.offset * 0.45, total / 90);
+  const harmonics = total < 150 ? [2] : [2, 3];
+  const terms = harmonics.map((k) => ({ k, amp: (0.6 + rand() * 0.8) / (k * k), phase: rand() * Math.PI * 2 }));
+  const rms = Math.sqrt(terms.reduce((sum, t) => sum + (t.amp * t.amp) / 2, 0)) || 1;
+
+  const normals: Array<{ nx: number; ny: number }> = [];
+  let cap: number[] = [];
+  for (let i = 0; i < n; i += 1) {
+    const before = points[(i - 1 + n) % n];
+    const here = points[i];
+    const after = points[(i + 1) % n];
+    const ax = here.x - before.x;
+    const ay = here.y - before.y;
+    const bx = after.x - here.x;
+    const by = after.y - here.y;
+    const la = Math.hypot(ax, ay);
+    const lb = Math.hypot(bx, by);
+    const tx = after.x - before.x;
+    const ty = after.y - before.y;
+    const tl = Math.hypot(tx, ty) || 1;
+    normals.push({ nx: -ty / tl, ny: tx / tl });
+    const turn = la > 1e-9 && lb > 1e-9 ? Math.abs(Math.atan2(ax * by - ay * bx, ax * bx + ay * by)) : 0;
+    const radius = turn > 1e-6 ? (la + lb) / 2 / turn : Infinity;
+    cap.push(Math.min(amplitude, 0.04 * radius));
+  }
+  for (let round = 0; round < 3; round += 1) {
+    const prev = cap;
+    cap = prev.map((c, i) => Math.min(c, (prev[(i - 1 + n) % n] + 2 * c + prev[(i + 1) % n]) / 4));
+  }
+
+  let d = '';
+  for (let i = 0; i < n; i += 1) {
+    let v = 0;
+    for (const t of terms) v += t.amp * Math.sin((2 * Math.PI * t.k * cum[i]) / total + t.phase);
+    const o = (v / rms) * cap[i];
+    const x = points[i].x + normals[i].nx * o;
+    const y = points[i].y + normals[i].ny * o;
+    d += `${i === 0 ? 'M' : ' L'} ${r(x)} ${r(y)}`;
+  }
+  return d + ' Z';
+}
+
+/**
  * The shape's silhouette, as a hand would enclose it — one closed wobbly path.
  *
  * ## Why a solid fill needs its own outline
@@ -1394,23 +1534,24 @@ export function shapeFill(
  */
 export function roughSilhouette(
   input: Rings,
-  options: { seed: number; level?: SketchLevel; width?: number }
+  options: { seed: number; level?: SketchLevel; width?: number; curved?: boolean }
 ): string {
-  const { seed, level, width } = options;
+  const { seed, level, width, curved } = options;
   const rings = asRings(input).filter((r) => r.length >= 3);
   if (rings.length === 0) return '';
   // One closed contour per ring, in the order the outline gave them — which
   // for a compound shape is outer first and holes after, wound the other way.
   // Both painters fill this non-zero, so opposite windings are what make the
   // hole a hole rather than a second disc drawn on top of the first.
-  return rings.map((ring) => oneSilhouette(ring, seed, level, width)).join(' ');
+  return rings.map((ring) => oneSilhouette(ring, seed, level, width, curved)).join(' ');
 }
 
 function oneSilhouette(
   points: readonly Point[],
   seed: number,
   level: SketchLevel | undefined,
-  width: number | undefined
+  width: number | undefined,
+  curved: boolean | undefined
 ): string {
   // The same nib as the outline: the fill boundary and the stroke over it have
   // to stray by the same amount, or a wide pen's wander walks the drawn edge
@@ -1419,6 +1560,10 @@ function oneSilhouette(
   // A different stream from the outline's, so the fill boundary and the drawn
   // edge wander independently — which is what a real pen and a real wash do.
   const rand = rng(seed ^ 0x2545f491);
+
+  // A sampled curve gets the same smooth wander the outline does; independent
+  // per-vertex jitter would give its fill a ragged edge under a smooth stroke.
+  if (curved ?? isSampledCurve(points, true)) return smoothSilhouette(points, prof, rand);
 
   // Displace every vertex once. Shared by both adjacent edges, which is the
   // property that makes the contour closed rather than merely nearly closed.

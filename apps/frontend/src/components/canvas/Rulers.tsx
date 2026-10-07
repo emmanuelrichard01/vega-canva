@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore }
 import { cameraSystem } from '../../engine/CameraSystem';
 import { engineEvents } from '../../engine/EventBus';
 import { addGuide } from '../../engine/document/guides';
+import { useRoomPermissions } from '../../hooks/useRoomPermissions';
 import { tickLabel, tickStep, ticksFor } from '../../engine/interaction/rulerTicks';
 
 /** Ruler thickness, in CSS pixels. Matches the corner square. */
@@ -52,6 +53,7 @@ function useCameraTick(): number {
  * every tool in this category has taught people to reach for it there.
  */
 export const Rulers: React.FC<Props> = ({ width, height }) => {
+  const { canEdit } = useRoomPermissions();
   useCameraTick();
   const [dragging, setDragging] = useState<{ axis: 'x' | 'y'; position: number } | null>(null);
 
@@ -183,6 +185,8 @@ export const Rulers: React.FC<Props> = ({ width, height }) => {
 
   const start = (axis: 'x' | 'y') => (e: React.MouseEvent) => {
     e.preventDefault();
+    // A guide is document state, so only an editor may pull one out.
+    if (!canEdit) return;
     const world = toWorld(e.clientX, e.clientY);
     setDragging({ axis, position: axis === 'x' ? world.x : world.y });
   };

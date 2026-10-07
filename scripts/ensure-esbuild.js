@@ -1,50 +1,45 @@
-const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
 /**
- * Self-healing esbuild setup for environments where native binaries are blocked
- * (such as Windows Defender heuristic false-positives on Go binaries).
+ * Postinstall check that esbuild can transform code.
  *
- * If native esbuild works, this script does nothing. If esbuild fails to spawn,
- * it safely copies esbuild-wasm into place so local tests and Vite run cleanly.
+ * The root `package.json` overrides `esbuild` with `esbuild-wasm`, so Vite,
+ * Vitest and tsx run esbuild as WebAssembly on every platform. That is
+ * deliberate: on at least one development machine the native
+ * `@esbuild/win32-x64/esbuild.exe` is blocked from executing (antivirus or a
+ * policy on the OneDrive path), and with the native binary nothing that
+ * transforms TypeScript can start. The cost is speed: WASM transforms are
+ * slower than native ones, everywhere.
+ *
+ * This script changes nothing. It only reports, so a broken esbuild shows up
+ * at install time with a cause rather than later as `spawn UNKNOWN`. It never
+ * fails the install. Container builds skip it with `--ignore-scripts`.
  */
-function ensureEsbuild() {
+function checkEsbuild() {
   const root = path.resolve(__dirname, '..');
-  const esbuildPkg = path.join(root, 'node_modules', 'esbuild');
-  const wasmPkg = path.join(root, 'node_modules', 'esbuild-wasm');
+  const res = spawnSync(
+    process.execPath,
+    [
+      '-e',
+      'require("esbuild").transform("const x: number = 1;", { loader: "ts" })' +
+        '.then(() => process.exit(0), () => process.exit(1));',
+    ],
+    { cwd: root, stdio: 'pipe', timeout: 60_000 }
+  );
+  if (res.status === 0) return true;
 
-  if (!fs.existsSync(esbuildPkg) || !fs.existsSync(wasmPkg)) return;
-
-  try {
-    const res = spawnSync(
-      process.execPath,
-      ['-e', 'require("esbuild").transform("const x: number = 1;", { loader: "ts" }).then(() => process.exit(0)).catch(() => process.exit(1));'],
-      { cwd: root, stdio: 'pipe' }
-    );
-    if (res.status === 0) {
-      return; // Working esbuild already active
-    }
-  } catch {
-    // Need fallback
-  }
-
-  console.log('[esbuild-fallback] Native esbuild execution blocked. Activating WebAssembly fallback...');
-  try {
-    const files = fs.readdirSync(wasmPkg);
-    for (const file of files) {
-      const src = path.join(wasmPkg, file);
-      const dest = path.join(esbuildPkg, file);
-      fs.cpSync(src, dest, { recursive: true, force: true });
-    }
-    console.log('[esbuild-fallback] esbuild-wasm successfully activated.');
-  } catch (err) {
-    console.warn('[esbuild-fallback] Warning: could not apply fallback:', err.message);
-  }
+  console.warn(
+    '[ensure-esbuild] esbuild could not transform a test file. Vite and Vitest will not start.\n' +
+      '[ensure-esbuild] Check that the root package.json still overrides "esbuild" with "$esbuild-wasm",\n' +
+      '[ensure-esbuild] then reinstall from the repository root.\n' +
+      (res.stderr ? `[ensure-esbuild] ${String(res.stderr).trim().split('\n')[0]}` : '')
+  );
+  return false;
 }
 
 if (require.main === module) {
-  ensureEsbuild();
+  checkEsbuild();
 }
 
-module.exports = { ensureEsbuild };
+module.exports = { checkEsbuild };

@@ -1,53 +1,31 @@
 /**
- * A sliding-window token bucket, per client address, with optional Redis cluster backing.
+ * A token bucket per client, in Redis when one is configured and in this
+ * process otherwise.
  *
- * ## What this protects
+ * ## What it protects
  *
- * Three REST routes. Uploads cost object storage and bandwidth; the history
- * endpoint reads and serialises up to `MAX_UPDATES_PER_ROOM` rows of binary
- * data per call, which is cheap once and expensive in a loop; and link
- * previews aim outbound requests at addresses a stranger chose.
+ * The REST routes (uploads, history, invites, link previews, share cards and
+ * the admin routes) and, on the WebSocket path, the creation of new boards.
+ * The link-preview route uses `createRateLimiter` directly rather than the
+ * middleware, because it can tell in advance whether a request will do any
+ * outbound work and only charges those that will.
  *
- * The preview route uses `createRateLimiter` directly rather than the
- * middleware below, because it is the one that can tell in advance whether a
- * request will do any of the work being protected against — a preview it has
- * already fetched is answered from memory and charged nothing. See the note on
- * `unfurlLimiter` in `index.ts`.
+ * Individual WebSocket messages are not limited: a per-message limit on a CRDT
+ * sync stream throttles legitimate collaboration long before anything else.
+ * The socket path is bounded instead by frame and document size, connections
+ * per address and new boards per address (`collab.ts`).
  *
  * ## Where the buckets live
  *
- * In Redis when `REDIS_HOST` is set, and in this process otherwise.
+ * With Redis (`REDIS_URL`/`REDIS_HOST`), every instance shares one bucket per
+ * client. Without it each process keeps its own, which is right for one
+ * instance and quietly wrong for two: a client gets a full allowance per
+ * instance and nothing reports it.
  *
- * This paragraph used to say that nothing ever passed a client, so the Lua
- * below was unreachable and every limit was per-process. `index.ts` builds one
- * from config now — see `redisClient.ts` — and hands it to all three limiters,
- * so the note below about what happens without one is a description of the
- * single-instance deployment rather than of every deployment.
- *
- * It is still worth stating plainly, because it is the failure that does not
- * announce itself. Run two instances behind a
- * load balancer and a client gets one full allowance per instance, which is
- * the usual way a limiter quietly stops limiting: nothing fails, the numbers
- * are simply wrong, and only in the deployment where it matters most.
- *
- * A paragraph here once claimed the opposite -- that all instances "share the
- * exact same rate limit allowances" -- which was true of the Lua script and
- * false of the server, and it replaced an accurate warning. The code got no
- * safer; the document that told the truth was the thing that changed. It is
- * true now, and it is true because the wiring exists, not because the sentence
- * was rewritten.
- *
- * ## What happens when Redis goes away
- *
- * Each limiter falls back to its own memory for the duration, which is the
- * right failure: an outage should make the limits per-instance again, not
- * refuse traffic. `takeAsync` catches and degrades, and the client itself
- * fails commands fast rather than queueing them, so a limiter never waits on a
- * connection that is not coming back.
- *
- * The WebSocket path is not limited at all. Connection cost is bounded by
- * Hocuspocus and by the document itself, and a per-message limiter on a CRDT
- * sync stream throttles legitimate collaboration long before anything else.
+ * If Redis goes away, `takeAsync` falls back to this process's memory rather
+ * than refusing traffic, and the client fails commands fast rather than
+ * queueing them, so a limiter never waits on a connection that is not coming
+ * back.
  */
 
 interface Bucket {

@@ -133,7 +133,9 @@ export function migrateGridGroups(
       nodes.set(groupId, node as Y.Map<unknown> as never);
       converted++;
     });
-  });
+    // Its own origin, as `migrateDoc` uses: a conversion nobody performed must
+    // not be the first thing Ctrl+Z undoes after the board loads.
+  }, 'schema-migration');
 
   return converted;
 }

@@ -5,6 +5,7 @@ import { WS_URL } from '../../utils/endpoints';
 import { getRoomRole } from '../model/permissions';
 import { currentInvite } from '../room/invite';
 import { resolveRoomRoute } from '../room/route';
+import { storageGet } from '../../utils/safeStorage';
 
 /**
  * The collaborative document.
@@ -51,6 +52,39 @@ const syncCallbacks = new Set<(synced: boolean) => void>();
 
 export const getConnectionStatus = () => currentStatus;
 
+/** Whether the server's state has arrived at least once this page load. */
+let hasSynced = false;
+export const isDocumentSynced = () => hasSynced;
+
+/** Resolves once the server's state has arrived. */
+export function whenSynced(): Promise<void> {
+  if (hasSynced) return Promise.resolve();
+  return new Promise((resolve) => {
+    const off = onSyncedChange((synced) => {
+      if (!synced) return;
+      off();
+      resolve();
+    });
+  });
+}
+
+/**
+ * Resolves when the document is safe to seed or replace.
+ *
+ * That is when the server's state has arrived. Offline, the server never
+ * answers, so it settles for the local IndexedDB copy plus a grace period;
+ * `synced` says which happened, for callers whose write is only safe online.
+ */
+export function whenDocumentReady(graceMs = 4000): Promise<{ synced: boolean }> {
+  if (hasSynced) return Promise.resolve({ synced: true });
+  const local = indexeddbProvider ? indexeddbProvider.whenSynced.then(() => undefined) : Promise.resolve();
+  const offline = local.then(() => new Promise<void>((r) => setTimeout(r, graceMs)));
+  return Promise.race([
+    whenSynced().then(() => ({ synced: true })),
+    offline.then(() => ({ synced: hasSynced })),
+  ]);
+}
+
 export const onStatusChange = (cb: (status: ConnectionStatus) => void) => {
   statusCallbacks.add(cb);
   return () => statusCallbacks.delete(cb);
@@ -79,9 +113,16 @@ export const onSyncedChange = (cb: (synced: boolean) => void) => {
  *   whole of what it can mean.
  */
 const AUTH_SECRET = import.meta.env.VITE_AUTH_SECRET as string | undefined;
-const sessionToken = typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function' ? localStorage.getItem('vega_session_token') : null;
 
-const connectionToken = JSON.stringify({
+/**
+ * Built on every connect rather than once at import.
+ *
+ * `AuthContext` stores the session token after `/api/session` answers, which
+ * is usually after this module has been evaluated. Reading it lazily means a
+ * reconnect carries the token even when the first connect could not, and the
+ * role is current if it changed in between.
+ */
+const connectionToken = () => JSON.stringify({
   role: getRoomRole(),
   /**
    * The signed half. `role` above is what this tab says about itself and is
@@ -90,8 +131,12 @@ const connectionToken = JSON.stringify({
    */
   ...(invite ? { invite: invite.token } : {}),
   ...(AUTH_SECRET ? { secret: AUTH_SECRET } : {}),
-  ...(sessionToken ? { sessionToken } : {}),
+  ...(storedSessionToken() ? { sessionToken: storedSessionToken() } : {}),
 });
+
+function storedSessionToken(): string | null {
+  return storageGet('vega_session_token');
+}
 
 export const provider = new HocuspocusProvider({
   url: WS_URL,
@@ -107,6 +152,7 @@ export const provider = new HocuspocusProvider({
     statusCallbacks.forEach((cb) => cb('disconnected'));
   },
   onSynced: () => {
+    hasSynced = true;
     syncCallbacks.forEach((cb) => cb(true));
   },
 });
@@ -159,8 +205,13 @@ export const groupsMap = doc.getMap<{ id: string; parentId?: string; name?: stri
 /** Comment threads, keyed by thread id. */
 export const commentsMap = doc.getMap<Y.Map<unknown>>('comments');
 
-/** Append-only authoring log used by the activity feed. */
-export const historyArray = doc.getArray<unknown>('history');
+/** Fonts uploaded to this board, one face per key. See `fonts.ts`. */
+export const fontsMap = doc.getMap<unknown>('fonts');
+
+/*
+ * Older boards carry a root 'history' array, an authoring log nothing reads.
+ * It is no longer written; existing entries are left as they are.
+ */
 
 /**
  * Both maps, because grouping writes to both in one transaction.
@@ -174,7 +225,18 @@ export const undoManager = new Y.UndoManager([objectsMap, groupsMap], {
   captureTimeout: 500, // Group rapid changes into one undo step
 });
 
-/** Escape hatch for debugging in the browser console. */
-if (typeof window !== 'undefined') {
+/** Escape hatch for debugging in the browser console, in development only. */
+if (import.meta.env.DEV && typeof window !== 'undefined') {
   (window as unknown as Record<string, unknown>).objectsMap = objectsMap;
 }
+
+/**
+ * Origin for writes no person asked for: reflows, sweeps and bookkeeping that
+ * react to the document rather than to input.
+ *
+ * `undoManager` tracks only the `null` origin, so a write made under this one
+ * stays out of everyone's undo stack. Without it, Ctrl+Z would revert a
+ * reflow that someone else's edit caused. Pass it as the second argument to
+ * `doc.transact`.
+ */
+export const DERIVED_ORIGIN = 'derived';

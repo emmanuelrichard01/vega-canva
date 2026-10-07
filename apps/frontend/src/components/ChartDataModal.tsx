@@ -21,12 +21,14 @@ import {
   X,
 } from 'lucide-react';
 import './sheet/sheet.css';
+import './chartDataNotice.css';
 import { useStore } from '../hooks/useStore';
 import type { ChartNode } from '../engine/model/schema';
 import type { ChartSpec, ChartSeries } from '../engine/chart/chartTypes';
 import { getPaletteColors, isSampleKind, seriesColor } from '../engine/chart/chartTypes';
 import { CHART_LABELS } from '../engine/chart/chartKinds';
 import { updateChart } from '../engine/chart/chartApply';
+import { rangeLabel, unlinkedSpec } from '../engine/chart/chartFromTable';
 import { chartToSvg } from '../engine/chart/chartSvg';
 import {
   chartToCsv,
@@ -42,6 +44,7 @@ import { liveStatus, setLiveInterval, subscribeLive } from '../engine/chart/char
 import { ChartKindIcon } from './workspace/chartIcons';
 import { SeriesSwatch } from './SeriesSwatch';
 import { columnLetter, useSheet, type SheetRange } from './sheet/useSheet';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 /**
  * The chart's data, as a real spreadsheet — and where the numbers come from.
@@ -104,7 +107,67 @@ export const ChartDataModal: React.FC<Props> = ({ nodeId, onClose }) => {
   }, []);
 
   if (!node || node.type !== 'chart') return null;
+  if (node.chart.link) return <LinkedNotice node={node} onClose={onClose} />;
   return <DataDialog node={node} onClose={onClose} live={live} readSpec={readSpec} />;
+};
+
+/**
+ * A linked chart's values live in its table, so the sheet does not offer to
+ * edit them here, where every edit would be replaced by the table's on the
+ * next read. It says where the numbers are, and offers to unlink.
+ */
+const LinkedNotice: React.FC<{ node: ChartNode; onClose: () => void }> = ({ node, onClose }) => {
+  const dialogRef = useFocusTrap(true, onClose);
+  const link = node.chart.link!;
+  const table = useStore((s) => {
+    const t = s.objects[link.tableId];
+    return t && t.type === 'table' ? t : null;
+  });
+  const name = table?.title?.trim() || 'the table';
+  return (
+    <div className="export-scrim" onPointerDown={onClose} role="presentation">
+      <div
+        ref={dialogRef}
+        className="cdm cdm--linked"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cdm-linked-title"
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        <header className="cdm__head">
+          <div className="cdm__title" id="cdm-linked-title">
+            <TableIcon size={15} aria-hidden />
+            <span>{node.chart.title?.trim() || 'Chart data'}</span>
+          </div>
+          <button type="button" className="cdm__close" aria-label="Close" onClick={onClose}>
+            <X size={15} />
+          </button>
+        </header>
+        <div className="cdm__linked">
+          <p>
+            {table
+              ? <>These values come from <strong>{name}</strong>, {rangeLabel(link)}. Edit them there and the chart follows.</>
+              : <>The linked table has been deleted. The chart keeps the values it last read.</>}
+          </p>
+          <div className="cdm__linked-actions">
+            <button
+              type="button"
+              className="cdm__btn"
+              onClick={() => {
+                updateChart(node.id, unlinkedSpec(node.chart, table?.table ?? null));
+                onClose();
+              }}
+            >
+              Unlink and edit here
+            </button>
+            <button type="button" className="cdm__btn cdm__btn--primary" onClick={onClose}>
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 const DataDialog: React.FC<{
@@ -133,6 +196,11 @@ const DataDialog: React.FC<{
     window.clearTimeout(noticeTimer.current);
     noticeTimer.current = window.setTimeout(() => setNotice(null), 4000);
   };
+
+  // Tab stays inside the dialog. Escape is left to the listener below rather
+  // than the trap, whose capture-phase handler would close the dialog before
+  // the sheet could use Escape to cancel a cell edit.
+  const dialogRef = useFocusTrap(true);
 
   // Escape closes when the sheet has not already used it (it stops what it
   // handles, so this only hears an Escape nothing else wanted).
@@ -480,6 +548,7 @@ const DataDialog: React.FC<{
   return (
     <div className="export-scrim" onPointerDown={onClose} role="presentation">
       <div
+        ref={dialogRef}
         className="cdm cdm--sheet"
         role="dialog"
         aria-modal="true"

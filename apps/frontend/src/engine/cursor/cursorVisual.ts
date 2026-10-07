@@ -81,6 +81,35 @@ export function paletteFor(dark: boolean): CursorPalette {
 }
 
 /**
+ * The theme every pointer is drawn in, unless a caller names one.
+ *
+ * `LocalCursor` keeps this current. Handles elsewhere (resize, rotate, the pen
+ * signs) claim cursors without knowing the theme, and used to get the light
+ * palette in dark mode; reading it here fixes all of them at once.
+ *
+ * `weight` is the enhanced-contrast stroke scale: outlines and halos thicken
+ * by it, so a pointer stays separable from busy content.
+ */
+export const cursorTheme: { dark: boolean; weight: number } = { dark: false, weight: 1 };
+
+export function setCursorTheme(next: Partial<{ dark: boolean; weight: number }>): void {
+  if (next.dark !== undefined) cursorTheme.dark = next.dark;
+  if (next.weight !== undefined && next.weight > 0) cursorTheme.weight = next.weight;
+}
+
+/** An id that also names the stroke weight, so a contrast change redraws. */
+const tagged = (id: string) => (cursorTheme.weight === 1 ? id : `${id}:w${cursorTheme.weight}`);
+
+/** Thicken every stroke by the contrast weight. Geometry is unchanged. */
+function weighted(svg: string): string {
+  const w = cursorTheme.weight;
+  if (w === 1) return svg;
+  // A badge glyph keeps its drawing weight: thickening the inside of a 9px
+  // disc closes it up. Its disc outline and every edge and halo still thicken.
+  return svg.replace(/(?<!data-fixed="1" )stroke-width="([0-9.]+)"/g, (_, n) => `stroke-width="${esc(Number(n) * w)}"`);
+}
+
+/**
  * The glyph ink for a disc of this colour, by measured contrast.
  *
  * A lookup table would have been enough while the disc was always `#141821`.
@@ -107,6 +136,8 @@ export interface CursorVisual {
   /** The offset from the pointer position to the art's top-left, in px. */
   offsetX: number;
   offsetY: number;
+  /** Box size in CSS px when it is not `CURSOR_SIZE` (the eraser ring). */
+  size?: number;
 }
 
 export const CURSOR_SIZE = 28;
@@ -251,13 +282,13 @@ function badge(glyph: string, p: CursorPalette): string {
     `<g transform="translate(19.6 19.6)">` +
     `<circle r="7.6" fill="${p.edge}" stroke="${p.body}" stroke-width="1.7"/>` +
     `<g transform="translate(-4.55 -4.55) scale(0.379)" fill="none" stroke="${inkFor(p.edge)}" ` +
-    `stroke-width="5" stroke-linecap="round" stroke-linejoin="round">${glyph}</g>` +
+    `data-fixed="1" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">${glyph}</g>` +
     `</g>`
   );
 }
 
-function svgWrap(inner: string): string {
-  return (
+function svgWrap(inner: string, size = SIZE): string {
+  return weighted(
     /**
      * `xmlns` is not optional here, and leaving it out is silent.
      *
@@ -277,8 +308,8 @@ function svgWrap(inner: string): string {
      * Nothing errors, nothing warns, and the fallbacks were chosen to be
      * sensible — which is exactly what made it invisible.
      */
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${SIZE}" height="${SIZE}" ` +
-    `viewBox="0 0 ${SIZE} ${SIZE}" fill="none" ` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" ` +
+    `viewBox="0 0 ${size} ${size}" fill="none" ` +
     `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ` +
     `style="display:block;overflow:visible">${inner}</svg>`
   );
@@ -311,86 +342,68 @@ function cross(gap: number, arm: number, p: CursorPalette, accent?: string): str
 }
 
 /**
- * The open hand — four fingers and a thumb, in a 24-unit box.
+ * The open hand: four fingers and a thumb, on a 24-unit grid.
  *
  * ## One drawing, two uses
  *
- * The dock's Hand seat and this pointer are the same hand, so they are the
- * same path: the dock *strokes* it (see `HandIcon`), and the pointer fills it
- * and outlines it. They used to be two drawings -- a stock icon on the seat and
- * this art under the pointer -- and they disagreed about how many fingers a
- * hand has, how wide they are and where the thumb goes, which is the "picture
- * as a second fact" failure `HANDOFF.md` keeps finding.
+ * The dock's Hand seat strokes this path (see `HandIcon`) and the pointer fills
+ * and outlines it, so the seat and the cursor it gives you are one hand.
  *
- * ## Why the previous one looked wrong
+ * ## How it is built
  *
- * Its fingers were separated by valleys 0.35 units wide, under an outline 1.7
- * wide -- so the outline filled every valley and the four fingers fused into a
- * mitten with ridges on it. The thumb was a round bulb hung off the palm, and
- * the whole hand sat below and left of the box's centre, which is the hotspot.
- *
- * ## How this one is built
- *
- * Four fingers of equal width on one knuckle line, their tips on a gentle arch
- * (middle highest, little finger lowest), a palm that is a quarter circle into
- * the heel, and a thumb that leaves the palm on one straight axis and ends in
- * a round tip. The fingers are separated by *zero-width* slits: the outline
- * runs down between two fingers to the knuckle line and back up the same line,
- * which encloses no area -- so the fill is one piece -- and draws exactly one
- * separating line. Real gaps would need a width the outline cannot leave open
- * at this size; slits need none.
+ * Drawn the way macOS and Figma draw it: a broad palm with a wrist cut, and
+ * four fingers that fan slightly from a knuckle line, each tapering to a round
+ * tip, with the middle finger tallest and the little finger shortest and most
+ * splayed. The fingers touch at the knuckles and part towards the tips, so the
+ * valleys between them read as separation without needing gaps the outline
+ * would fill. The thumb leaves the lower palm at about 40° with a full round
+ * tip, rather than hanging off the side as a bulb.
  */
 export const HAND_OPEN =
-  'M6.5 13.2V7a1.5 1.5 0 0 1 3 0v4V5.5a1.5 1.5 0 0 1 3 0V11V6.5a1.5 1.5 0 0 1 3 0V11V9a1.5 1.5 0 0 1 3 0v5.5a6.5 6.5 0 0 1-6.5 6.5c-2.2 0-4.02-1.17-5.13-2.59L2.56 12.89a1.45 1.45 0 0 1 2.28-1.78z';
+  'M8.1 22.7C6.9 21.3 6.0 19.9 5.25 18.65L2.55 14.6A1.62 1.62 0 0 1 5.2 12.75L6.73 14.55L6.74 12.58L6.16 5.92A1.6 1.6 0 0 1 9.34 5.58L10.11 10.72Q10.17 11.82 10.22 10.72L10.14 4.38A1.66 1.66 0 0 1 13.46 4.32L13.68 10.62Q13.76 11.72 13.83 10.62L14.25 5.02A1.6 1.6 0 0 1 17.45 5.18L17.17 11.58Q17.23 12.68 17.3 11.58L18.11 7.54A1.45 1.45 0 0 1 20.99 7.96L20.25 13.52C20.35 16.2 19.9 19.0 18.75 20.75C18.2 21.55 17.7 22.2 17.3 22.7Z';
 
 /**
  * The closed hand, for a pan in progress.
  *
- * The same palm, with the fingers curled down to stubs above the knuckle line
- * and the thumb drawn in along the same axis. The heel and the hotspot stay
- * exactly where they were, so the hand reads as *closing* rather than as being
- * swapped for a different picture. The thumb has to come in: left out at full
- * length beside curled fingers, the first version read as a baseball glove.
+ * Not a shrunken open hand: the fingers fold over the palm and show as four
+ * knuckle bumps, and the thumb tucks in along the palm's edge. The wrist, the
+ * palm's outer edge and the overall width are the open hand's, so pressing
+ * reads as the hand *closing* in place rather than being swapped.
  */
 export const HAND_CLOSED =
-  'M6.5 14.1V10.5a1.5 1.5 0 0 1 3 0V12V10a1.5 1.5 0 0 1 3 0V12V10.3a1.5 1.5 0 0 1 3 0V12V11a1.5 1.5 0 0 1 3 0v3.5a6.5 6.5 0 0 1-6.5 6.5c-2.2 0-4.29-.68-5.21-1.86L3.46 14.89a1.45 1.45 0 0 1 2.28-1.78z';
+  'M8.1 22.7C6.9 21.3 6.0 19.9 5.4 18.35C4.7 16.6 4.95 14.6 6.0 13.45L6.63 11.15L6.63 10.55A1.72 1.72 0 0 1 10.07 10.55Q10.07 11.1 10.07 9.75A1.78 1.78 0 0 1 13.63 9.75Q13.68 10.6 13.73 10.05A1.72 1.72 0 0 1 17.17 10.05Q17.18 11.9 17.2 11.35A1.55 1.55 0 0 1 20.3 11.35C20.35 13.6 20.25 16.6 19.6 18.4C19.0 20.0 18.1 21.6 17.3 22.7Z';
 
 /**
- * Seats the 24-unit hand in the pointer's box, centred on the hotspot.
- *
- * The hand's own bounds centre on about (11.2, 12.5); at 1.12 that lands on
- * the box's middle, and it makes the fingers wide enough that each keeps a
- * visible body inside its outline. Stroke widths below are divided by the
- * scale so the outline matches the arrow's weight rather than growing with it.
+ * The fist's inner lines: a short fold below each valley between curled
+ * fingers, and the tucked thumb lying across under the first two knuckles.
+ * Stroked lighter than the outline, so they read as detail, not as edges.
  */
-const HAND_FIT = 'translate(1.5 0) scale(1.12)';
-
-function hand(d: string, p: CursorPalette): string {
-  return (
-    `<g transform="${HAND_FIT}">` +
-    `<path d="${d}" fill="${p.body}" stroke="${p.body}" stroke-width="3.9" stroke-linejoin="round"/>` +
-    `<path d="${d}" fill="${p.body}" stroke="${p.edge}" stroke-width="1.35" stroke-linejoin="round"/>` +
-    `</g>`
-  );
-}
+export const HAND_CLOSED_FOLDS =
+  'M10.07 11.1v1.5M13.68 10.6v1.5M17.19 11.9v1.5M6.0 13.45C7.5 14.2 9.4 14.35 11.25 13.85';
 
 /**
- * The eraser, which had no art of its own and wore a crosshair.
+ * Seats the 24-unit hand in the pointer's box.
  *
- * Worth naming because the drawn cursor was *worse* than the CSS fallback it
- * replaced: `index.css` has always carried a real eraser bitmap for this mode,
- * and the drawn version showed a tightened crosshair — a shape that says "aim
- * here", when the whole point of an eraser is that it has a *width* and takes
- * out what it passes over.
+ * The palm's centre, (12, 14) on the hand's grid, lands on the box's centre,
+ * which is the hotspot for both hands, so switching between them never moves
+ * the point being dragged.
  */
-function eraser(p: CursorPalette): string {
-  const body =
-    'M7.8 19.6 4.3 16.1a1.9 1.9 0 0 1 0-2.7l8.5-8.5a1.9 1.9 0 0 1 2.7 0l3.6 3.6a1.9 1.9 0 0 1 0 2.7l-8.5 8.5z';
+const HAND_FIT = 'translate(0.8 -1.4) scale(1.1)';
+
+/**
+ * A hand as a pointer: a white hand with a dark outline, in both themes.
+ *
+ * Every native hand cursor is drawn this way, and a dark-bodied hand reads as a
+ * silhouette rather than a hand. A white halo under the outline separates it
+ * from dark and busy content; on a light board the halo disappears and the
+ * outline carries it.
+ */
+function hand(d: string, folds = ''): string {
   return (
-    `<g transform="translate(1 -1)">` +
-    `<path d="${body}" fill="${p.body}" stroke="${p.body}" stroke-width="4" stroke-linejoin="round"/>` +
-    `<path d="${body}" fill="${p.body}" stroke="${p.edge}" stroke-width="1.7" stroke-linejoin="round"/>` +
-    `<path d="M9.6 8.6 16.9 16" stroke="${p.edge}" stroke-width="1.4" opacity="0.55"/>` +
+    `<g transform="${HAND_FIT}" stroke-linejoin="round" stroke-linecap="round">` +
+    `<path d="${d}" fill="${PAPER}" stroke="${PAPER}" stroke-width="3.6" stroke-opacity="0.9"/>` +
+    `<path d="${d}" fill="${PAPER}" stroke="${INK}" stroke-width="1.3"/>` +
+    (folds ? `<path d="${folds}" fill="none" stroke="${INK}" stroke-width="1.05" opacity="0.85"/>` : '') +
     `</g>`
   );
 }
@@ -399,6 +412,213 @@ function eraser(p: CursorPalette): string {
 const TIP: Hotspot = { x: 2, y: 1 };
 /** The hotspot for centred art: the middle of the box. */
 const CENTRE: Hotspot = { x: SIZE / 2, y: SIZE / 2 };
+
+/* ------------------------------------------------------- the tool set */
+
+/**
+ * Tools that drag out a region: a crosshair, badged with what the region
+ * becomes.
+ *
+ * An arrow says the next drag selects. These drags draw a box, and the corner
+ * of that box lands on the pixel under the hotspot, so the hotspot has to be
+ * a point the eye can see past. The badge still names the tool, so a
+ * rectangle and a table stay distinguishable at a glance.
+ */
+export const REGION_TOOLS: ReadonlySet<string> = new Set([
+  'shape', 'shape-rect', 'shape-ellipse', 'shape-triangle', 'shape-hexagon', 'shape-star',
+  'shape-line', 'shape-arrow', 'frame', 'grid', 'chart', 'table', 'code', 'connector',
+]);
+
+/** Where the region crosshair centres, up and left of the badge. */
+const REGION_HOT: Hotspot = { x: 10, y: 10 };
+
+function regionCross(p: CursorPalette): string {
+  const { x: c } = REGION_HOT;
+  const gap = 2.6;
+  const arm = 5.4;
+  const d =
+    `M${c} ${esc(c - gap - arm)}v${arm}M${c} ${esc(c + gap)}v${arm}` +
+    `M${esc(c - gap - arm)} ${c}h${arm}M${esc(c + gap)} ${c}h${arm}`;
+  return (
+    `<path d="${d}" stroke="${p.edge}" stroke-width="3.6"/>` +
+    `<path d="${d}" stroke="${p.body}" stroke-width="1.5"/>`
+  );
+}
+
+/** The direct-select arrow: the same arrow, hollow, so it reads as "the parts". */
+const hollowArrow = (p: CursorPalette) =>
+  `<g transform="scale(${ARROW_SCALE})"><path d="${ARROW_D}" fill="${p.edge}" stroke="${p.body}" ` +
+  `stroke-width="1.7" stroke-linejoin="round"/></g>`;
+
+/** The largest eraser ring drawn as a pointer, in CSS px (Chrome caps cursors at 128 device px). */
+export const ERASER_RING_MAX = 56;
+
+/**
+ * The eraser as the area it takes out.
+ *
+ * A ring the width of the eraser, centred on the hotspot, which is how
+ * Excalidraw and paint programs show it: the question an eraser raises is
+ * "what will this touch", and a ring answers it before the press. A faint veil
+ * inside separates the area from the content under it. Rings wider than a
+ * cursor may be drawn are capped; the stroke still erases at full width.
+ */
+export function eraserVisual(sizePx = 20, dark = cursorTheme.dark): CursorVisual {
+  const p = paletteFor(dark);
+  const d = Math.max(8, Math.min(ERASER_RING_MAX, Math.round(sizePx)));
+  const box = Math.max(SIZE, d + 8 + ((d + 8) % 2));
+  const c = box / 2;
+  const r = d / 2;
+  return {
+    id: tagged(`erase:${d}:${dark ? 'd' : 'l'}`),
+    svg: svgWrap(
+      `<circle cx="${c}" cy="${c}" r="${r}" fill="${p.edge}" fill-opacity="0.22" stroke="${p.edge}" stroke-width="3.2"/>` +
+        `<circle cx="${c}" cy="${c}" r="${r}" stroke="${p.body}" stroke-width="1.4"/>` +
+        `<circle cx="${c}" cy="${c}" r="1.1" fill="${p.body}" stroke="${p.edge}" stroke-width="0.9"/>`,
+      box
+    ),
+    offsetX: -c,
+    offsetY: -c,
+    size: box,
+  };
+}
+
+/**
+ * The comment pointer: the pin it is about to drop.
+ *
+ * A round bubble with one square corner, and the corner is the hotspot, which
+ * is exactly where the comment's pin will sit. The plus says a press adds one.
+ */
+export function commentVisual(dark = cursorTheme.dark): CursorVisual {
+  const p = paletteFor(dark);
+  const bubble = 'M3 25V14a11 11 0 1 1 11 11z';
+  const plus = 'M14 9.6v8.8M9.6 14h8.8';
+  return {
+    id: tagged(`comment:${dark ? 'd' : 'l'}`),
+    svg: svgWrap(
+      `<path d="${bubble}" fill="${p.body}" stroke="${p.edge}" stroke-width="1.7" stroke-linejoin="round"/>` +
+        `<path d="${plus}" stroke="${p.edge}" stroke-width="2"/>`
+    ),
+    offsetX: -3,
+    offsetY: -25,
+  };
+}
+
+/** The magnifier, for zooming in or out by click. Its hotspot is the lens centre. */
+export function zoomVisual(direction: 'in' | 'out', dark = cursorTheme.dark): CursorVisual {
+  const p = paletteFor(dark);
+  const lens = 'M11.5 4a7.5 7.5 0 1 0 0 15a7.5 7.5 0 1 0 0-15z';
+  const handle = 'M17.1 17.1 23.5 23.5';
+  const sign = direction === 'in' ? 'M11.5 8.2v6.6M8.2 11.5h6.6' : 'M8.2 11.5h6.6';
+  return {
+    id: tagged(`zoom:${direction}:${dark ? 'd' : 'l'}`),
+    svg: svgWrap(
+      `<path d="${handle}" stroke="${p.edge}" stroke-width="5.4"/>` +
+        `<path d="${lens}" fill="${p.edge}" fill-opacity="0.35" stroke="${p.edge}" stroke-width="4"/>` +
+        `<path d="${handle}" stroke="${p.body}" stroke-width="3"/>` +
+        `<path d="${lens}" stroke="${p.body}" stroke-width="1.8"/>` +
+        `<path d="${sign}" stroke="${p.body}" stroke-width="1.8"/>`
+    ),
+    offsetX: -11.5,
+    offsetY: -11.5,
+  };
+}
+
+/** Badge glyphs for pointer states rather than tools. */
+const STATE_GLYPHS = {
+  'not-allowed': '<circle cx="12" cy="12" r="7.6"/><path d="M6.8 17.2 17.2 6.8"/>',
+  busy: '<path d="M6 12h.01M12 12h.01M18 12h.01"/>',
+} as const;
+
+export type PointerState = keyof typeof STATE_GLYPHS;
+
+/**
+ * The arrow with a state on it: "you can't do that here" or "working on it".
+ *
+ * A CSS cursor cannot animate, so busy is three dots rather than a spinner;
+ * the native spinner would be the one foreign pointer in the set.
+ */
+export function stateVisual(state: PointerState, dark = cursorTheme.dark): CursorVisual {
+  const p = paletteFor(dark);
+  return {
+    id: tagged(`state:${state}:${dark ? 'd' : 'l'}`),
+    svg: svgWrap(arrow(p) + badge(STATE_GLYPHS[state], p)),
+    offsetX: -TIP.x,
+    offsetY: -TIP.y,
+  };
+}
+
+/** The brushes the pen tool holds. Mirrors `engine/tools/brushes.ts`. */
+export type DrawBrush = 'pen' | 'marker' | 'highlighter';
+
+/**
+ * Each brush as an implement, drawn upright with its tip at the origin.
+ *
+ * Original art in the pointer's own language: a filled body in the theme's
+ * body colour, outlined in its edge colour, and the parts that carry ink in
+ * the ink it will lay down. Turned 45° so the tip is the bottom-left corner
+ * and the body reaches up-right, out of the way of the stroke.
+ */
+const IMPLEMENTS: Record<DrawBrush, { body: string; tip: string; band: string }> = {
+  // A fineliner: a slim barrel, a short cone, a needle point.
+  pen: {
+    body: 'M-2.6 -7.4h5.2V-24.8a2.6 2.6 0 0 1-5.2 0z',
+    tip: 'M0 0-2.6-7.4h5.2z',
+    band: 'M-2.6 -7.4h5.2v-2.2h-5.2z',
+  },
+  // A marker: a broad barrel and a felt bullet tip.
+  marker: {
+    body: 'M-3.6 -8h7.2V-23.2a3.6 3.6 0 0 1-7.2 0z',
+    tip: 'M-1.6 0a1.6 1.6 0 0 0 3.2 0l2-8h-7.2z',
+    band: 'M-3.6 -20.4h7.2v-2.8h-7.2z',
+  },
+  // A highlighter: the widest barrel and a flat chisel.
+  highlighter: {
+    body: 'M-4.2 -7.2h8.4V-22.6a4.2 4.2 0 0 1-8.4 0z',
+    tip: 'M-3.2 0h6.4l1-7.2h-8.4z',
+    band: 'M-4.2 -7.2h8.4v-2.4h-8.4z',
+  },
+};
+
+/** The tip of a drawing implement, in the pointer's box: the hotspot. */
+export const DRAW_TIP: Hotspot = { x: 4, y: 24 };
+
+/**
+ * The pen tool's pointer: the brush in hand, its tip in the current ink.
+ *
+ * The ink is the one live colour on any pointer, and it earns it: it answers
+ * "what colour will this be" before the stroke starts, which a swatch in a
+ * panel answers only if you look there. Built per ink and cached by id, so a
+ * palette change costs one string.
+ */
+export function drawVisual(brush: DrawBrush, ink: string, dark = cursorTheme.dark): CursorVisual {
+  const p = paletteFor(dark);
+  const art = IMPLEMENTS[brush] ?? IMPLEMENTS.pen;
+  const shapes = [art.body, art.band, art.tip];
+  const halo = shapes
+    .map((d) => `<path d="${d}" fill="${p.edge}" stroke="${p.edge}" stroke-width="3.2"/>`)
+    .join('');
+  const fills =
+    `<path d="${art.body}" fill="${p.body}" stroke="${p.edge}" stroke-width="1.1"/>` +
+    `<path d="${art.band}" fill="${ink}" stroke="${p.edge}" stroke-width="1.1"/>` +
+    `<path d="${art.tip}" fill="${ink}" stroke="${p.edge}" stroke-width="1.1"/>`;
+  return {
+    id: tagged(`draw:${brush}:${ink}:${dark ? 'd' : 'l'}`),
+    svg: svgWrap(
+      `<g transform="translate(${DRAW_TIP.x} ${DRAW_TIP.y}) rotate(45)" stroke-linejoin="round">${halo}${fills}</g>`
+    ),
+    offsetX: -DRAW_TIP.x,
+    offsetY: -DRAW_TIP.y,
+  };
+}
+
+/** Options for the board pointer that only some tools read. */
+export interface CursorOptions {
+  /** The pen tool's brush and ink. */
+  brush?: DrawBrush;
+  ink?: string;
+  /** The eraser's width in screen px. */
+  eraserSize?: number;
+}
 
 /**
  * The art for a mode and tool, in a theme's accent.
@@ -411,14 +631,24 @@ export function cursorVisual(
   mode: CursorMode,
   tool: string | undefined,
   accent: string,
-  dark = false
+  dark = cursorTheme.dark,
+  options: CursorOptions = {}
 ): CursorVisual {
+  // The pen and the eraser are drawn from live settings, so they have their
+  // own builders and their own ids.
+  if (tool === 'pen' && mode === 'draw') {
+    return drawVisual(options.brush ?? 'pen', options.ink ?? (dark ? PAPER : INK), dark);
+  }
+  if (mode === 'erase') return eraserVisual(options.eraserSize ?? 20, dark);
+  if (mode === 'comment') return commentVisual(dark);
+  if (tool === 'bezier-pen') return penVisual('place', dark);
+
   const glyph = glyphFor(tool, mode);
   const pal = paletteFor(dark);
   // Every input that changes the markup is named, or the DOM write is skipped
   // on a change it cannot see — which is how a theme switch would have left
   // the old pointer in place until the next tool change.
-  const id = `${mode}:${tool ?? ''}:${accent}:${dark ? 'd' : 'l'}`;
+  const id = tagged(`${mode}:${tool ?? ''}:${accent}:${dark ? 'd' : 'l'}`);
   const at = (h: Hotspot, svg: string): CursorVisual => ({
     id,
     svg,
@@ -429,36 +659,20 @@ export function cursorVisual(
   switch (mode) {
     case 'pan':
       /**
-       * Both hands, and CSS decides which is showing.
+       * The open hand, and only the open hand.
        *
-       * The hand has to close on press — it is the only gesture on the board
-       * with no visible result of its own until the canvas moves, so the hand
-       * closing is the entire acknowledgement that the press landed. The
-       * `grab` mode exists to say that and **nothing ever set it**: the pan
-       * gesture is tracked in a `ref`, which by construction cannot drive a
-       * render, so `cursorModeForTool`'s `panning` input had no caller and the
-       * closed hand was unreachable art.
-       *
-       * Emitting both and switching with `[data-pressed]` needs no render at
-       * all, which is the only way this can be right — a pointer that waits
-       * for React to tell it the button went down is a pointer that closes
-       * late. It is also exactly what the native path already does one line
-       * away in `index.css`, with `[data-cursor-mode="pan"]:active`.
+       * A `url()` cursor is decoded as a standalone document, so the page's
+       * CSS cannot reach inside it to hide one of two drawings: art carrying
+       * both hands showed both, overlaid. The hand closes on press because the
+       * pressed state is a *different cursor value*: `LocalCursor` writes the
+       * closed hand to `--cursor-grab`, and `index.css` swaps to it with
+       * `[data-cursor-mode="pan"]:active`, so no render is involved.
        */
-      return at(
-        CENTRE,
-        svgWrap(
-          `<g class="cursor-hand-open">${hand(HAND_OPEN, pal)}</g>` +
-            `<g class="cursor-hand-closed">${hand(HAND_CLOSED, pal)}</g>`
-        )
-      );
+      return at(CENTRE, svgWrap(hand(HAND_OPEN)));
     case 'grab':
-      return at(CENTRE, svgWrap(hand(HAND_CLOSED, pal)));
+      return at(CENTRE, svgWrap(hand(HAND_CLOSED, HAND_CLOSED_FOLDS)));
     case 'aim':
       return at(CENTRE, svgWrap(cross(3.4, 7, pal, accent)));
-    case 'erase':
-      // Its hotspot is the tip of the nib, not the middle of the block.
-      return at({ x: 5.3, y: 19.5 }, svgWrap(eraser(pal)));
     case 'text': {
       /**
        * The one tool whose pointer is not an arrow, because the click lands
@@ -479,6 +693,12 @@ export function cursorVisual(
        * makes the rule worth stating as "the glyph is the tool's, not the
        * mode's".
        */
+      if (mode === 'draw' && tool && REGION_TOOLS.has(tool)) {
+        return at(REGION_HOT, svgWrap(regionCross(pal) + (glyph ? badge(glyph, pal) : '')));
+      }
+      if (tool === 'direct-select') {
+        return at(TIP, svgWrap(hollowArrow(pal) + (glyph ? badge(glyph, pal) : '')));
+      }
       return at(TIP, svgWrap(arrow(pal) + (glyph ? badge(glyph, pal) : '')));
   }
 }
@@ -536,9 +756,9 @@ function ibeam(p: CursorPalette): string {
  * application whose canvas is the point, and spending it on chrome makes it
  * mean less where it matters.
  */
-export function chromeVisual(context: CursorContext, dark = false): CursorVisual {
+export function chromeVisual(context: CursorContext, dark = cursorTheme.dark): CursorVisual {
   const pal = paletteFor(dark);
-  const id = `chrome:${context}:${dark ? 'd' : 'l'}`;
+  const id = tagged(`chrome:${context}:${dark ? 'd' : 'l'}`);
   if (context === 'text') {
     return { id, svg: svgWrap(ibeam(pal)), offsetX: -CENTRE.x, offsetY: -CENTRE.y };
   }
@@ -711,7 +931,7 @@ export const ROTATE_GEOMETRY = ROTATE;
  * turn out, which reads as an arrow pointing at nothing in particular — the
  * kind of wrong that looks like carelessness rather than like a bug.
  */
-export function rotateVisual(facingDeg: number, dark = false): CursorVisual {
+export function rotateVisual(facingDeg: number, dark = cursorTheme.dark): CursorVisual {
   const p = paletteFor(dark);
   const turn = Math.round(facingDeg - ROTATE.facing);
   const marks = [ROTATE.arc, ...ROTATE.heads];
@@ -724,7 +944,7 @@ export function rotateVisual(facingDeg: number, dark = false): CursorVisual {
       )
       .join('');
   return {
-    id: `rotate:${turn}:${dark ? 'd' : 'l'}`,
+    id: tagged(`rotate:${turn}:${dark ? 'd' : 'l'}`),
     svg: svgWrap(
       `<g transform="rotate(${turn} ${CENTRE.x} ${CENTRE.y})">` +
         // The halo, in the body colour, so the mark separates from any content.
@@ -762,13 +982,13 @@ export function rotateVisual(facingDeg: number, dark = false): CursorVisual {
  * The snapped keyword is still what the `url()` falls back to, so a browser
  * that cannot use the image gets the nearest real one rather than an arrow.
  */
-export function resizeVisual(angleDeg: number, dark = false): CursorVisual {
+export function resizeVisual(angleDeg: number, dark = cursorTheme.dark): CursorVisual {
   const p = paletteFor(dark);
   // A shaft with a head at each end, drawn along the vertical and then turned,
   // so one construction serves every angle.
   const d = 'M14 7.5v13M14 6l-3.2 3.4M14 6l3.2 3.4M14 22l-3.2-3.4M14 22l3.2-3.4';
   return {
-    id: `resize:${Math.round(angleDeg)}:${dark ? 'd' : 'l'}`,
+    id: tagged(`resize:${Math.round(angleDeg)}:${dark ? 'd' : 'l'}`),
     svg: svgWrap(
       `<g transform="rotate(${Math.round(angleDeg)} 14 14)">` +
         `<path d="${d}" fill="none" stroke="${p.body}" stroke-width="4.2"/>` +
@@ -810,7 +1030,7 @@ export function resizeVisual(angleDeg: number, dark = false): CursorVisual {
  */
 export const PRECISION_REACH = 13;
 
-export function precisionVisual(dark = false): CursorVisual {
+export function precisionVisual(dark = cursorTheme.dark): CursorVisual {
   const p = paletteFor(dark);
   const gap = 4;
   const arm = PRECISION_REACH - gap;
@@ -819,7 +1039,7 @@ export function precisionVisual(dark = false): CursorVisual {
     `M${c} ${c - gap - arm}v${arm}M${c} ${c + gap}v${arm}` +
     `M${c - gap - arm} ${c}h${arm}M${c + gap} ${c}h${arm}`;
   return {
-    id: `precise:${dark ? 'd' : 'l'}`,
+    id: tagged(`precise:${dark ? 'd' : 'l'}`),
     svg: svgWrap(
       `<path d="${d}" stroke="${p.body}" stroke-width="3"/>` +
         `<path d="${d}" stroke="${p.edge}" stroke-width="1.1"/>`
@@ -832,7 +1052,7 @@ export function precisionVisual(dark = false): CursorVisual {
 /* ------------------------------------------------------------- pen, type */
 
 /** What a pen pointer is about to do to the path under it. */
-export type PenAction = 'add' | 'remove' | 'convert';
+export type PenAction = 'add' | 'remove' | 'convert' | 'place';
 
 /**
  * The pen, with a sign for what the next click does.
@@ -852,25 +1072,29 @@ export type PenAction = 'add' | 'remove' | 'convert';
  * The nib points up-left so its tip is the hotspot, and the sign sits clear of
  * it in the opposite corner where it cannot obscure what is being aimed at.
  */
-export function penVisual(action: PenAction, dark = false): CursorVisual {
+export function penVisual(action: PenAction, dark = cursorTheme.dark): CursorVisual {
   const p = paletteFor(dark);
   // A fountain-pen nib: a tapered body to a point at the top-left, with a slit.
   const nib = 'M3 3 8.6 17.4 13.2 12.8Z';
   const slit = 'M5.6 5.6 10 10';
   const sign =
-    action === 'add'
+    action === 'place'
+      ? ''
+      : action === 'add'
       ? 'M19 13.5v7M15.5 17h7'
       : action === 'remove'
         ? 'M15.5 17h7'
         // Convert: a caret, which is the shape a corner point *is*.
         : 'M15.5 20 19 15.5 22.5 20';
   return {
-    id: `pen:${action}:${dark ? 'd' : 'l'}`,
+    id: tagged(`pen:${action}:${dark ? 'd' : 'l'}`),
     svg: svgWrap(
       `<path d="${nib}" fill="${p.body}" stroke="${p.edge}" stroke-width="1.7" stroke-linejoin="round"/>` +
         `<path d="${slit}" stroke="${p.edge}" stroke-width="1.2" opacity="0.55"/>` +
-        `<path d="${sign}" fill="none" stroke="${p.body}" stroke-width="4"/>` +
-        `<path d="${sign}" fill="none" stroke="${p.edge}" stroke-width="1.8"/>`
+        (sign
+          ? `<path d="${sign}" fill="none" stroke="${p.body}" stroke-width="4"/>` +
+            `<path d="${sign}" fill="none" stroke="${p.edge}" stroke-width="1.8"/>`
+          : '')
     ),
     offsetX: -3,
     offsetY: -3,
@@ -891,12 +1115,12 @@ export function penVisual(action: PenAction, dark = false): CursorVisual {
  * I-beam that means "there is already text here to select". One says a drag
  * makes a box; the other says a drag makes a selection.
  */
-export function typeVisual(dark = false): CursorVisual {
+export function typeVisual(dark = cursorTheme.dark): CursorVisual {
   const p = paletteFor(dark);
   const beam = 'M14 8v12M11.6 8h4.8M11.6 20h4.8';
   const box = 'M5.5 4.5h17v19h-17z';
   return {
-    id: `type:${dark ? 'd' : 'l'}`,
+    id: tagged(`type:${dark ? 'd' : 'l'}`),
     svg: svgWrap(
       `<path d="${box}" fill="none" stroke="${p.body}" stroke-width="3" stroke-dasharray="2.4 2.4"/>` +
         `<path d="${box}" fill="none" stroke="${p.edge}" stroke-width="1.1" stroke-dasharray="2.4 2.4" opacity="0.75"/>` +
@@ -924,14 +1148,14 @@ export function typeVisual(dark = false): CursorVisual {
  * reason the rotate and resize pointers are: an arrow that does not lie along
  * the motion describes a different gesture.
  */
-export function shearVisual(angleDeg: number, dark = false): CursorVisual {
+export function shearVisual(angleDeg: number, dark = cursorTheme.dark): CursorVisual {
   const p = paletteFor(dark);
   // Upper shaft runs right, lower shaft runs left.
   const d =
     'M6 11h13M16 8l3.5 3-3.5 3' +
     'M22 17H9M12 14l-3.5 3 3.5 3';
   return {
-    id: `shear:${Math.round(angleDeg)}:${dark ? 'd' : 'l'}`,
+    id: tagged(`shear:${Math.round(angleDeg)}:${dark ? 'd' : 'l'}`),
     svg: svgWrap(
       `<g transform="rotate(${Math.round(angleDeg)} 14 14)">` +
         `<path d="${d}" fill="none" stroke="${p.body}" stroke-width="4"/>` +
@@ -964,7 +1188,7 @@ export function shearVisual(angleDeg: number, dark = false): CursorVisual {
  * point: over an unselected object the arrow still means "this will select",
  * which is true and is different.
  */
-export function moveVisual(dark = false): CursorVisual {
+export function moveVisual(dark = cursorTheme.dark): CursorVisual {
   const p = paletteFor(dark);
   const c = SIZE / 2;
   // A cross with a head on each arm, drawn as one path so the outline pass
@@ -975,7 +1199,7 @@ export function moveVisual(dark = false): CursorVisual {
     `M4.5 ${c} L8 ${c - 3} M4.5 ${c} L8 ${c + 3} M4.5 ${c} H${c + 9.5}` +
     `M23.5 ${c} L20 ${c - 3} M23.5 ${c} L20 ${c + 3}`;
   return {
-    id: `move:${dark ? 'd' : 'l'}`,
+    id: tagged(`move:${dark ? 'd' : 'l'}`),
     svg: svgWrap(
       `<path d="${d}" fill="none" stroke="${p.body}" stroke-width="4"/>` +
         `<path d="${d}" fill="none" stroke="${p.edge}" stroke-width="1.7"/>`

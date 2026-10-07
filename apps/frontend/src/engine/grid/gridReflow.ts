@@ -1,71 +1,36 @@
-import type { AnyNode, GridNode, ImageNode, TextNode } from '../model/schema';
-import { coverCrop, parkedCell, slotBox } from './gridSlot';
+import { isOpenShape, type AnyNode, type GridNode, type ImageNode, type TextNode } from '../model/schema';
+import { coverCrop, parkedCell, slotBox, type GridSlot } from './gridSlot';
 import { gridCellsOf } from './gridNode';
+import { paddingOf, type CellAlign, type CellAlignAxis } from './gridLayout';
 import { cornerRadiiOf } from '../model/cornerRadii';
+import { layoutText } from '../text/layout';
+import { measurerFor } from '../text/measure';
+import { SLOTTABLE_TYPES } from './slottable';
 
 /**
- * A node that can sit in a module: a picture, or a caption.
+ * Keeping content on its modules.
  *
- * Kept as a union rather than as `AnyNode` so the fitting branch below is
- * exhaustive by the compiler rather than by a default case — adding a third
- * kind of content should fail to build until somebody decides how it is fitted,
- * which is the one decision that cannot be defaulted.
+ * A grid's modules are derived from its box, so anything sitting in one has to
+ * move whenever that box changes: a drag, the transformer, a nudge, a panel
+ * edit, an undo, or a collaborator doing any of those. Undo and remote edits
+ * have no local call site, so this is a planner run by an observer
+ * (`startGridSlotSync`) rather than something every writer remembers to call.
+ *
+ * Everything here is pure: hand it a grid and its content, and it returns the
+ * writes. Only differences are written, so every client computes the same
+ * answer, the client whose change it was writes it, and a second pass over its
+ * own write produces nothing.
  */
-export type SlottableNode = ImageNode | TextNode;
 
-export const isSlottable = (n: AnyNode | undefined): n is SlottableNode =>
-  n?.type === 'image' || n?.type === 'text';
+export { SLOTTABLE_TYPES } from './slottable';
 
-/**
- * Keeping slotted pictures on their modules.
- *
- * ## Why this is one function and not seven call sites
- *
- * A grid's modules are derived from its box, so a picture sitting in one has to
- * be moved whenever that box changes — and the box changes from a drag, the
- * transformer, a nudge, an align, a distribute, a panel edit, an undo, and a
- * collaborator doing any of those on another machine.
- *
- * The previous generation of the grid code tried to hold two copies of a fact
- * together by remembering to update the second one at each of those sites, and
- * `gridApply.ts` opens with the post-mortem: *"every one of those existed to
- * hold two copies of one fact together, and every one of them was a place they
- * could come apart."* Undo and a remote edit are the two that settle the
- * argument, because **neither has a local call site at all** — the UndoManager
- * writes to the Y.Map directly, and a collaborator's change arrives as an
- * update. Anything that has to be remembered by a sender cannot cover them.
- *
- * So this observes the document instead. It is the shape invariant 12 asks for:
- * a state that anything can falsify from outside rather than one that depends
- * on every writer remembering. A reflow is a pure function of the grid's
- * current box, so running it again is always safe and always converges.
- *
- * ## Why writing back is right, when a connector derives on read
- *
- * `ConnectorNode` recomputes its points on every read and stores nothing, and
- * the obvious question is why a slotted picture does not. Because a connector
- * is a special case in every consumer that needed to know, and a picture is
- * not: the spatial index, culling, the selection outline, the transformer,
- * smart guides and `computeContentBounds` all read `x`/`y`/`width`/`height`
- * straight off the node. Deriving on read would mean teaching every one of them
- * about grid slots. Writing through means teaching none of them anything, and
- * the document says something true about where the picture is.
- *
- * That is also the existing precedent: `syncConnectedConnectors` writes patches
- * on commit for exactly this reason, and this planner deliberately has the same
- * shape — it *returns* patches rather than writing them, so a caller can fold
- * them into one transaction and so the whole thing can be tested with no
- * document at all.
- *
- * ## Idempotence is what makes it safe on every client
- *
- * Every client observes the same change and computes the same answer, but only
- * differences are written — so the client that made the change writes, and the
- * others compute the identical box, find it already correct, and write nothing.
- * Two clients racing produce byte-identical values, which a CRDT merges without
- * a conflict. This is also what stops the observer feeding itself: the write it
- * makes produces a change whose reflow is a no-op.
- */
+export type SlottableNode = AnyNode & { gridSlot?: GridSlot };
+
+export const isSlottable = (n: AnyNode | undefined): n is SlottableNode => {
+  if (!n || !SLOTTABLE_TYPES.has(n.type)) return false;
+  if (n.type === 'shape' && isOpenShape(n.geometry.kind)) return false;
+  return true;
+};
 
 /** One node, and what has to change about it. Mirrors `applyNodePatches`. */
 export interface ReflowPatch {
@@ -76,12 +41,9 @@ export interface ReflowPatch {
 /**
  * How far a number may drift before it is worth a write.
  *
- * Positions here come out of trigonometry — `slotBox` rotates about the grid's
- * centre — so a value that is arithmetically unchanged can come back differing
- * in the last bits. Writing on that would mean a rotated grid re-broadcasting
- * every picture in it on every unrelated document change, forever. A hundredth
- * of a world unit is far below anything a screen can show at any zoom this
- * canvas supports.
+ * Positions come out of trigonometry when the grid is rotated, so an
+ * unchanged value can differ in its last bits. A hundredth of a unit is far
+ * below anything a screen can show at any zoom.
  */
 const EPSILON = 0.01;
 
@@ -102,159 +64,273 @@ function cropDiffers(
   );
 }
 
+interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+const STRETCH: CellAlign = { x: 'stretch', y: 'stretch' };
+
+/** One axis of a fit: where content of size `own` sits in a run of `extent`. */
+function fitAxis(extent: number, own: number, align: CellAlignAxis): { at: number; size: number } {
+  if (align === 'stretch') return { at: 0, size: extent };
+  const size = Math.max(1, Math.min(extent, own));
+  if (align === 'start') return { at: 0, size };
+  if (align === 'end') return { at: extent - size, size };
+  return { at: (extent - size) / 2, size };
+}
+
 /**
- * What has to change for every picture in one grid.
+ * The box a node takes inside its module, in the grid's own coordinates.
  *
- * Pure: hand it a grid and the pictures claiming a module in it, and it returns
- * the writes. No document, no store, no Konva — which is what lets the
- * behaviour that actually matters (a resize re-covers, a shrunk grid releases,
- * an unchanged grid writes nothing) be pinned by tests rather than by looking.
+ * - Pictures cover the module and text fills it, whatever the alignment: the
+ *   crop and the text box are how they adapt, so there is nothing to align.
+ * - A sticky stays square. It is the one object whose shape is its identity.
+ * - Audio keeps its own height: the player is a fixed-height control.
+ * - Everything else fills the module on a stretched axis, and keeps its own
+ *   size (clamped to the module) on an aligned one.
  *
- * `images` is the caller's business to filter; anything here whose slot names
- * another grid is ignored rather than trusted, because a caller that filtered
- * wrongly would otherwise drag pictures out of a grid they belong to.
+ * Exported for the panel and the drop preview, which show where content will
+ * land before it does.
  */
-export function planGridReflow(
+export function fitInCell(node: SlottableNode, cell: Box, align: CellAlign = STRETCH): Box {
+  if (node.type === 'image' || node.type === 'text') return { ...cell };
+
+  if (node.type === 'sticky') {
+    const side = Math.max(1, Math.min(cell.width, cell.height));
+    const ax = align.x === 'stretch' ? 'center' : align.x;
+    const ay = align.y === 'stretch' ? 'center' : align.y;
+    const x = fitAxis(cell.width, side, ax);
+    const y = fitAxis(cell.height, side, ay);
+    return { x: cell.x + x.at, y: cell.y + y.at, width: side, height: side };
+  }
+
+  const ay = node.type === 'audio' && align.y === 'stretch' ? 'center' : align.y;
+  const x = fitAxis(cell.width, node.width, align.x);
+  const y = fitAxis(cell.height, node.height, ay);
+  return { x: cell.x + x.at, y: cell.y + y.at, width: x.size, height: y.size };
+}
+
+/** The changes that put one node on one box (grid-local), or none if it is there already. */
+function placeChanges(
   grid: GridNode,
-  contents: readonly SlottableNode[]
-): ReflowPatch[] {
+  node: SlottableNode,
+  local: Box,
+  module: { radius: number; outline?: unknown } | null,
+  slot: GridSlot
+): Record<string, unknown> {
+  const box = slotBox(grid, local);
+  const changes: Record<string, unknown> = {};
+  if (differs(node.x, box.x)) changes.x = box.x;
+  if (differs(node.y, box.y)) changes.y = box.y;
+  if (differs(node.width, box.width)) changes.width = box.width;
+  if (differs(node.height, box.height)) changes.height = box.height;
+  if (differs(node.rotation, box.rotation)) changes.rotation = box.rotation;
+
+  if (node.type === 'image') {
+    // Re-covered, not merely resized: a module that changed proportions would
+    // otherwise stretch the picture. `coverCrop` returns null until the
+    // bitmap's natural size is known, which leaves the stored crop alone.
+    const natural = { width: node.naturalWidth ?? 0, height: node.naturalHeight ?? 0 };
+    const crop = coverCrop(local, natural, slot);
+    if (cropDiffers(node.crop, crop)) changes.crop = crop ?? undefined;
+    // A rounded module rounds the picture in it; a parked one keeps its own.
+    const radius = module ? (module.outline ? 0 : module.radius) : null;
+    if (radius !== null && differs(cornerRadiiOf(node.appearance?.cornerRadius)[0], radius)) {
+      changes.appearance = { ...(node.appearance ?? {}), cornerRadius: radius };
+    }
+  } else if (node.type === 'text') {
+    // The module decides a caption's box, so the box must not follow the text.
+    if (node.resize !== 'fixed') changes.resize = 'fixed';
+  }
+  return changes;
+}
+
+/**
+ * What has to change for everything in one grid.
+ *
+ * Content whose module no longer exists (the grid was given fewer modules, or
+ * a kind with a different count) is parked in a strip below the grid rather
+ * than released, so cycling through arrangements never costs anyone their
+ * content. Parked order follows the module each one came from, so restoring
+ * the old arrangement restores the old order.
+ */
+export function planGridReflow(grid: GridNode, contents: readonly SlottableNode[]): ReflowPatch[] {
   const cells = gridCellsOf(grid);
+  const byIndex = new Map(cells.map((c) => [c.index, c]));
+  const align = grid.grid.spec.contentAlign ?? STRETCH;
   const patches: ReflowPatch[] = [];
 
-  /**
-   * Which of this grid's content has no module to be in.
-   *
-   * Worked out up front, and in a stable order, because where a parked item
-   * goes depends on how many others are parked — and every client has to agree
-   * about that or they will fight over the positions. Ordered by the module
-   * each one *came from*, so the strip preserves the arrangement they had and
-   * putting the old grid back puts them back in the same order.
-   */
   const mine = contents.filter((n) => n.gridSlot?.gridId === grid.id);
   const parked = mine
-    .filter((n) => !cells.some((c) => c.index === n.gridSlot!.cell))
-    .sort((a, b) => a.gridSlot!.cell - b.gridSlot!.cell);
+    .filter((n) => !byIndex.has(n.gridSlot!.cell))
+    .sort((a, b) => a.gridSlot!.cell - b.gridSlot!.cell || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const parkedOrdinal = new Map(parked.map((n, i) => [n.id, i]));
 
-  for (const image of mine) {
-    const slot = image.gridSlot!;
-    const cell = cells.find((c) => c.index === slot.cell);
-
-    /**
-     * The module this content was in does not exist in the current
-     * arrangement — the grid was given fewer modules, or a different kind
-     * with a different number of them.
-     *
-     * **It waits, it is not released.** The binding is kept and the content is
-     * laid out in a strip below the grid, so bringing back an arrangement with
-     * enough modules brings it back into place. See `parkedCell` for why: a
-     * grid's module count runs from one to thirty-six across the kinds, and
-     * cycling through them to see which you like is precisely the gesture that
-     * must not cost you your photographs.
-     *
-     * Releasing is now only ever something a person asks for.
-     */
-    if (!cell) {
-      const box = slotBox(grid, parkedCell(parkedOrdinal.get(image.id) ?? 0, grid));
-      const changes: Record<string, unknown> = {};
-      if (differs(image.x, box.x)) changes.x = box.x;
-      if (differs(image.y, box.y)) changes.y = box.y;
-      if (differs(image.width, box.width)) changes.width = box.width;
-      if (differs(image.height, box.height)) changes.height = box.height;
-      if (differs(image.rotation, box.rotation)) changes.rotation = box.rotation;
-
-      // Re-covered to the waiting square, so a parked photograph is a
-      // photograph rather than a stretched one.
-      if (image.type === 'image') {
-        const natural = { width: image.naturalWidth ?? 0, height: image.naturalHeight ?? 0 };
-        const crop = coverCrop(box, natural, slot);
-        if (cropDiffers(image.crop, crop)) changes.crop = crop ?? undefined;
-      }
-
-      if (Object.keys(changes).length > 0) patches.push({ id: image.id, changes });
-      continue;
-    }
-
-    const box = slotBox(grid, cell);
-    const changes: Record<string, unknown> = {};
-
-    if (differs(image.x, box.x)) changes.x = box.x;
-    if (differs(image.y, box.y)) changes.y = box.y;
-    if (differs(image.width, box.width)) changes.width = box.width;
-    if (differs(image.height, box.height)) changes.height = box.height;
-    if (differs(image.rotation, box.rotation)) changes.rotation = box.rotation;
-
-    /**
-     * The picture is re-covered, not merely resized.
-     *
-     * Moving a grid changes nothing about the crop; changing its proportions
-     * changes everything about it. Skipping this would stretch a photograph the
-     * moment a 3x3 grid was dragged wider — which is the exact failure "cover"
-     * exists to prevent, arriving one gesture after the picture was placed
-     * correctly.
-     *
-     * `coverCrop` returns null when the bitmap's natural size has not been
-     * recorded yet, and null means *leave the stored crop alone*: the picture
-     * keeps its module and shows its whole self until some client loads it and
-     * writes the size down, at which point that write is itself a change this
-     * observer sees, and the next reflow covers it properly.
-     */
-    if (image.type === 'image') {
-      const natural = { width: image.naturalWidth ?? 0, height: image.naturalHeight ?? 0 };
-      const crop = coverCrop(cell, natural, slot);
-      if (cropDiffers(image.crop, crop)) changes.crop = crop ?? undefined;
-    } else {
-      /**
-       * A caption is fitted by being told its box, and that is the whole of it.
-       *
-       * There is no source to cover and nothing to crop — the module *is* the
-       * text box. What it does need is `resize: 'fixed'`, because the other two
-       * modes let the box follow the text: an auto-height caption would grow
-       * out of its module the moment somebody typed a third line, and the
-       * reflow would drag it back on the next document change, so the box would
-       * fight the typing. Fixed is the mode that already means "this box is
-       * decided elsewhere", and it ellipsizes rather than overflowing.
-       */
-      if (image.resize !== 'fixed') changes.resize = 'fixed';
-    }
-
-    /**
-     * A rounded module rounds the picture in it.
-     *
-     * `ImageRenderer` already hands `cornerRadius` to Konva, which clips to it
-     * natively, so a rounded rectangular module needs no clipping code at all —
-     * only the number. Non-rectangular modules are a different problem and are
-     * clipped by `ObjectRenderer`, which can express a silhouette.
-     */
-    if (image.type === 'image') {
-      const radius = cell.outline ? 0 : cell.radius;
-      if (differs(cornerRadiiOf(image.appearance?.cornerRadius)[0], radius)) {
-        changes.appearance = { ...(image.appearance ?? {}), cornerRadius: radius };
-      }
-    }
-
-    if (Object.keys(changes).length > 0) patches.push({ id: image.id, changes });
+  for (const node of mine) {
+    const slot = node.gridSlot!;
+    const cell = byIndex.get(slot.cell);
+    const changes = cell
+      ? placeChanges(grid, node, fitInCell(node, cell, align), cell, slot)
+      : placeChanges(
+          grid,
+          node,
+          parkedCell(parkedOrdinal.get(node.id) ?? 0, grid),
+          null,
+          slot
+        );
+    if (Object.keys(changes).length > 0) patches.push({ id: node.id, changes });
   }
 
   return patches;
 }
 
+// ---------------------------------------------------------------------------
+// Hug rows
+// ---------------------------------------------------------------------------
+
+/** The height a row is given when nothing in it has a height of its own. */
+export const HUG_EMPTY_ROW = 48;
+
+/** A text node's height when its lines are laid out at `width`. */
+export function textHeightAt(node: TextNode, width: number): number {
+  const t = node.typography;
+  const layout = layoutText({
+    text: node.text ?? '',
+    wrap: 'word',
+    width: Math.max(1, width),
+    fontSize: t.fontSize,
+    lineHeight: t.lineHeight,
+    letterSpacing: t.letterSpacing,
+    align: t.align,
+    measure: measurerFor(t),
+  });
+  return Math.max(t.fontSize * t.lineHeight, layout.height);
+}
+
 /**
- * Pictures whose grid is gone.
+ * How tall a node wants to be in a module `width` wide, or nothing when it
+ * has no height of its own there.
  *
- * Separated from the reflow because it answers a question the reflow cannot:
- * *is this grid missing, or has it simply not arrived yet?* On a document that
- * is still syncing, a picture can be loaded before the grid it belongs to, and
- * releasing it then would quietly dismantle every grid on the board during the
- * first second of every session. So this is only ever called with a grid id the
- * caller **watched being deleted**, never with one it merely failed to find.
+ * Only content with an intrinsic height can push a row: text (its laid-out
+ * lines), a sticky (it is square), a table (its rows). Anything stretched on
+ * the vertical axis takes the row's height rather than setting it.
+ */
+export function intrinsicHeight(
+  node: SlottableNode,
+  width: number,
+  align: CellAlign,
+  measureText: (node: TextNode, width: number) => number = textHeightAt
+): number | null {
+  switch (node.type) {
+    case 'text':
+      return measureText(node, width);
+    case 'sticky':
+      return width;
+    case 'table':
+      return node.height;
+    case 'image':
+      return null;
+    default:
+      return align.y === 'stretch' ? null : node.height;
+  }
+}
+
+/**
+ * For a grid that hugs its content, the row sizes and the grid height that fit
+ * it. Returns the updated grid (for the content pass to lay out against) and
+ * the patch that writes it, or `null` for both when nothing changes.
+ *
+ * Only `columns` and `modular` hug: they are the kinds with real rows. The
+ * measured heights are written into `tracks.rows` as fixed sizes, so every
+ * reader (renderer, exporter, hit-test) lays out the same grid without
+ * measuring anything.
+ */
+export function planHugRows(
+  grid: GridNode,
+  contents: readonly SlottableNode[],
+  measureText?: (node: TextNode, width: number) => number
+): { grid: GridNode; patch: ReflowPatch } | null {
+  const spec = grid.grid.spec;
+  if (spec.sizing !== 'hug' || (spec.kind !== 'columns' && spec.kind !== 'modular')) return null;
+
+  const nRows = spec.kind === 'columns' ? 1 : Math.max(1, Math.floor(spec.rows));
+  const align = spec.contentAlign ?? STRETCH;
+  const cells = gridCellsOf(grid);
+  const byIndex = new Map(cells.map((c) => [c.index, c]));
+
+  // The rows' current sizes, so an empty row keeps the height it has.
+  const current: number[] = new Array(nRows).fill(HUG_EMPTY_ROW);
+  for (const c of cells) {
+    const span = spec.spans?.[`${c.row}:${c.col}`];
+    if ((span?.rows ?? 1) === 1) current[c.row] = c.height;
+  }
+
+  const wanted: (number | null)[] = new Array(nRows).fill(null);
+  for (const node of contents) {
+    if (node.gridSlot?.gridId !== grid.id) continue;
+    const cell = byIndex.get(node.gridSlot.cell);
+    if (!cell) continue;
+    const span = spec.spans?.[`${cell.row}:${cell.col}`];
+    if ((span?.rows ?? 1) !== 1) continue; // A tall module does not size one row.
+    const h = intrinsicHeight(node, cell.width, align, measureText);
+    if (h === null || !Number.isFinite(h)) continue;
+    wanted[cell.row] = Math.max(wanted[cell.row] ?? 0, h);
+  }
+
+  const rows = wanted.map((h, i) => Math.max(1, Math.ceil(h ?? current[i] ?? HUG_EMPTY_ROW)));
+  const pad = paddingOf(spec);
+  const height = pad.top + pad.bottom + rows.reduce((a, b) => a + b, 0) + spec.gutterY * (nRows - 1);
+
+  const previous = spec.tracks?.rows ?? [];
+  const sameRows =
+    previous.length === nRows &&
+    previous.every((t, i) => typeof t === 'object' && 'px' in t && !differs(t.px, rows[i]));
+  if (sameRows && !differs(grid.height, height)) return null;
+
+  const nextSpec = {
+    ...spec,
+    height,
+    tracks: { ...(spec.tracks ?? {}), rows: rows.map((px) => ({ px })) },
+  };
+  const nextGrid: GridNode = { ...grid, height, grid: { ...grid.grid, spec: nextSpec } };
+  return {
+    grid: nextGrid,
+    patch: { id: grid.id, changes: { height, grid: nextGrid.grid } },
+  };
+}
+
+/**
+ * Everything one grid needs: the hug pass (which may change the grid), then
+ * the content pass against the grid as it will be.
+ */
+export function planGridUpdate(
+  grid: GridNode,
+  contents: readonly SlottableNode[],
+  measureText?: (node: TextNode, width: number) => number
+): ReflowPatch[] {
+  const hug = planHugRows(grid, contents, measureText);
+  const target = hug?.grid ?? grid;
+  const content = planGridReflow(target, contents);
+  return hug ? [hug.patch, ...content] : content;
+}
+
+/**
+ * Content whose grid is gone.
+ *
+ * Only ever called with a grid id the caller **watched being deleted**, never
+ * one it merely failed to find: on a document that is still syncing, content
+ * can load before its grid, and releasing it then would dismantle every grid
+ * on the board during the first second of every session.
  */
 export function planSlotRelease(
   gridIds: ReadonlySet<string>,
-  images: readonly SlottableNode[]
+  nodes: readonly SlottableNode[]
 ): ReflowPatch[] {
   if (gridIds.size === 0) return [];
-  return images
-    .filter((image) => image.gridSlot && gridIds.has(image.gridSlot.gridId))
-    .map((image) => ({ id: image.id, changes: { gridSlot: undefined } }));
+  return nodes
+    .filter((node) => node.gridSlot && gridIds.has(node.gridSlot.gridId))
+    .map((node) => ({ id: node.id, changes: { gridSlot: undefined } }));
 }

@@ -120,3 +120,42 @@ describe('CameraSystem animation', () => {
     expect(cameraSystem.isAnimating()).toBe(false);
   });
 });
+
+describe('CameraSystem navigation APIs', () => {
+  beforeEach(() => {
+    cameraSystem.cancelAnimation();
+    cameraSystem.resize(800, 600);
+  });
+
+  it('zooms to an exact level about the viewport centre', () => {
+    cameraSystem.zoomToLevel(2, 400, 300, 0);
+    expect(cameraSystem.zoom).toBe(2);
+    // The world point that was at the centre is still there.
+    expect(cameraSystem.screenToWorld(400, 300)).toEqual({ x: 400, y: 300 });
+  });
+
+  it('clamps an out-of-range level', () => {
+    cameraSystem.zoomToLevel(100, 400, 300, 0);
+    expect(cameraSystem.zoom).toBe(cameraSystem.zoomLimits.maxZoom);
+  });
+
+  it('flies to a box, centring it', () => {
+    const ok = cameraSystem.flyToBounds({ x: 1000, y: 1000, width: 200, height: 100 }, { duration: 0, padding: 0 });
+    expect(ok).toBe(true);
+    const centre = cameraSystem.screenToWorld(400, 300);
+    expect(centre.x).toBeCloseTo(1100);
+    expect(centre.y).toBeCloseTo(1050);
+  });
+
+  it('refuses a box with no position', () => {
+    expect(cameraSystem.flyToBounds({ x: Number.NaN, y: 0, width: 10, height: 10 }, { duration: 0 })).toBe(false);
+  });
+
+  it('lets a pinch run a little past the limit, then settles back inside', async () => {
+    cameraSystem.setPose(0, 0, cameraSystem.zoomLimits.maxZoom);
+    cameraSystem.zoomBy(1.5, 400, 300);
+    expect(cameraSystem.zoom).toBeGreaterThan(cameraSystem.zoomLimits.maxZoom);
+    await new Promise((r) => setTimeout(r, 600));
+    expect(cameraSystem.zoom).toBeCloseTo(cameraSystem.zoomLimits.maxZoom, 5);
+  });
+});

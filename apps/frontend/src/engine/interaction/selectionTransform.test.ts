@@ -22,6 +22,19 @@ describe('selectionBox', () => {
     expect(selectionBox([])).toBeNull();
   });
 
+  it('contains rotated members of a multi-selection as drawn', () => {
+    // A 100x20 bar turned 90° about its centre (50, 10) spans x 40..60, y -40..60.
+    const box = selectionBox([node(0, 0, 100, 20, 90), node(200, 0, 10, 10)])!;
+    expect(box.x).toBeCloseTo(40);
+    expect(box.y).toBeCloseTo(-40);
+    expect(box.height).toBeCloseTo(100);
+    expect(box.x + box.width).toBeCloseTo(210);
+  });
+
+  it('keeps a single rotated object unrotated, since the proxy carries its angle', () => {
+    expect(selectionBox([node(0, 0, 100, 20, 90)])).toEqual({ x: 0, y: 0, width: 100, height: 20 });
+  });
+
   it('ignores an object with no finite position', () => {
     expect(selectionBox([node(NaN, 0, 10, 10), node(0, 0, 10, 10)])).toEqual({
       x: 0, y: 0, width: 10, height: 10,

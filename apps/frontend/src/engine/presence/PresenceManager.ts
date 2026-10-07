@@ -1,5 +1,5 @@
 import { provider } from '../document';
-import type { ActivityKind } from './collaborators';
+import { CHAT_MAX_CHARS, type ActivityKind } from './collaborators';
 import { SPOTLIGHT_MS } from './spotlight';
 import type { PresenceState } from "./PresenceTypes";
 
@@ -18,6 +18,9 @@ import type { PresenceState } from "./PresenceTypes";
  *
  * Writing awareness anywhere else reintroduces that. Route it through here.
  */
+/** How long a sent cursor chat line stays up beside the pointer. */
+export const CHAT_LINGER_MS = 5000;
+
 class PresenceEngine {
   private localState: Partial<PresenceState> = {
     cursor: null,
@@ -31,6 +34,7 @@ class PresenceEngine {
   };
 
   private spotlightTimeout: ReturnType<typeof setTimeout> | null = null;
+  private chatTimeout: ReturnType<typeof setTimeout> | null = null;
   private spotlightListeners = new Set<() => void>();
 
   private pendingUpdate = false;
@@ -48,8 +52,10 @@ class PresenceEngine {
     
     const now = Date.now();
     const timeSinceLast = now - this.lastUpdateTime;
-    
-    if (timeSinceLast >= this.THROTTLE_MS) {
+
+    // A wall clock that jumped backwards (a sync or a manual change) would make
+    // the gap negative and hold every update back by the size of the jump.
+    if (timeSinceLast >= this.THROTTLE_MS || timeSinceLast < 0) {
       this.pushToAwareness();
     } else {
       this.pendingUpdate = true;
@@ -224,6 +230,40 @@ class PresenceEngine {
    * Broadcast an ephemeral emoji reaction attached to the user's cursor.
    * Automatically clears from presence after 3.5 seconds.
    */
+  /**
+   * Cursor chat, as it is typed.
+   *
+   * `open` is true while the bubble is being written, so peers can show a
+   * caret. Sending closes it and leaves the line up for `CHAT_LINGER_MS`;
+   * cancelling clears it at once. Rides the same throttle as the pointer, so a
+   * fast typist costs no more than a moving cursor.
+   */
+  public updateChat(text: string, open: boolean) {
+    if (this.chatTimeout) {
+      clearTimeout(this.chatTimeout);
+      this.chatTimeout = null;
+    }
+    const line = text.slice(0, CHAT_MAX_CHARS);
+    this.localState.chat = { text: line, open, at: Date.now() };
+    this.resetIdleTimer();
+    this.scheduleUpdate();
+    if (open) return;
+    this.chatTimeout = setTimeout(() => {
+      this.chatTimeout = null;
+      this.clearChat();
+    }, line.trim() ? CHAT_LINGER_MS : 0);
+  }
+
+  public clearChat() {
+    if (this.chatTimeout) {
+      clearTimeout(this.chatTimeout);
+      this.chatTimeout = null;
+    }
+    if (!this.localState.chat) return;
+    this.localState.chat = null;
+    this.scheduleUpdate();
+  }
+
   public broadcastReaction(emoji: string) {
     this.localState.reaction = {
       emoji,

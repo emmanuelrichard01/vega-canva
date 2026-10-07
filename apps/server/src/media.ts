@@ -3,7 +3,7 @@ import path from 'path';
 /**
  * What may be uploaded, and what it is served as.
  *
- * Extracted from `index.ts` so the tests can hold the real table rather than a
+ * Its own module so the tests can hold the real table rather than a
  * copy of it. `server.test.ts` used to redeclare all three of these constants
  * at the top of the file, which tests the copy: deleting an entry from the
  * server and forgetting the test leaves a green suite asserting the old
@@ -36,12 +36,35 @@ export const ALLOWED_MIME_TYPES = new Set([
   'audio/wav',
   'audio/mpeg',
   'audio/aac',
+  // Fonts, uploaded so a board can be set in a typeface its collaborators
+  // do not have installed. The client sends the canonical type for the
+  // extension, whatever the operating system guessed.
+  'font/woff2',
+  'font/woff',
+  'font/ttf',
+  'font/otf',
 ]);
 
 export const ALLOWED_EXTENSIONS = new Set([
   '.png', '.jpg', '.jpeg', '.webp', '.gif',
   '.webm', '.mp4', '.ogg', '.wav', '.mp3', '.m4a', '.aac',
+  '.woff2', '.woff', '.ttf', '.otf',
 ]);
+
+/** Font files, which have a tighter size cap than other media. */
+export const FONT_EXTENSIONS = new Set(['.woff2', '.woff', '.ttf', '.otf']);
+
+/**
+ * The largest font accepted. A full CJK face can approach this; a Latin
+ * family is a few hundred kilobytes, so anything bigger is not a font
+ * anybody meant to set a board in.
+ */
+export const MAX_FONT_BYTES = 10 * 1024 * 1024;
+
+/** Whether a stored key holds a font. */
+export function isFontKey(key: string): boolean {
+  return FONT_EXTENSIONS.has(path.extname(key).toLowerCase());
+}
 
 /**
  * The Content-Type a stored object is served as, decided by **us**.
@@ -68,6 +91,12 @@ export const EXTENSION_TYPES: Record<string, string> = {
   '.mp3': 'audio/mpeg',
   '.m4a': 'audio/mp4',
   '.aac': 'audio/aac',
+  // Served as fonts so `FontFace` and `@font-face` accept them. `nosniff`
+  // still applies, and a font cannot be navigated to as a document.
+  '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
   // Favicons kept by link previews. Never accepted as an upload.
   '.ico': 'image/x-icon',
 };

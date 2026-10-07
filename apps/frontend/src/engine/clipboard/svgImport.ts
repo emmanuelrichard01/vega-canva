@@ -313,12 +313,27 @@ export function importSvg(text: string): SvgImportResult | null {
   return convertSvgTree(root as unknown as SvgLike);
 }
 
+/**
+ * Bounds on what one paste may create.
+ *
+ * Pasted markup is untrusted: a document of a million elements, or groups
+ * nested past the call stack, would freeze or crash the tab and then land in
+ * the shared board for everyone. Artwork beyond these limits is truncated and
+ * reported, not imported whole.
+ */
+export const SVG_IMPORT_MAX_NODES = 2000;
+export const SVG_IMPORT_MAX_DEPTH = 64;
+
 /** The walk, over anything shaped like an element tree. */
 export function convertSvgTree(root: SvgLike): SvgImportResult | null {
   const nodes: Record<string, unknown>[] = [];
   const skipped = new Set<string>();
 
-  const walk = (el: SvgLike) => {
+  const walk = (el: SvgLike, depth = 0) => {
+    if (nodes.length >= SVG_IMPORT_MAX_NODES) {
+      skipped.add('elements beyond the import limit');
+      return;
+    }
     switch (el.tagName.toLowerCase()) {
       case 'svg':
       case 'g':
@@ -326,7 +341,17 @@ export function convertSvgTree(root: SvgLike): SvgImportResult | null {
         // one would move its children, and honouring the full transform stack
         // is a different feature — so a transformed group is reported.
         if (el.getAttribute('transform')) skipped.add('transform');
-        Array.from(el.children).forEach(walk);
+        if (depth >= SVG_IMPORT_MAX_DEPTH) {
+          skipped.add('groups nested too deeply');
+          return;
+        }
+        for (const child of Array.from(el.children)) {
+          if (nodes.length >= SVG_IMPORT_MAX_NODES) {
+            skipped.add('elements beyond the import limit');
+            return;
+          }
+          walk(child, depth + 1);
+        }
         return;
 
       case 'rect': {
@@ -405,6 +430,10 @@ export function convertSvgTree(root: SvgLike): SvgImportResult | null {
         // anchor here anyway, and separate outlines are more useful than one
         // that cannot be taken apart.
         for (const sub of subpaths) {
+          if (nodes.length >= SVG_IMPORT_MAX_NODES) {
+            skipped.add('elements beyond the import limit');
+            break;
+          }
           const node = pathNode(sub, el);
           if (node) nodes.push(node);
         }

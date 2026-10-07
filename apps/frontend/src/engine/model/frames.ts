@@ -388,18 +388,27 @@ export function frameForNode(
  * Everything a frame owns, directly or through a nested frame.
  *
  * Used for the operations that treat a frame and its contents as one thing —
- * moving it, and deleting it. Walks breadth-first from the frame and is
- * **cycle-safe**: `frameForNode` cannot create a cycle, but a hand-edited or
- * concurrently-merged document is not bound by that, and a cycle here would
- * hang the tab rather than misplace a rectangle.
+ * moving it, and deleting it.
+ *
+ * `frameForNode` cannot create a cycle, but two people resizing frames at
+ * once can merge into `a.frameId = b` and `b.frameId = a`. Following that
+ * cycle would make deleting the small frame delete the large one and all it
+ * holds. So a node whose own membership chain loops back to itself is treated
+ * as belonging to nothing here, and the walk never crosses into a cycle.
+ * `repairFrameMembership` (engine/document/upkeep) corrects the stored ids;
+ * this keeps the damage out of deletes and moves in the meantime.
  */
 export function descendantsOfFrame(
   frameId: string,
   nodes: Array<{ id: string; frameId?: string }>
 ): string[] {
+  const parentOf = new Map<string, string>();
+  for (const node of nodes) if (node.frameId) parentOf.set(node.id, node.frameId);
+  const inCycle = nodesInMembershipCycles(parentOf);
+
   const childrenOf = new Map<string, string[]>();
   for (const node of nodes) {
-    if (!node.frameId) continue;
+    if (!node.frameId || inCycle.has(node.id)) continue;
     const siblings = childrenOf.get(node.frameId);
     if (siblings) siblings.push(node.id);
     else childrenOf.set(node.frameId, [node.id]);
@@ -420,4 +429,105 @@ export function descendantsOfFrame(
   }
 
   return found;
+}
+
+/** Ids whose `frameId` chain leads back to themselves. */
+export function nodesInMembershipCycles(parentOf: ReadonlyMap<string, string>): Set<string> {
+  const inCycle = new Set<string>();
+  const settled = new Set<string>();
+  for (const start of parentOf.keys()) {
+    if (settled.has(start)) continue;
+    const path: string[] = [];
+    const onPath = new Map<string, number>();
+    let current: string | undefined = start;
+    while (current !== undefined && !settled.has(current) && !onPath.has(current)) {
+      onPath.set(current, path.length);
+      path.push(current);
+      current = parentOf.get(current);
+    }
+    if (current !== undefined && onPath.has(current)) {
+      for (let i = onPath.get(current)!; i < path.length; i++) inCycle.add(path[i]);
+    }
+    path.forEach((id) => settled.add(id));
+  }
+  return inCycle;
+}
+
+// ---------------------------------------------------------------------------
+// Resize to fit
+// ---------------------------------------------------------------------------
+
+/** Breathing room a fitted frame keeps around its contents, in world units. */
+export const HUG_PADDING = 40;
+
+/**
+ * The frame box that just contains `contents`, plus `padding` on every side.
+ *
+ * Takes the contents' world bounds (rotation already accounted for) and
+ * returns `null` when there is nothing to fit, so a caller never shrinks a
+ * frame to a point. Whole units, because a frame's edges are things people
+ * line other work up against.
+ */
+export function hugBox(
+  contents: ReadonlyArray<{ x: number; y: number; width: number; height: number }>,
+  padding = HUG_PADDING
+): { x: number; y: number; width: number; height: number } | null {
+  if (contents.length === 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const b of contents) {
+    minX = Math.min(minX, b.x);
+    minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.width);
+    maxY = Math.max(maxY, b.y + b.height);
+  }
+  const x = Math.floor(minX - padding);
+  const y = Math.floor(minY - padding);
+  return {
+    x,
+    y,
+    width: Math.max(MIN_FRAME_SIZE, Math.ceil(maxX + padding) - x),
+    height: Math.max(MIN_FRAME_SIZE, Math.ceil(maxY + padding) - y),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Presenting
+// ---------------------------------------------------------------------------
+
+/**
+ * Frames in the order a presentation walks them: reading order.
+ *
+ * Frames whose vertical extents overlap by at least half the shorter one share
+ * a row; rows run top to bottom and each row left to right. That is the order
+ * people lay slides out in on a board, so nobody has to number them. Ties
+ * break by id, so every client presents the same sequence.
+ */
+export function presentationOrder<
+  T extends { id: string; x: number; y: number; width: number; height: number },
+>(frames: readonly T[]): T[] {
+  const byTop = [...frames].sort((a, b) => a.y - b.y || a.x - b.x || (a.id < b.id ? -1 : 1));
+  const rows: { top: number; bottom: number; items: T[] }[] = [];
+
+  for (const frame of byTop) {
+    const top = frame.y;
+    const bottom = frame.y + frame.height;
+    const row = rows.find((r) => {
+      const overlap = Math.min(r.bottom, bottom) - Math.max(r.top, top);
+      const shorter = Math.min(r.bottom - r.top, frame.height);
+      return overlap >= shorter / 2;
+    });
+    if (row) {
+      row.items.push(frame);
+      row.top = Math.min(row.top, top);
+      row.bottom = Math.max(row.bottom, bottom);
+    } else {
+      rows.push({ top, bottom, items: [frame] });
+    }
+  }
+
+  rows.sort((a, b) => a.top - b.top);
+  return rows.flatMap((r) => r.items.sort((a, b) => a.x - b.x || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)));
 }

@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { RailPopoverGroup, RailSideContext } from './railSide';
+import { RAIL_CONTROL_SELECTOR, RAIL_POPUPS, railControls } from './railControls';
 import { HANG, ENTRY } from './railConstants';
 import type { RailSide } from '../../engine/interaction/railPlacement';
 import { Slider } from '../ui/Slider';
@@ -21,12 +22,6 @@ export const VectorEditIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
   </svg>
 );
 
-/** The rail's own controls, in order, leaving out anything inside an open popover. */
-function railControls(rail: HTMLElement): HTMLElement[] {
-  return Array.from(rail.querySelectorAll<HTMLElement>('.ctx-btn')).filter(
-    (el) => !el.closest('.ctx-popover') && !(el as HTMLButtonElement).disabled
-  );
-}
 
 /**
  * The floating rail.
@@ -72,10 +67,18 @@ export const Rail = React.forwardRef<
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     // Keys inside a popover belong to the popover's own controls.
-    if (target.closest('.ctx-popover') || !target.classList.contains('ctx-btn')) return;
+    if (target.closest(RAIL_POPUPS) || !target.matches(RAIL_CONTROL_SELECTOR)) return;
     const controls = railControls(e.currentTarget);
     const at = controls.indexOf(target);
     if (at < 0) return;
+    if (e.key === 'Escape') {
+      // Back to the board, keeping the selection: the board's own Escape
+      // deselects, and that is the second press, not this one.
+      e.preventDefault();
+      e.stopPropagation();
+      target.blur();
+      return;
+    }
     let next = -1;
     if (e.key === 'ArrowRight') next = (at + 1) % controls.length;
     else if (e.key === 'ArrowLeft') next = (at - 1 + controls.length) % controls.length;

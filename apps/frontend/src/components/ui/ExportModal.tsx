@@ -23,6 +23,8 @@ import { useStore } from '../../hooks/useStore';
 interface Props {
   onClose: () => void;
   title: string;
+  /** The format to open on, when the dialog was asked for a particular one. */
+  initialFormat?: ExportFormat;
   /**
    * What is selected on the canvas, offered as a region.
    *
@@ -95,8 +97,9 @@ export const ExportModal: React.FC<Props> = ({
   title,
   selectionIds = [],
   startWithSelection = false,
+  initialFormat = 'png',
 }) => {
-  const [format, setFormat] = useState<ExportFormat>('png');
+  const [format, setFormat] = useState<ExportFormat>(initialFormat);
   const [isExporting, setIsExporting] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

@@ -2,9 +2,12 @@ import React from 'react';
 import { Group, Rect, Shape } from 'react-konva';
 import type { TableNode } from '../../../engine/model/schema';
 import { layoutTable, type TableLayout } from '../../../engine/table/tableLayout';
+import { cellPrims, type Prim } from '../../../engine/table/tablePaint';
+import { paintMeasure } from '../../../engine/table/tableMeasure';
+import { ensureTableRegistry, registryVersion, subscribeRegistry } from '../../../engine/table/tableRegistry';
+import { hasCrossRefs } from '../../../engine/table/tableFormula';
 import { roughPolyline, seedFor, type SketchLevel } from '../../../engine/model/rough';
 import { hachure, SKETCH_FONT, SKETCH_FONT_SCALE } from '../../../engine/chart/chartSketch';
-import { useStore } from '../../../hooks/useStore';
 
 /**
  * A table on the board.
@@ -17,9 +20,13 @@ import { useStore } from '../../../hooks/useStore';
  * interactive long before the table is large. Drawn in one `sceneFunc` it is
  * eight thousand `fillText` calls on a canvas, which is what a canvas is for.
  *
- * Only the cells that fall inside the stage are painted, found from the
- * layout's row height with arithmetic rather than a search — so a long table
- * off to one side costs nothing while you work elsewhere.
+ * What each cell draws comes from the paint plan (`tablePaint.ts`), built once
+ * per layout — text fitted, pills placed, stars counted — so a frame only
+ * paints, and only the rows the stage can see.
+ *
+ * The board keeps drawing every cell while the table's editor is open; the
+ * editor overlays interaction (selection, the input) and nothing else, so the
+ * cells look the same open and closed.
  *
  * ## Sketch
  *
@@ -27,6 +34,8 @@ import { useStore } from '../../../hooks/useStore';
  * a wash, text lettered in the sketch face. The cells, their text and their
  * order are the layout's, unchanged.
  */
+
+ensureTableRegistry();
 
 const FONT = 'Inter, system-ui, -apple-system, sans-serif';
 
@@ -64,54 +73,85 @@ function buildSketch(layout: TableLayout, seed: number, level: SketchLevel): Ske
   };
 }
 
-/**
- * Fitted strings, kept across frames.
- *
- * Every pan and zoom redraws each visible cell, and measuring the same text at
- * the same width again — a binary search of `measureText` calls when it is too
- * long — was most of the cost of a frame on a large table. The room is floored
- * to half a pixel so the key is stable and the answer is never wider than the
- * room it was fitted to.
- */
-const fitCache = new Map<string, string>();
-
-/** Text cut to a width with an ellipsis, measured with the real font. */
-function fitText(ctx: CanvasRenderingContext2D, text: string, room: number): string {
-  if (room <= 4 || !text) return '';
-  const r = Math.floor(room * 2) / 2;
-  const key = `${ctx.font}${r}${text}`;
-  const hit = fitCache.get(key);
-  if (hit !== undefined) return hit;
-  let out = text;
-  if (ctx.measureText(text).width > r) {
-    let lo = 0;
-    let hi = text.length;
-    while (lo < hi) {
-      const mid = Math.ceil((lo + hi) / 2);
-      if (ctx.measureText(text.slice(0, mid) + '…').width <= r) lo = mid;
-      else hi = mid - 1;
-    }
-    out = lo <= 0 ? '' : `${text.slice(0, lo).trimEnd()}…`;
-  }
-  if (fitCache.size > 20000) fitCache.clear();
-  fitCache.set(key, out);
-  return out;
-}
-
-function roundRectPath(ctx: CanvasRenderingContext2D, w: number, h: number, r: number) {
+function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  const rr = Math.max(0, Math.min(r, w / 2, h / 2));
   ctx.beginPath();
-  ctx.moveTo(r, 0);
-  ctx.arcTo(w, 0, w, h, r);
-  ctx.arcTo(w, h, 0, h, r);
-  ctx.arcTo(0, h, 0, 0, r);
-  ctx.arcTo(0, 0, w, 0, r);
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
   ctx.closePath();
 }
 
+const pathCache = new Map<string, Path2D>();
+function pathOf(d: string): Path2D {
+  let p = pathCache.get(d);
+  if (!p) {
+    if (pathCache.size > 5000) pathCache.clear();
+    p = new Path2D(d);
+    pathCache.set(d, p);
+  }
+  return p;
+}
+
+function paint(ctx: CanvasRenderingContext2D, p: Prim, family: string, sketch: boolean) {
+  switch (p.t) {
+    case 'rect':
+      roundRectPath(ctx, p.x, p.y, p.w, p.h, p.r ?? 0);
+      if (p.fill) {
+        ctx.globalAlpha = p.opacity ?? 1;
+        ctx.fillStyle = p.fill;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      if (p.stroke) {
+        ctx.strokeStyle = p.stroke;
+        ctx.lineWidth = p.sw ?? 1;
+        ctx.stroke();
+      }
+      return;
+    case 'path': {
+      const path = pathOf(p.d);
+      if (p.fill) {
+        ctx.fillStyle = p.fill;
+        ctx.fill(path);
+      }
+      if (p.stroke) {
+        ctx.strokeStyle = p.stroke;
+        ctx.lineWidth = p.sw ?? 1;
+        ctx.lineJoin = 'round';
+        ctx.stroke(path);
+      }
+      return;
+    }
+    case 'text': {
+      ctx.font = `${p.italic ? 'italic ' : ''}${p.bold || sketch ? 600 : 400} ${p.size}px ${family}`;
+      ctx.fillStyle = p.fill;
+      ctx.textAlign = p.anchor === 'middle' ? 'center' : p.anchor === 'end' ? 'right' : 'left';
+      ctx.fillText(p.s, p.x, p.y + 0.5);
+      if (p.underline) {
+        const w = ctx.measureText(p.s).width;
+        const x0 = p.anchor === 'middle' ? p.x - w / 2 : p.anchor === 'end' ? p.x - w : p.x;
+        ctx.fillRect(x0, p.y + p.size * 0.52, w, Math.max(0.8, p.size * 0.07));
+      }
+      return;
+    }
+  }
+}
+
 export const TableRenderer: React.FC<{ node: TableNode }> = ({ node }) => {
+  // A table whose formulas read another table redraws when that one changes.
+  const crossVersion = React.useSyncExternalStore(
+    subscribeRegistry,
+    () => (hasCrossRefs(node.table) ? registryVersion() : 0),
+    () => 0
+  );
   const layout = React.useMemo(
     () => layoutTable(node.table, node.width, node.height),
-    [node.table, node.width, node.height]
+    // crossVersion: a dependency the table cannot see in its own spec.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [node.table, node.width, node.height, crossVersion]
   );
   const sketch = node.appearance?.sketch;
   const seed = React.useMemo(() => seedFor(node.id, node.appearance?.sketchSeed), [node.id, node.appearance?.sketchSeed]);
@@ -119,9 +159,11 @@ export const TableRenderer: React.FC<{ node: TableNode }> = ({ node }) => {
     () => (sketch && typeof Path2D !== 'undefined' ? buildSketch(layout, seed, sketch) : null),
     [layout, seed, sketch]
   );
-  // While the cells are open on the board the overlay shows them; the
-  // canvas copy steps back so the two never draw the same words twice.
-  const editing = useStore((s) => s.tableEditNodeId === node.id);
+  const prims = React.useMemo(() => {
+    const measure = paintMeasure(Boolean(sketch));
+    const k = sketch ? SKETCH_FONT_SCALE : 1;
+    return layout.cells.map((cell) => ({ y: cell.y, h: cell.h, prims: cellPrims(cell, layout, { measure, fontScale: k }) }));
+  }, [layout, sketch]);
 
   const draw = React.useCallback(
     (ctx: CanvasRenderingContext2D) => {
@@ -130,11 +172,11 @@ export const TableRenderer: React.FC<{ node: TableNode }> = ({ node }) => {
 
       ctx.save();
       if (layout.frame.fill !== 'transparent') {
-        roundRectPath(ctx, w, h, radius);
+        roundRectPath(ctx, 0, 0, w, h, radius);
         ctx.fillStyle = layout.frame.fill;
         ctx.fill();
       }
-      roundRectPath(ctx, w, h, radius);
+      roundRectPath(ctx, 0, 0, w, h, radius);
       ctx.clip();
 
       // Only the rows the stage can see. The transform maps node space to
@@ -185,57 +227,11 @@ export const TableRenderer: React.FC<{ node: TableNode }> = ({ node }) => {
         }
       }
 
-      if (!editing) {
-        const fs = layout.fontSize * (sketch ? SKETCH_FONT_SCALE : 1);
-        const family = sketch ? SKETCH_FONT : FONT;
-        ctx.textBaseline = 'middle';
-        for (const c of layout.cells) {
-          if (!c.text && !c.sort && !c.filtered) continue;
-          if (!visible(c.y, c.h)) continue;
-          ctx.font = `${c.italic ? 'italic ' : ''}${c.bold || sketch ? 600 : 400} ${fs}px ${family}`;
-          ctx.fillStyle = c.color;
-          const mark = c.sort || c.filtered ? fs * 0.9 : 0;
-          const room = c.w - layout.padX * 2 - mark;
-          const cellStr = typeof c.text === 'object' && c.text !== null
-            ? String((c.text as { value?: unknown; text?: unknown }).value ?? (c.text as { text?: unknown }).text ?? '')
-            : String(c.text ?? '');
-          const text = fitText(ctx, cellStr, room);
-          const cy = c.y + c.h / 2 + 0.5;
-          if (text) {
-            if (c.align === 'center') {
-              ctx.textAlign = 'center';
-              ctx.fillText(text, c.x + c.w / 2, cy);
-            } else if (c.align === 'right') {
-              ctx.textAlign = 'right';
-              ctx.fillText(text, c.x + c.w - layout.padX - mark, cy);
-            } else {
-              ctx.textAlign = 'left';
-              ctx.fillText(text, c.x + layout.padX, cy);
-            }
-          }
-          // The view's state, on the column it applies to: a sort arrow, or
-          // a dot for a filter — so a table showing four of forty rows says so.
-          if (c.sort) {
-            const ax = c.x + c.w - layout.padX - mark / 2;
-            const s = fs * 0.28;
-            ctx.beginPath();
-            if (c.sort === 'asc') {
-              ctx.moveTo(ax - s, cy + s * 0.6);
-              ctx.lineTo(ax + s, cy + s * 0.6);
-              ctx.lineTo(ax, cy - s * 0.8);
-            } else {
-              ctx.moveTo(ax - s, cy - s * 0.6);
-              ctx.lineTo(ax + s, cy - s * 0.6);
-              ctx.lineTo(ax, cy + s * 0.8);
-            }
-            ctx.closePath();
-            ctx.fill();
-          } else if (c.filtered) {
-            ctx.beginPath();
-            ctx.arc(c.x + c.w - layout.padX - mark / 2, cy, fs * 0.18, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
+      const family = sketch ? SKETCH_FONT : FONT;
+      ctx.textBaseline = 'middle';
+      for (const cell of prims) {
+        if (!cell.prims.length || !visible(cell.y, cell.h)) continue;
+        for (const p of cell.prims) paint(ctx, p, family, Boolean(sketch));
       }
       ctx.restore();
 
@@ -246,12 +242,12 @@ export const TableRenderer: React.FC<{ node: TableNode }> = ({ node }) => {
           ctx.stroke(sketchPaths.frame);
         } else {
           ctx.lineWidth = 1;
-          roundRectPath(ctx, w - 0, h - 0, radius);
+          roundRectPath(ctx, 0, 0, w, h, radius);
           ctx.stroke();
         }
       }
     },
-    [layout, sketch, sketchPaths, editing]
+    [layout, sketch, sketchPaths, prims]
   );
 
   return (

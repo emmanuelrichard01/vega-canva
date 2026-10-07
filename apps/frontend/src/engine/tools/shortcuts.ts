@@ -29,6 +29,7 @@ export const TOOL_SHORTCUTS: Record<string, string> = {
   frame: 'F',
   grid: 'G',
   chart: 'K',
+  table: 'B',
   connector: 'X',
   sticky: 'S',
   comment: 'C',

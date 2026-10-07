@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import { AuthProvider } from './hooks/AuthContext';
 import { PerformanceOverlay } from './components/PerformanceOverlay';
 import { TooltipLayer } from './components/ui/TooltipLayer';
@@ -8,6 +8,7 @@ import { NoticeLayer } from './components/ui/NoticeLayer';
 import { SpeedInsights } from '@vercel/speed-insights/react';
 import { Analytics } from '@vercel/analytics/react';
 import { nanoid } from 'nanoid';
+import { finishSpotifyCallback, isSpotifyCallback } from './engine/music/spotify/auth';
 
 /**
  * `/new` opens a fresh board.
@@ -21,18 +22,19 @@ if (window.location.pathname === '/new' || window.location.pathname === '/new/')
   window.location.replace(`/room/${nanoid(10)}`);
 }
 
+/** Spotify sends people back here after sign-in; finish it, then return them. */
+const spotifyCallback = isSpotifyCallback(window.location.pathname);
+if (spotifyCallback) void finishSpotifyCallback();
+
 const Room = lazy(() => import('./Room'));
 const Home = lazy(() => import('./Home').then((m) => ({ default: m.Home })));
 
 function App() {
-  const [path, setPath] = useState(window.location.pathname);
+  // Read once: every navigation between the dashboard and a board is a full
+  // page load (`location.href`), because the board's document, socket and
+  // undo history are created once per page and cannot switch rooms.
+  const path = window.location.pathname;
   const darkTheme = useStore((s) => s.darkTheme);
-
-  useEffect(() => {
-    const handlePopState = () => setPath(window.location.pathname);
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
 
   // Applied at the app root rather than inside Room, so the dashboard, the
   // onboarding screen and the editor all share one theme. Previously only Room
@@ -61,7 +63,7 @@ function App() {
         {/* An invite opens the same board surface: `doc.ts` reads the room
             out of the token, so `Room` needs to know nothing about how the
             reader arrived. */}
-        {path.startsWith('/room/') || path.startsWith('/i/') ? <Room /> : <Home />}
+        {spotifyCallback ? <RouteLoader /> : path.startsWith('/room/') || path.startsWith('/i/') ? <Room /> : <Home />}
       </Suspense>
       <PerformanceOverlay />
       {/* At the root, which is what it always said it was for. It was mounted

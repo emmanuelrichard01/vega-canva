@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useMemo, useSyncExternalStore } from 'react';
+import { getRecentShapes, subscribeRecentShapes } from '../../engine/tools/recentShapes';
 import { ShapeIcon } from './shapeIcons';
 import { SHAPE_BY_PRESET, SHAPE_CATEGORIES, type ShapePreset } from './shapeCatalog';
 import { DockSheet, type SheetSection } from './DockSheet';
@@ -14,8 +15,8 @@ import { DockSheet, type SheetSection } from './DockSheet';
  * catalogue cross-lists (a diamond is Basic *and* Flowchart), which made
  * sense behind tabs; on one scroll it only means meeting the diamond twice.
  *
- * Recent shapes are not here: they are on the shelf while a shape is armed,
- * one step closer than a row inside a menu.
+ * The shapes placed most recently lead the sheet, so the second rectangle in a
+ * diagram is one click from the top rather than a scroll to its family.
  */
 const SECTIONS: SheetSection<ShapePreset>[] = (() => {
   const seen = new Set<ShapePreset>();
@@ -39,23 +40,39 @@ const SECTIONS: SheetSection<ShapePreset>[] = (() => {
   })).filter((section) => section.items.length > 0);
 })();
 
+const OFFERED = new Set<string>(SECTIONS.flatMap((section) => section.items.map((item) => item.id)));
+
 const TOTAL = SECTIONS.reduce((n, section) => n + section.items.length, 0);
 
 export const ShapeSheet: React.FC<{
   value: ShapePreset | null;
   onPick: (preset: ShapePreset) => void;
   focusSearch?: boolean;
-}> = ({ value, onPick, focusSearch }) => (
-  <DockSheet
-    variant="icon"
-    columns={8}
-    width={318}
-    height={300}
-    searchPlaceholder={`Search ${TOTAL} shapes`}
-    sections={SECTIONS}
-    value={value}
-    onPick={onPick}
-    focusSearch={focusSearch}
-    idle="Click the board to place one, or drag to size it"
-  />
-);
+}> = ({ value, onPick, focusSearch }) => {
+  const recent = useSyncExternalStore(subscribeRecentShapes, getRecentShapes, getRecentShapes);
+  const sections = useMemo<SheetSection<ShapePreset>[]>(() => {
+    // Closed shapes this sheet offers; a line placed from its own seat is recent too, but not here.
+    const presets = recent.filter((p) => OFFERED.has(p)) as ShapePreset[];
+    if (presets.length === 0) return SECTIONS;
+    const byId = new Map(SECTIONS.flatMap((section) => section.items).map((item) => [item.id, item]));
+    return [
+      { id: 'recent', label: 'Recent', items: presets.map((p) => byId.get(p)!).filter(Boolean) },
+      ...SECTIONS,
+    ];
+  }, [recent]);
+
+  return (
+    <DockSheet
+      variant="icon"
+      columns={8}
+      width={318}
+      height={300}
+      searchPlaceholder={`Search ${TOTAL} shapes`}
+      sections={sections}
+      value={value}
+      onPick={onPick}
+      focusSearch={focusSearch}
+      idle="Click the board to place one, or drag to size it"
+    />
+  );
+};

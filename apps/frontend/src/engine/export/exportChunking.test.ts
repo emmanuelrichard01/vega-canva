@@ -37,6 +37,8 @@ const SHARED = [
   'exportScope',
   'renderScope',
   'isolate',
+  'ExportTypes',
+  'filenames',
 ] as const;
 
 const SRC = join(__dirname, '..', '..');
@@ -56,7 +58,9 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
 /** Every `engine/export/<name>` a file names, static import or dynamic. */
 function exportImportsOf(source: string): string[] {
   const found = new Set<string>();
-  for (const m of source.matchAll(/['"][^'"]*engine[/]export[/]([A-Za-z0-9_]+)['"]/g)) {
+  // `import type` is erased at compile time, so it reaches nothing at runtime.
+  const runtime = source.replace(/import\s+type\s[^;]*;/g, '');
+  for (const m of runtime.matchAll(/['"][^'"]*engine[/]export[/]([A-Za-z0-9_]+)['"]/g)) {
     found.add(m[1]);
   }
   return [...found];

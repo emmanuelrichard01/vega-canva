@@ -26,6 +26,7 @@
 
 import type { ShapeKind } from '../model/schema';
 import { paramFallback } from '../model/shapes/params';
+import { isCssColor } from '../text/cssColor';
 
 // ---------------------------------------------------------------------------
 // The intermediate form
@@ -551,8 +552,27 @@ function readNodeList(src: string): { nodes: MermaidNode[]; length: number; inli
   return { nodes, length: totalLength, inlineClasses };
 }
 
-const EDGE_INLINE = /^\s*(--+|-\.+|==+)\s*([^|>\-=.][^|>]*?)\s*(<--+>|--+>|--+|<-[.-]+->|-[.-]+->|-[.-]+-|<==+>|==+>|==+)\s*(?:\|\s*([^|]*?)\s*\|)?\s*/;
-const EDGE_PLAIN = /^\s*(<--+>|--+>|--+|<-[.-]+->|-[.-]+->|-[.-]+-|<==+>|==+>|==+)\s*(?:\|\s*([^|]*?)\s*\|)?\s*/;
+/*
+ * Edge patterns, linear in the statement's length.
+ *
+ * The source is pasted from anywhere and reparsed on every settled edit, so a
+ * pattern that backtracks freezes the editor. Two rules keep these linear: a
+ * label cannot begin or end in whitespace (so the `\s*` beside it never has a
+ * run to share), and a connector is at most 32 characters (so testing for one
+ * at each step of a label is constant work). Labels are trimmed by
+ * `cleanLabel`, not by the pattern.
+ */
+const CONNECTOR = String.raw`<-{2,32}>|-{2,32}>|-{2,32}|<-[.-]{1,32}->|-[.-]{1,32}->|-[.-]{1,32}-|<={2,32}>|={2,32}>|={2,32}`;
+const EDGE_INLINE = new RegExp(
+  String.raw`^\s*(-{2,32}|-\.{1,32}|={2,32})\s*([^|>\-=.\s](?:[^|>]*?[^|>\s])?)\s*(${CONNECTOR})\s*(?:\|([^|]*)\|)?\s*`
+);
+const EDGE_PLAIN = new RegExp(String.raw`^\s*(${CONNECTOR})\s*(?:\|([^|]*)\|)?\s*`);
+
+/** A statement longer than this is refused rather than parsed. */
+export const MAX_STATEMENT_LENGTH = 4000;
+
+/** Links in one `A --> B --> C` chain. */
+const MAX_CHAIN_LINKS = 256;
 
 function lineKind(connector: string): EdgeLine {
   if (connector.includes('.')) return 'dotted';
@@ -594,16 +614,25 @@ function readEdge(src: string): { edge: Omit<MermaidEdge, 'from' | 'to'>; length
   };
 }
 
+/**
+ * A `style`/`classDef` body. Colours are kept only when they are colours:
+ * they reach SVG attributes on export, and a diagram's source is pasted from
+ * anywhere. Commas inside `rgb(…)` do not separate declarations.
+ */
 function readStyleBody(body: string): NodeStyle {
   const style: NodeStyle = {};
-  for (const part of body.split(',')) {
+  for (const part of body.split(/,(?![^(]*\))/)) {
     const [rawKey, ...rest] = part.split(':');
     const key = rawKey.trim().toLowerCase();
     const value = rest.join(':').trim().replace(/;+$/, '').trim();
     if (!value) continue;
-    if (key === 'fill') style.fill = value;
-    else if (key === 'stroke') style.stroke = value;
-    else if (key === 'color') style.color = value;
+    if (key === 'fill') {
+      if (isCssColor(value)) style.fill = value;
+    } else if (key === 'stroke') {
+      if (isCssColor(value)) style.stroke = value;
+    } else if (key === 'color') {
+      if (isCssColor(value)) style.color = value;
+    }
     else if (key === 'stroke-width') {
       const px = parseFloat(value);
       if (Number.isFinite(px)) style.strokeWidth = px;
@@ -623,7 +652,9 @@ function readClassDef(line: string): { name: string; style: NodeStyle } | null {
 }
 
 function readClassApply(line: string): { keys: string[]; name: string } | null {
-  const m = /^class\s+([A-Za-z0-9_,\s-]+?)\s+([A-Za-z0-9_-]+)\s*$/i.exec(line);
+  // Keys are a comma-separated list; whitespace only around the commas, so the
+  // list and the `\s+` before the class name never compete for the same run.
+  const m = /^class\s+([A-Za-z0-9_-]+(?:\s*,\s*[A-Za-z0-9_-]+)*)\s+([A-Za-z0-9_-]+)\s*$/i.exec(line);
   if (!m) return null;
   return { keys: m[1].split(',').map((k) => k.trim()).filter(Boolean), name: m[2] };
 }
@@ -743,8 +774,16 @@ export function parseMermaid(source: string): ParseResult {
   };
 
   for (const { text: line, lineNum } of lines.slice(1)) {
+    if (line.length > MAX_STATEMENT_LENGTH) {
+      return {
+        graph: null,
+        error: `Line ${lineNum}: Statement is longer than ${MAX_STATEMENT_LENGTH} characters`,
+        errorLine: lineNum,
+      };
+    }
+
     // 1. Check for subgraph start (supporting kebab-case IDs)
-    const subMatch = /^subgraph\s+([A-Za-z0-9_-]+)(?:\s*\[\s*(.*?)\s*\])?(?:\s*"(.*?)")?\s*$/i.exec(line);
+    const subMatch = /^subgraph\s+([A-Za-z0-9_-]+)(?:\s*\[([^\]]*)\])?(?:\s*"([^"]*)")?\s*$/i.exec(line);
     if (subMatch) {
       const id = subMatch[1];
       const title = cleanLabel(subMatch[2] || subMatch[3] || id);
@@ -807,13 +846,21 @@ export function parseMermaid(source: string): ParseResult {
 
     let previousGroup = firstGroup.nodes;
 
-    while (cursor < line.length && guard++ < 64) {
+    while (cursor < line.length && guard++ < MAX_CHAIN_LINKS) {
       const link = readEdge(line.slice(cursor));
       if (!link) break;
       cursor += link.length;
 
       const targetGroup = readNodeList(line.slice(cursor));
-      if (!targetGroup) break;
+      if (!targetGroup) {
+        // An arrow with nothing after it points nowhere. Reported rather than
+        // dropped, so "A -->" mid-edit shows its line instead of "Ready".
+        return {
+          graph: null,
+          error: `Line ${lineNum}: This arrow needs a box to point to`,
+          errorLine: lineNum,
+        };
+      }
 
       targetGroup.nodes.forEach(remember);
       targetGroup.inlineClasses.forEach((cls, k) => classNames.set(k, cls));
@@ -831,6 +878,20 @@ export function parseMermaid(source: string): ParseResult {
       }
 
       previousGroup = targetGroup.nodes;
+    }
+
+    // Whatever the chain could not read is reported, not dropped: a diagram
+    // that silently loses the end of a line looks right and is wrong.
+    const rest = line.slice(cursor).trim();
+    if (rest && !rest.startsWith('%%')) {
+      return {
+        graph: null,
+        error:
+          guard > MAX_CHAIN_LINKS
+            ? `Line ${lineNum}: A chain can have at most ${MAX_CHAIN_LINKS} links`
+            : `Line ${lineNum}: Could not read "${rest.slice(0, 32)}"`,
+        errorLine: lineNum,
+      };
     }
   }
 

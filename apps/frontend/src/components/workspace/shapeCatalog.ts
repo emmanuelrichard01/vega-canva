@@ -85,7 +85,7 @@ export const SHAPE_ENTRIES = [
     preset: 'rounded_rect',
     label: 'Rounded rectangle',
     hint: 'A rectangle with softened corners. The radius stays editable.',
-    keywords: ['box', 'card', 'button', 'soft'],
+    keywords: ['box', 'card', 'button', 'soft', 'alternate process'],
     geometry: { kind: 'rect' },
     cornerRadiusRatio: 0.18,
     glyph: [22, 16],
@@ -102,7 +102,7 @@ export const SHAPE_ENTRIES = [
     preset: 'ellipse',
     label: 'Ellipse',
     hint: 'A circle, or an oval when the box is not square.',
-    keywords: ['circle', 'oval', 'round', 'dot'],
+    keywords: ['circle', 'oval', 'round', 'dot', 'connector', 'on-page connector'],
     geometry: { kind: 'ellipse' },
     glyph: SQUARE,
   },
@@ -298,7 +298,7 @@ export const SHAPE_ENTRIES = [
     preset: 'cylinder',
     label: 'Cylinder',
     hint: 'A drum seen from slightly above. Stored data.',
-    keywords: ['disk', 'drum', 'storage', 'tank', 'volume'],
+    keywords: ['disk', 'drum', 'storage', 'tank', 'volume', 'magnetic disk'],
     geometry: { kind: 'cylinder' },
     glyph: [18, 22],
   },
@@ -333,6 +333,154 @@ export const SHAPE_ENTRIES = [
     keywords: ['logic', 'boolean', 'disjunction', 'any'],
     geometry: { kind: 'or_gate' },
     glyph: [24, 16],
+  },
+
+  // -- Flowchart, completing ISO 5807 ------------------------------------
+  {
+    preset: 'manual_operation',
+    label: 'Manual operation',
+    hint: 'A wide top over a narrow base. A step a person does by hand.',
+    keywords: ['manual', 'operation', 'trapezoid', 'offline', 'human'],
+    geometry: { kind: 'trapezoid', inset: -0.2 },
+    glyph: [24, 16],
+  },
+  {
+    preset: 'multi_document',
+    label: 'Documents',
+    hint: 'A stack of sheets. Several documents, or a report with copies.',
+    keywords: ['multi document', 'multiple documents', 'reports', 'copies', 'pages'],
+    geometry: { kind: 'multi_document' },
+    glyph: [24, 18],
+  },
+  {
+    preset: 'off_page',
+    label: 'Off-page connector',
+    hint: 'A box that comes to a point. The flow continues on another page.',
+    keywords: ['off page', 'continuation', 'goto', 'reference', 'link', 'pentagon'],
+    geometry: { kind: 'off_page' },
+    glyph: [18, 22],
+  },
+  {
+    preset: 'card',
+    label: 'Card',
+    hint: 'A rectangle with one corner cut. A punched card or a record.',
+    keywords: ['punched card', 'record', 'index card', 'ticket'],
+    geometry: { kind: 'card' },
+    glyph: [24, 16],
+  },
+  {
+    preset: 'loop_limit',
+    label: 'Loop limit',
+    hint: 'Chamfered top corners. Where a loop starts; flip it for the end.',
+    keywords: ['loop', 'repeat', 'for', 'while', 'iteration', 'limit'],
+    geometry: { kind: 'loop_limit' },
+    glyph: [24, 16],
+  },
+  {
+    preset: 'punched_tape',
+    label: 'Punched tape',
+    hint: 'A band with waving edges. Data on tape, or a stream.',
+    keywords: ['tape', 'paper tape', 'stream', 'flag', 'wave'],
+    geometry: { kind: 'punched_tape' },
+    glyph: [24, 16],
+  },
+  {
+    preset: 'stored_data',
+    label: 'Stored data',
+    hint: 'One end bulges, the other dips. Data kept on any medium.',
+    keywords: ['storage', 'data store', 'saved', 'persisted', 'medium'],
+    geometry: { kind: 'stored_data' },
+    glyph: [24, 16],
+  },
+  {
+    preset: 'direct_access_storage',
+    label: 'Direct access storage',
+    hint: 'A drum on its side. A disk, or a queue.',
+    keywords: ['drum', 'hard drive', 'disk', 'queue', 'das', 'horizontal cylinder'],
+    geometry: { kind: 'direct_access_storage' },
+    glyph: [24, 14],
+  },
+  {
+    preset: 'sequential_access',
+    label: 'Sequential access',
+    hint: 'A reel with tape running off it. Data read in order.',
+    keywords: ['tape', 'magnetic tape', 'reel', 'sequential', 'backup'],
+    geometry: { kind: 'sequential_access' },
+    glyph: [24, 18],
+  },
+  {
+    preset: 'display',
+    label: 'Display',
+    hint: 'A pointed end and a rounded end. Output shown on a screen.',
+    keywords: ['screen', 'monitor', 'output', 'show', 'crt'],
+    geometry: { kind: 'display' },
+    glyph: [24, 14],
+  },
+  {
+    preset: 'collate',
+    label: 'Collate',
+    hint: 'Two triangles point to point. Gathering items into order.',
+    keywords: ['hourglass', 'gather', 'combine', 'order'],
+    geometry: { kind: 'collate' },
+    glyph: SQUARE,
+  },
+  {
+    preset: 'sort',
+    label: 'Sort',
+    hint: 'A decision split across the middle. Arranging items in sequence.',
+    keywords: ['order', 'arrange', 'rank', 'split diamond'],
+    geometry: { kind: 'sort' },
+    glyph: SQUARE,
+  },
+  {
+    preset: 'extract',
+    label: 'Extract',
+    hint: 'A triangle, apex up. Pulling items out of a set.',
+    keywords: ['extract', 'split', 'triangle', 'filter'],
+    geometry: { kind: 'polygon', points: 3 },
+    glyph: SQUARE,
+  },
+  {
+    preset: 'merge',
+    label: 'Merge',
+    hint: 'A triangle on its point. Several sets combined into one.',
+    keywords: ['combine', 'join', 'funnel', 'inverted triangle'],
+    geometry: { kind: 'merge' },
+    glyph: SQUARE,
+  },
+  {
+    preset: 'or_junction',
+    label: 'Or junction',
+    hint: 'A circle with a plus. Flows where any one may continue.',
+    keywords: ['or', 'junction', 'plus', 'either', 'branch'],
+    geometry: { kind: 'or_junction' },
+    glyph: SQUARE,
+  },
+
+  // -- Advanced -------------------------------------------------------------
+  {
+    preset: 'chat',
+    label: 'Chat',
+    hint: 'A soft bubble with a short tail. A message, a thread, a bot.',
+    keywords: ['chat bubble', 'message', 'conversation', 'support', 'bot', 'sms'],
+    geometry: { kind: 'chat' },
+    glyph: [24, 20],
+  },
+  {
+    preset: 'lock',
+    label: 'Lock',
+    hint: 'A padlock. Authentication, encryption, a protected resource.',
+    keywords: ['padlock', 'authentication', 'auth', 'security', 'encryption', 'secure', 'private'],
+    geometry: { kind: 'lock' },
+    glyph: [18, 22],
+  },
+  {
+    preset: 'sliders',
+    label: 'Settings',
+    hint: 'Three tracks with knobs. Configuration and preferences.',
+    keywords: ['settings', 'controls', 'preferences', 'config', 'tune', 'adjust', 'mixer'],
+    geometry: { kind: 'sliders' },
+    glyph: [22, 18],
   },
 
   // -- Annotation ---------------------------------------------------------
@@ -605,18 +753,14 @@ export interface ShapeCategory {
 /**
  * The tabs, and the runs inside them.
  *
- * ## What changed, and why
+ * Five tabs: the forms anyone reaches for, the full ISO 5807 flowchart set,
+ * the system-diagram glyphs, annotation, and arrows. Each run is named for
+ * what the shapes in it are *for*, so a search-free scan finds the right one.
  *
- * There were seven tabs, two of which held two and three tiles — a whole tab
- * strip to reach a list shorter than the strip itself. Callouts had exactly two
- * entries under a heading that named both of them. Logic had three.
- *
- * Six tabs, none under six tiles. A shape appears in every family it belongs to
- * rather than being filed once and hidden: a diamond is a basic form *and* the
- * flowchart decision, a cloud is an annotation *and* a piece of architecture.
- * Cross-listing costs nothing because a shape has exactly one name and one
- * sentence wherever it appears — which is the rule that makes it safe, and the
- * rule the three duplicate label tables used to break.
+ * A shape appears in every family it belongs to rather than being filed once
+ * and hidden: a diamond is a basic form *and* the flowchart decision, a cloud
+ * is an annotation *and* a piece of architecture. Cross-listing is safe because
+ * a shape has exactly one name and one sentence wherever it appears.
  */
 export const SHAPE_CATEGORIES: readonly ShapeCategory[] = [
   {
@@ -625,52 +769,47 @@ export const SHAPE_CATEGORIES: readonly ShapeCategory[] = [
     groups: [
       { name: 'Boxes', presets: ['rect', 'rounded_rect', 'squircle', 'capsule'] },
       { name: 'Curves', presets: ['ellipse', 'semicircle', 'donut'] },
-      { name: 'Angles', presets: ['triangle', 'right_triangle', 'diamond'] },
-    ],
-  },
-  {
-    id: 'polygons',
-    name: 'Polygons',
-    groups: [
-      { name: 'Regular', presets: ['triangle', 'pentagon', 'hexagon', 'octagon'] },
-      { name: 'Radial', presets: ['star', 'badge', 'cross', 'donut'] },
+      { name: 'Angles', presets: ['triangle', 'right_triangle', 'diamond', 'parallelogram', 'trapezoid'] },
+      { name: 'Polygons', presets: ['pentagon', 'hexagon', 'octagon'] },
+      { name: 'Stars and marks', presets: ['star', 'badge', 'cross', 'heart'] },
     ],
   },
   {
     id: 'flowchart',
     name: 'Flowchart',
     groups: [
-      { name: 'Start and decide', presets: ['capsule', 'diamond', 'preparation'] },
-      { name: 'Process', presets: ['rect', 'predefined_process', 'chevron', 'delay'] },
-      { name: 'Data', presets: ['parallelogram', 'trapezoid', 'cylinder', 'database', 'internal_storage'] },
-      { name: 'Paper and logic', presets: ['document', 'note', 'folder', 'manual_input', 'summing_junction', 'and_gate', 'or_gate'] },
+      { name: 'Process', presets: ['capsule', 'rect', 'rounded_rect', 'diamond', 'predefined_process', 'preparation', 'loop_limit'] },
+      { name: 'Input and output', presets: ['parallelogram', 'manual_input', 'manual_operation', 'display', 'card', 'punched_tape'] },
+      { name: 'Documents', presets: ['document', 'multi_document', 'note'] },
+      { name: 'Storage', presets: ['database', 'cylinder', 'stored_data', 'internal_storage', 'direct_access_storage', 'sequential_access'] },
+      { name: 'Flow', presets: ['ellipse', 'off_page', 'delay'] },
+      { name: 'Logic', presets: ['summing_junction', 'or_junction', 'and_gate', 'or_gate', 'collate', 'sort', 'extract', 'merge'] },
+    ],
+  },
+  {
+    id: 'advanced',
+    name: 'Advanced',
+    groups: [
+      { name: 'Compute', presets: ['server', 'cpu', 'database', 'cloud', 'terminal'] },
+      { name: 'Devices and web', presets: ['browser', 'globe', 'mobile', 'desktop'] },
+      { name: 'Storage', presets: ['hopper', 'archive', 'package', 'folder'] },
+      { name: 'Identity and security', presets: ['user', 'lock', 'key', 'shield'] },
+      { name: 'Messaging', presets: ['chat', 'mail', 'plane'] },
+      { name: 'Operations', presets: ['gear', 'sliders', 'bolt', 'activity', 'wallet', 'pin'] },
     ],
   },
   {
     id: 'annotation',
     name: 'Annotation',
     groups: [
-      { name: 'Bubbles', presets: ['callout', 'cloud'] },
-      { name: 'Marks', presets: ['banner', 'badge', 'note', 'arrow_block'] },
+      { name: 'Bubbles', presets: ['callout', 'chat', 'cloud'] },
+      { name: 'Marks', presets: ['banner', 'badge', 'note', 'star'] },
     ],
   },
   {
-    id: 'architecture',
-    name: 'Architecture',
-    groups: [
-      { name: 'Compute', presets: ['server', 'cpu', 'database', 'cloud', 'globe'] },
-      { name: 'Endpoints', presets: ['browser', 'terminal', 'mobile', 'desktop'] },
-      { name: 'Storage and flow', presets: ['package', 'archive', 'hopper', 'activity'] },
-    ],
-  },
-  {
-    id: 'symbols',
-    name: 'Symbols',
-    groups: [
-      { name: 'Identity', presets: ['user', 'shield', 'key'] },
-      { name: 'Utility', presets: ['gear', 'mail', 'plane', 'wallet'] },
-      { name: 'Marks', presets: ['bolt', 'heart', 'pin', 'star'] },
-    ],
+    id: 'arrows',
+    name: 'Arrows',
+    groups: [{ name: 'Directional', presets: ['arrow_block', 'chevron', 'plane'] }],
   },
 ];
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { CanvasContextMenuActions, ContextTarget } from '../components/CanvasContextMenu';
-import type { AnyNode } from '../engine/model/schema';
 import { selectionBounds } from '../engine/model/selection';
+import { useStore } from './useStore';
 import { cameraSystem } from '../engine/CameraSystem';
 
 /**
@@ -29,18 +29,16 @@ import { cameraSystem } from '../engine/CameraSystem';
 export function useSelectionCommandKeys({
   actions,
   selectedIds,
-  objects,
   canEdit,
   openMenu,
 }: {
   actions: CanvasContextMenuActions;
   selectedIds: string[];
-  objects: Record<string, AnyNode>;
   canEdit: boolean;
   openMenu: (target: ContextTarget) => void;
 }) {
-  const live = useRef({ actions, selectedIds, objects, canEdit, openMenu });
-  live.current = { actions, selectedIds, objects, canEdit, openMenu };
+  const live = useRef({ actions, selectedIds, canEdit, openMenu });
+  live.current = { actions, selectedIds, canEdit, openMenu };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -57,7 +55,8 @@ export function useSelectionCommandKeys({
         return;
       }
 
-      const { actions: a, selectedIds: ids, objects: all, canEdit: editable, openMenu: open } = live.current;
+      const { actions: a, selectedIds: ids, canEdit: editable, openMenu: open } = live.current;
+      const all = useStore.getState().objects;
       const mod = e.ctrlKey || e.metaKey;
 
       if ((e.key === 'F10' && e.shiftKey && !mod) || e.key === 'ContextMenu') {
@@ -81,6 +80,16 @@ export function useSelectionCommandKeys({
       if (e.shiftKey && !mod && !e.altKey && e.code === 'Digit2') {
         e.preventDefault();
         a.zoomToSelection();
+        return;
+      }
+
+      // Shift+H and Shift+V flip, as in Figma. Before the modifier gate below,
+      // because they take none; captured here so the board does not also read
+      // them as the Hand and Select keys.
+      if (editable && e.shiftKey && !mod && !e.altKey && (e.code === 'KeyH' || e.code === 'KeyV')) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        a.flip(e.code === 'KeyH' ? 'horizontal' : 'vertical');
         return;
       }
 

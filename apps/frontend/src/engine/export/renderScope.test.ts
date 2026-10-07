@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { mountedSet, renderScope } from './renderScope';
+import { renderScope } from './renderScope';
 
 describe('renderScope', () => {
   beforeEach(() => {
@@ -50,40 +50,5 @@ describe('renderScope', () => {
     first();
     expect(renderScope.getSnapshot()).not.toBeNull();
     second();
-  });
-});
-
-describe('mountedSet', () => {
-  const all = ['a', 'b', 'c', 'd'];
-
-  it('renders everything while the culler has not reported', () => {
-    // Null means "no restriction", which is Canvas's existing behaviour on the
-    // first frame. Showing too much costs a frame; showing too little costs an
-    // export.
-    expect(mountedSet(all, [], [], null)).toBeNull();
-  });
-
-  it('keeps the culled set when nothing is exporting', () => {
-    expect([...(mountedSet(all, ['a'], [], null) ?? [])]).toEqual(['a']);
-  });
-
-  it('keeps a selected object mounted even off screen', () => {
-    // Canvas already did this. Stated here so the two cannot drift.
-    expect(mountedSet(all, ['a'], ['d'], null)?.has('d')).toBe(true);
-  });
-
-  it('mounts what an export needs, however far off screen it is', () => {
-    /**
-     * The bug: a board wider than the window exported an image of the right
-     * dimensions containing only what was on screen -- and disagreeing with
-     * the SVG of the same board, which is built from the document.
-     */
-    const set = mountedSet(all, ['a'], [], new Set(['c', 'd']));
-    expect([...(set ?? [])].sort()).toEqual(['a', 'c', 'd']);
-  });
-
-  it('does not invent ids the board does not have', () => {
-    const set = mountedSet(all, ['a'], [], new Set(['ghost']));
-    expect(set?.has('ghost')).toBe(false);
   });
 });

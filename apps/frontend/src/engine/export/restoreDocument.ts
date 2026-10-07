@@ -1,6 +1,7 @@
 import * as Y from 'yjs';
 import { nanoid } from 'nanoid';
 import { doc, objectsMap, commentsMap, createNode, deleteNode, metadataMap } from '../document';
+import { canEditObjects } from '../model/permissions';
 import type { ImportedDocument } from './DocumentImport';
 
 export type RestoreMode = 'replace' | 'merge';
@@ -42,6 +43,9 @@ export function restoreDocument(
   mode: RestoreMode = 'replace'
 ): RestoreSummary {
   const summary: RestoreSummary = { added: 0, removed: 0, comments: 0, title: null };
+  // Comments and the title are written here directly, so the role gate the
+  // node writes get from `mutations.ts` has to be applied to them too.
+  if (!canEditObjects()) return summary;
 
   doc.transact(() => {
     if (mode === 'replace') {
@@ -83,7 +87,7 @@ export function restoreDocument(
       // Through `createNode` rather than writing the map directly, so every
       // restored object goes through the same normalisation and z-index
       // assignment a freshly drawn one does.
-      createNode(next as Parameters<typeof createNode>[0]);
+      createNode(next as Parameters<typeof createNode>[0], { preserveAuthorship: true });
       summary.added += 1;
     }
 

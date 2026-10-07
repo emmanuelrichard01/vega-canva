@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  Square, Type, ImageIcon, StickyNote, Mic, MessageSquare, PenLine, Layers, BarChart2, Code2, Link2, Table2,
+  Square, Type, ImageIcon, StickyNote, Mic, MessageSquare, PenLine, BarChart2, Code2, Link2, Table2, Spline, LayoutGrid, Frame, PenTool,
   SquaresUnite, SquaresSubtract, SquaresIntersect, SquaresExclude,
   AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd,
   AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
@@ -49,8 +49,11 @@ export const TYPE_LABEL: Record<string, { icon: React.ReactNode; name: string }>
   sticky: { icon: <StickyNote size={15} />, name: 'Note' },
   audio: { icon: <Mic size={15} />, name: 'Voice' },
   comment: { icon: <MessageSquare size={15} />, name: 'Comment' },
-  path: { icon: <PenLine size={15} />, name: 'Path' },
-  frame: { icon: <Layers size={15} />, name: 'Frame' },
+  path: { icon: <PenTool size={15} />, name: 'Path' },
+  freehand: { icon: <PenLine size={15} />, name: 'Drawing' },
+  frame: { icon: <Frame size={15} />, name: 'Frame' },
+  connector: { icon: <Spline size={15} />, name: 'Connector' },
+  grid: { icon: <LayoutGrid size={15} />, name: 'Grid' },
   chart: { icon: <BarChart2 size={15} />, name: 'Chart' },
   table: { icon: <Table2 size={15} />, name: 'Table' },
   code: { icon: <Code2 size={15} />, name: 'Code' },

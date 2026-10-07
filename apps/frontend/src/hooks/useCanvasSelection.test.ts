@@ -1,120 +1,134 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-vi.mock('react', () => {
-  return {
-    default: {
-      useRef: (init: any) => ({ current: init }),
-      useEffect: (fn: () => any) => fn?.(),
-      useCallback: (fn: any) => fn,
-    },
-    useRef: (init: any) => ({ current: init }),
-    useEffect: (fn: () => any) => fn?.(),
-    useCallback: (fn: any) => fn,
-  };
-});
-
+// @vitest-environment jsdom
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type React from 'react';
+import { renderHook, cleanup } from '@testing-library/react';
 import { useCanvasSelection } from './useCanvasSelection';
 import { useStore } from './useStore';
 
+const box = (id: string, x: number, y: number, width: number, height: number, rotation = 0) =>
+  ({ id, type: 'shape', x, y, width, height, rotation, scaleX: 1, scaleY: 1, locked: false }) as any;
+
+function fire(target: EventTarget, type: string, detail: unknown) {
+  target.dispatchEvent(new CustomEvent(type, { detail }));
+}
+
 describe('useCanvasSelection', () => {
-  let setSelectedIdsMock: any;
-  let listeners: Record<string, ((e: any) => void)[]> = {};
+  let setSelectedIds: ReturnType<typeof vi.fn<(next: React.SetStateAction<string[]>) => void>>;
+  /** What the selection is after every update, functional or not. */
+  let selection: string[];
 
   beforeEach(() => {
-    listeners = {};
-    setSelectedIdsMock = vi.fn();
-
-    const mockAddListener = (event: string, cb: (e: any) => void) => {
-      if (!listeners[event]) listeners[event] = [];
-      listeners[event].push(cb);
-    };
-
-    const mockRemoveListener = (event: string, cb: (e: any) => void) => {
-      if (listeners[event]) {
-        listeners[event] = listeners[event].filter((fn) => fn !== cb);
-      }
-    };
-
-    const mockDispatch = (event: any) => {
-      const cbs = listeners[event.type] || [];
-      cbs.forEach((cb) => cb(event));
-      return true;
-    };
-
-    (globalThis as any).document = {
-      addEventListener: vi.fn(mockAddListener),
-      removeEventListener: vi.fn(mockRemoveListener),
-      dispatchEvent: vi.fn(mockDispatch),
-    };
-
-    (globalThis as any).window = {
-      addEventListener: vi.fn(mockAddListener),
-      removeEventListener: vi.fn(mockRemoveListener),
-      dispatchEvent: vi.fn(mockDispatch),
-    };
-
+    selection = [];
+    setSelectedIds = vi.fn<(next: React.SetStateAction<string[]>) => void>((next) => {
+      selection = typeof next === 'function' ? next(selection) : next;
+    });
     useStore.setState({
       objects: {
-        node1: { id: 'node1', x: 10, y: 10, width: 50, height: 50 } as any,
-        node2: { id: 'node2', x: 200, y: 200, width: 50, height: 50 } as any,
+        node1: box('node1', 10, 10, 50, 50),
+        node2: box('node2', 200, 200, 50, 50),
       },
       groups: {},
     });
   });
 
-  it('selects intersecting objects on marqueeSelect event', () => {
-    useCanvasSelection({
-      activeTool: 'select',
-      selectedIds: [],
-      setSelectedIds: setSelectedIdsMock,
-    });
+  afterEach(() => cleanup());
 
-    const event = {
-      type: 'marqueeSelect',
-      detail: {
-        minX: 0,
-        minY: 0,
-        maxX: 100,
-        maxY: 100,
-        additive: false,
-      },
-    };
+  const mount = () =>
+    renderHook(() => useCanvasSelection({ activeTool: 'select', selectedIds: [], setSelectedIds }));
 
-    document.dispatchEvent(event as any);
-    expect(setSelectedIdsMock).toHaveBeenCalledWith(['node1']);
+  it('selects intersecting objects on marqueeSelect', () => {
+    mount();
+    fire(document, 'marqueeSelect', { minX: 0, minY: 0, maxX: 100, maxY: 100, additive: false });
+    expect(selection).toEqual(['node1']);
   });
 
-  it('selects single object on requestSelectNode event', () => {
-    useCanvasSelection({
-      activeTool: 'select',
-      selectedIds: [],
-      setSelectedIds: setSelectedIdsMock,
-    });
-
-    const event = {
-      type: 'requestSelectNode',
-      detail: {
-        id: 'node2',
-      },
-    };
-
-    document.dispatchEvent(event as any);
-    expect(setSelectedIdsMock).toHaveBeenCalledWith(['node2']);
+  it('judges a rotated object by its outline as drawn', () => {
+    // A 200x20 bar centred on (100, 10), turned on end: it now spans y -90..110
+    // at x 90..110, so a marquee above its flat position catches it and one
+    // beside the flat bar's right end does not.
+    useStore.setState({ objects: { bar: box('bar', 0, 0, 200, 20, 90) } });
+    mount();
+    fire(document, 'marqueeSelect', { minX: 95, minY: -80, maxX: 105, maxY: -60 });
+    expect(selection).toEqual(['bar']);
+    fire(document, 'marqueeSelect', { minX: 180, minY: 0, maxX: 199, maxY: 19 });
+    expect(selection).toEqual([]);
   });
 
-  it('clears selection when requestSelectNode has no id', () => {
-    useCanvasSelection({
-      activeTool: 'select',
-      selectedIds: ['node1'],
-      setSelectedIds: setSelectedIdsMock,
+  it('selects a single object on requestSelectNode', () => {
+    mount();
+    fire(document, 'requestSelectNode', { id: 'node2' });
+    expect(setSelectedIds).toHaveBeenCalledWith(['node2']);
+  });
+
+  it('clears the selection when requestSelectNode has no id', () => {
+    mount();
+    fire(document, 'requestSelectNode', {});
+    expect(setSelectedIds).toHaveBeenCalledWith([]);
+  });
+
+  it('stops listening once unmounted', () => {
+    const { unmount } = mount();
+    unmount();
+    fire(document, 'requestSelectNode', { id: 'node2' });
+    expect(setSelectedIds).not.toHaveBeenCalled();
+  });
+
+  it('subtracts and intersects by marquee mode', () => {
+    mount();
+    selection = ['node1', 'node2'];
+    fire(document, 'marqueeSelect', { minX: 0, minY: 0, maxX: 100, maxY: 100, mode: 'subtract' });
+    expect(selection).toEqual(['node2']);
+    selection = ['node1', 'node2'];
+    fire(document, 'marqueeSelect', { minX: 0, minY: 0, maxX: 100, maxY: 100, mode: 'intersect' });
+    expect(selection).toEqual(['node1']);
+  });
+
+  it('catches a whole group when the marquee touches one member', () => {
+    useStore.setState({
+      objects: {
+        a: { ...box('a', 0, 0, 10, 10), parentId: 'g' },
+        b: { ...box('b', 500, 500, 10, 10), parentId: 'g' },
+        c: box('c', 900, 900, 10, 10),
+      },
+      groups: { g: { id: 'g' } },
     });
+    mount();
+    fire(document, 'marqueeSelect', { minX: -5, minY: -5, maxX: 20, maxY: 20 });
+    expect(selection.sort()).toEqual(['a', 'b']);
+  });
 
-    const event = {
-      type: 'requestSelectNode',
-      detail: {},
-    };
+  it('deep-selects through groups with Ctrl or Cmd, and toggles with Shift added', () => {
+    useStore.setState({
+      objects: {
+        a: { ...box('a', 0, 0, 10, 10), parentId: 'g' },
+        b: { ...box('b', 50, 0, 10, 10), parentId: 'g' },
+      },
+      groups: { g: { id: 'g' } },
+    });
+    const { result } = mount();
+    result.current.handleObjectSelect('a', { evt: {} });
+    expect(selection.sort()).toEqual(['a', 'b']);
+    result.current.handleObjectSelect('a', { evt: { ctrlKey: true } });
+    expect(selection).toEqual(['a']);
+    result.current.handleObjectSelect('b', { evt: { metaKey: true, shiftKey: true } });
+    expect(selection).toEqual(['a', 'b']);
+    result.current.handleObjectSelect('a', { evt: { metaKey: true, shiftKey: true } });
+    expect(selection).toEqual(['b']);
+  });
 
-    document.dispatchEvent(event as any);
-    expect(setSelectedIdsMock).toHaveBeenCalledWith([]);
+  it('selects every object with the same fill on requestSelectSimilar', () => {
+    const paint = (color: string) => ({ appearance: { fill: [{ type: 'solid', color }] } });
+    useStore.setState({
+      objects: {
+        a: { ...box('a', 0, 0, 10, 10), ...paint('#111111') },
+        b: { ...box('b', 50, 0, 10, 10), ...paint('#111111') },
+        c: { ...box('c', 90, 0, 10, 10), ...paint('#222222') },
+      },
+      groups: {},
+    });
+    mount();
+    selection = ['a'];
+    window.dispatchEvent(new CustomEvent('requestSelectSimilar', { detail: { key: 'fill' } }));
+    expect(selection).toEqual(['a', 'b']);
   });
 });

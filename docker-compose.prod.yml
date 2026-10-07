@@ -50,16 +50,35 @@ services:
       PUBLIC_API_URL: ${PUBLIC_API_URL:?set PUBLIC_API_URL}
 
       # Number of reverse proxies in front of this. Getting it wrong in either
-      # direction breaks rate limiting -- see the note in index.ts.
+      # direction breaks rate limiting and the per-address quotas -- see
+      # `app.ts` and `clientAddress.ts`.
       TRUST_PROXY: ${TRUST_PROXY:-1}
+
+      # Required: signs anonymous visitor sessions. At least 32 characters,
+      # and different from SHARE_SECRET and AUTH_SECRET.
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+
+      # Signs invite links. Unset means the share dialog offers full-access
+      # links only. Rotating it revokes every invite link.
+      SHARE_SECRET: ${SHARE_SECRET:-}
+      # When true, a bare room id opens nothing: every connection and REST
+      # call needs a signed invite.
+      ENFORCE_SHARE_TOKENS: ${ENFORCE_SHARE_TOKENS:-false}
+
+      # Opens the /admin routes. Unset keeps them closed.
+      ADMIN_SECRET: ${ADMIN_SECRET:-}
+
+      SENTRY_DSN: ${SENTRY_DSN:-}
 
       # Uncomment to run more than one instance. Without it, instances do not
       # share document updates or awareness, so two people on the same board
-      # behind a load balancer will not see each other.
+      # behind a load balancer will not see each other. REDIS_URL also works
+      # (rediss:// for TLS), with REDIS_PASSWORD for a password on its own.
       # REDIS_HOST: redis
 
       # Optional shared token for a private deployment. Not authorization:
-      # it is one password for the whole server, not per board.
+      # it is one password for the whole server, not per board, and the
+      # frontend bundle carries it.
       AUTH_SECRET: ${AUTH_SECRET:-}
     depends_on:
       db:

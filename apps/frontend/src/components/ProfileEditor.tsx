@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { createPortal } from 'react-dom';
 import { Check, X } from 'lucide-react';
 import { Avatar } from './ui/Avatar';
@@ -42,21 +43,13 @@ export const ProfileEditor: React.FC<Props> = ({ open, onClose }) => {
   const { user, updateProfile } = useAuth();
   const { awarenessUsers } = useRoomState();
   const [name, setName] = useState(user?.name ?? '');
-  const panelRef = useRef<HTMLDivElement>(null);
+  // Keeps Tab inside the panel while it is open, and closes it on Escape.
+  const panelRef = useFocusTrap(open && Boolean(user), onClose);
 
   useEffect(() => {
     if (!open || !user) return;
     setName(user.name);
   }, [open, user]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
 
   if (!open || !user) return null;
 

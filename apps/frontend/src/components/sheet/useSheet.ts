@@ -53,6 +53,24 @@ export interface SheetModel {
   onFormat?: (key: 'bold' | 'italic', range: SheetRange) => void;
   /** Escape with nothing being edited. */
   onExit?: () => void;
+  /** Ctrl+Z and Ctrl+Shift+Z / Ctrl+Y while the grid has the keyboard. */
+  onUndo?: () => void;
+  onRedo?: () => void;
+  /** Ctrl+D (down) and Ctrl+R (right): fill the selection from its first row or column. */
+  onFill?: (dir: 'down' | 'right', range: SheetRange) => void;
+  /**
+   * A first look at every key the grid receives while nothing is being typed
+   * into. Return true to say it was handled — Space ticking a checkbox, a digit
+   * setting a rating — and the default does not run.
+   */
+  intercept?: (e: React.KeyboardEvent, focus: SheetPos, range: SheetRange) => boolean;
+  /** What a copy puts on the clipboard, in every dialect the grid has. Absent is plain TSV of `read`. */
+  copy?: (range: SheetRange) => { plain: string; html?: string; json?: { type: string; data: string } };
+  /**
+   * A paste, handled by the grid itself — rich formats, values only. Return the
+   * range the paste filled, or null to fall back to a plain-text paste.
+   */
+  paste?: (data: DataTransfer, range: SheetRange, valuesOnly: boolean) => SheetRange | null;
 }
 
 export const toRange = (a: SheetPos, b: SheetPos): SheetRange => ({
@@ -97,6 +115,8 @@ export function useSheet(model: SheetModel) {
   const [edit, setEdit] = React.useState<{ r: number; c: number; draft: string } | null>(null);
   const sinkRef = React.useRef<HTMLTextAreaElement>(null);
   const dragging = React.useRef(false);
+  /** Set by Ctrl+Shift+V, read by the paste event that follows it. */
+  const valuesOnly = React.useRef(false);
   const modelRef = React.useRef(model);
   modelRef.current = model;
 
@@ -186,6 +206,33 @@ export function useSheet(model: SheetModel) {
       ArrowLeft: [0, -1],
       ArrowRight: [0, 1],
     };
+    if (modelRef.current.intercept?.(e, focus, range)) {
+      stop();
+      return;
+    }
+    const key = k.toLowerCase();
+    if (mod && !e.altKey && key === 'z' && modelRef.current.onUndo) {
+      stop();
+      if (e.shiftKey) modelRef.current.onRedo?.();
+      else modelRef.current.onUndo();
+      return;
+    }
+    if (mod && !e.altKey && key === 'y' && modelRef.current.onRedo) {
+      stop();
+      modelRef.current.onRedo();
+      return;
+    }
+    if (mod && !e.altKey && (key === 'd' || key === 'r') && modelRef.current.onFill) {
+      stop();
+      modelRef.current.onFill(key === 'd' ? 'down' : 'right', range);
+      return;
+    }
+    // Leave the paste itself to the browser; only remember that it is values only.
+    if (mod && e.shiftKey && key === 'v') {
+      valuesOnly.current = true;
+      window.setTimeout(() => (valuesOnly.current = false), 400);
+      return;
+    }
     if (arrows[k]) {
       stop();
       const [dr, dc] = arrows[k];
@@ -261,7 +308,20 @@ export function useSheet(model: SheetModel) {
 
   const onCopy = (e: React.ClipboardEvent) => {
     e.preventDefault();
-    e.clipboardData.setData('text/plain', rangeText());
+    const rich = modelRef.current.copy?.(range);
+    if (!rich) {
+      e.clipboardData.setData('text/plain', rangeText());
+      return;
+    }
+    e.clipboardData.setData('text/plain', rich.plain);
+    if (rich.html) e.clipboardData.setData('text/html', rich.html);
+    if (rich.json) {
+      try {
+        e.clipboardData.setData(rich.json.type, rich.json.data);
+      } catch {
+        // A browser that refuses custom types still has the HTML and the text.
+      }
+    }
   };
 
   const onCut = (e: React.ClipboardEvent) => {
@@ -271,6 +331,14 @@ export function useSheet(model: SheetModel) {
 
   const onPaste = (e: React.ClipboardEvent) => {
     e.preventDefault();
+    const only = valuesOnly.current;
+    valuesOnly.current = false;
+    const handled = modelRef.current.paste?.(e.clipboardData, range, only);
+    if (handled) {
+      setAnchor({ r: handled.r0, c: handled.c0 });
+      setFocus({ r: handled.r1, c: handled.c1 });
+      return;
+    }
     let block = parseClipboard(e.clipboardData.getData('text/plain'));
     if (block.length === 0) return;
     // One value into a selected range fills the range — the fill-down every

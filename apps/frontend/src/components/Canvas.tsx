@@ -3,20 +3,23 @@ import React, { useRef, useState, useEffect, useCallback, useMemo, useSyncExtern
 import { Stage, Layer, Circle, Group, Path } from "react-konva";
 import Konva from "konva";
 import { selectionWithin } from '../engine/model/groupTree';
-import { updateNode, applyNodePatches } from '../engine/document';
+import { updateNode } from '../engine/document';
 import { useStore } from '../hooks/useStore';
 import { FORCE_SPECS, canLatch, isForceTool } from '../engine/physics/forces';
 import { editor } from '../engine/api/EditorAPI';
 import { EXPORT_CHROME } from '../engine/export/chrome';
+import { DataLinkOverlay } from './canvas/DataLinkOverlay';
+import { LayerHoverOutline } from './canvas/LayerHoverOutline';
+import { boardBackgroundStyle, useBoardBackground } from './canvas/boardBackground';
 import { SmartGuides } from './canvas/SmartGuides';
+import { MeasureOverlay } from './canvas/MeasureOverlay';
 import { RulerGuides } from './canvas/RulerGuides';
 import { PathEditor } from './canvas/PathEditor';
 import { deletePickedAnchor, nudgePickedAnchors, selectAllAnchors } from '../engine/interaction/pathAnchorActions';
 import { pathEdit } from '../engine/interaction/pathEdit';
 import { booleanPreview } from '../engine/interaction/booleanPreview';
-import { mountedSet, renderScope } from '../engine/export/renderScope';
+import { renderScope } from '../engine/export/renderScope';
 import { lineEdit } from '../engine/interaction/lineEdit';
-import { deletePickedVertex } from '../engine/interaction/lineVertexActions';
 import { contourData } from '../engine/model/pathGeometry';
 import { RULER_SIZE, Rulers } from './canvas/Rulers';
 import { tickStep } from '../engine/interaction/rulerTicks';
@@ -67,21 +70,23 @@ const NUDGE_KEYS: Record<string, [number, number]> = {
   ArrowUp: [0, -1],
   ArrowDown: [0, 1],
 };
-import { nudgeDelta } from '../engine/tools/nudge';
-import { nudgeSlotFocus, setSlotFit } from '../engine/grid/gridSlotApply';
+import { setSlotFit } from '../engine/grid/gridSlotApply';
 import { CommentsOverlay } from "./CommentsOverlay";
+import { FramePresenter } from './canvas/FramePresenter';
+import { useContentShortcuts } from './canvas/useContentShortcuts';
 import { AudioRecordingHUD } from "./AudioRecordingHUD";
 import { useComments } from "../hooks/useComments";
 import { engineEvents } from '../engine/EventBus';
 import { canvasEngine } from '../engine/CanvasEngine';
 import { cameraSystem } from '../engine/CameraSystem';
 import { useVisibleSet } from '../engine/useVisibleSet';
-import { DEFAULT_TYPOGRAPHY, isOpenShape } from '../engine/model/schema';
+import { isOpenShape } from '../engine/model/schema';
 import { SelectionTransformer } from './canvas/SelectionTransformer';
 import { useRoomPermissions } from '../hooks/useRoomPermissions';
 import { LineEditor } from './canvas/LineEditor';
 import { ConnectorEditor } from './canvas/ConnectorEditor';
 import { CornerRadiusHandle } from './canvas/CornerRadiusHandle';
+import { ShapeParamHandles } from './canvas/ShapeParamHandles';
 import { isLineLike } from '../engine/model/lineEnds';
 import type { ConnectorNode, ShapeNode } from '../engine/model/schema';
 import { CropOverlay } from './canvas/CropOverlay';
@@ -90,8 +95,11 @@ import { cropMode } from '../engine/interaction/cropMode';
 import { slotReframe } from '../engine/interaction/slotReframe';
 import { textEditing } from '../engine/interaction/textEditing';
 import { FRAME_PRESETS } from '../engine/model/frames';
-import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
-import { activateLink } from '../engine/link/linkApply';
+import { keyBelongsToFocus } from '../engine/interaction/keyTarget';
+import { useCanvasShortcuts } from './canvas/useCanvasShortcuts';
+import { toolOverlay, useToolOverlay } from '../engine/tools/toolOverlay';
+import { sortByStacking } from '../engine/model/stacking';
+import { useCameraZoom } from '../engine/useCameraZoom';
 
 interface CanvasProps {
   activeTool: string;
@@ -100,6 +108,9 @@ interface CanvasProps {
   /** Right-click on the board. Resolved here, shown by `Room`. */
   onRequestContextMenu?: (target: { x: number; y: number; ids: string[] }) => void;
 }
+
+/** Tools publish their live preview here; see `toolOverlay`. */
+const setOverlayState = toolOverlay.set;
 
 export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSelectedIds, onRequestContextMenu }) => {
   const stageRef = useRef<Konva.Stage>(null);
@@ -242,8 +253,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   useEffect(() => {
     if (!editingPathId) return;
     const onKey = (e: KeyboardEvent) => {
-      const el = document.activeElement?.tagName;
-      if (el === 'INPUT' || el === 'TEXTAREA') return;
+      if (keyBelongsToFocus(e.key)) return;
       if (e.key === 'Escape') {
         e.stopPropagation();
         pathEdit.exit();
@@ -317,8 +327,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   useEffect(() => {
     if (!croppingId) return;
     const onKey = (e: KeyboardEvent) => {
-      const el = document.activeElement?.tagName;
-      if (el === 'INPUT' || el === 'TEXTAREA') return;
+      if (keyBelongsToFocus(e.key)) return;
       if (e.key === 'Escape') {
         e.stopPropagation();
         cancelCrop();
@@ -371,8 +380,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   useEffect(() => {
     if (!reframingId) return;
     const onKey = (e: KeyboardEvent) => {
-      const el = document.activeElement?.tagName;
-      if (el === 'INPUT' || el === 'TEXTAREA') return;
+      if (keyBelongsToFocus(e.key)) return;
       if (e.key === 'Escape') {
         e.stopPropagation();
         cancelReframe();
@@ -422,225 +430,8 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     if (!selectedIds.includes(editingLineId) || !stillThere) lineEdit.end(editingLineId);
   }, [selectedIds, editingLineId]);
 
-  // Keyboard Shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Do not intercept if user is typing in an input or textarea
-      if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
-      // Viewing history is read-only. The canvas is showing a past state while
-      // the live document sits untouched behind it, so Delete or Cmd+D here
-      // would edit objects the user cannot currently see. Read through
-      // getState() rather than subscribing: this is an event-time question, and
-      // a dependency would re-register the listener on every replay frame.
-      if (useStore.getState().isReplaying) return;
-      /**
-       * View mode is the other read-only canvas, and it stands down here for
-       * the same reason.
-       *
-       * Every key past this point mutates: Delete, Cmd+D, the arrow nudges,
-       * the restack pair. Leaving them bound while the dock is gated would be
-       * the classic half-disabled control -- the button greyed out and the
-       * shortcut still live -- and on a board whose edits do not sync it would
-       * be work thrown away silently.
-       */
-      if (!canEditRef.current) return;
-      if (selectedIds.length === 0) return;
-
-      /**
-       * The line editor takes the keys that mean something to it, first.
-       *
-       * All three of these already meant something on the canvas, and in the
-       * editor they mean the narrower thing — which is the rule every modal
-       * surface here follows. `Escape` leaves the editor rather than clearing
-       * the selection, so backing out of a mode does not also lose the object
-       * you were working on. `Delete` removes the picked *vertex* rather than
-       * the whole line, and falls through when there is no vertex picked or
-       * when the line is down to its last two, so the key never silently does
-       * nothing.
-       */
-      const editingLine = lineEdit.getSnapshot();
-      if (editingLine) {
-        const line = useStore.getState().objects[editingLine.nodeId] as ShapeNode | undefined;
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          lineEdit.end();
-          return;
-        }
-        if ((e.key === 'Backspace' || e.key === 'Delete') && line) {
-          if (deletePickedVertex(line, editingLine.vertex)) {
-            e.preventDefault();
-            return;
-          }
-        }
-      }
-
-      /**
-       * Enter, or Ctrl/Cmd+Enter, opens a line for editing.
-       *
-       * Both, because both are in people's hands: Excalidraw uses
-       * Ctrl+Enter and plain Enter is what "open the selected thing" means
-       * nearly everywhere else. Only for a solo line-like selection — with two
-       * objects selected there is no single run to edit, and Enter has no other
-       * meaning there to displace.
-       */
-      if (e.key === 'Enter' && selectedIds.length === 1) {
-        const only = useStore.getState().objects[selectedIds[0]];
-        if (only && isLineLike(only) && !only.locked) {
-          e.preventDefault();
-          lineEdit.begin(only.id);
-          return;
-        }
-        // Enter opens what double-click opens: the code editor, or the link.
-        if (only?.type === 'code' && !only.locked) {
-          e.preventDefault();
-          useStore.getState().setCodeEditNodeId(only.id);
-          return;
-        }
-        if (only?.type === 'link') {
-          e.preventDefault();
-          activateLink(only);
-          return;
-        }
-      }
-
-      if (e.key === 'Escape') {
-        setSelectedIds([]);
-        return;
-      }
-
-      if (e.key === 'Backspace' || e.key === 'Delete') {
-        // Through the frame-aware path: deleting a frame has to take its
-        // contents, or they are stranded in place still pointing at it.
-        deleteNodesWithFrames(selectedIds);
-        setSelectedIds([]);
-        return;
-      }
-      // Duplicate and the four restacks are bound in `useSelectionCommandKeys`,
-      // to the same actions the menu runs. The copies that lived here cloned
-      // connectors still bound to the originals and stepped `zIndex` by one
-      // past ties -- see that hook.
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'g') {
-        e.preventDefault();
-        editor.ungroupNodes(selectedIds);
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'g') {
-        e.preventDefault();
-        editor.groupNodes(selectedIds);
-        return;
-      }
-
-      /**
-       * Nudge with the arrow keys.
-       *
-       * Three other components bind arrows — the Layers tree moves its cursor,
-       * the minimap pans, the replay bar steps through history — and all three
-       * are React handlers on a focused element, so their events bubble up to
-       * this window listener too. Nudging is what the *board* means by an
-       * arrow, so it only applies when the board is what has focus.
-       *
-       * Locked objects are skipped rather than the whole press being refused:
-       * a selection that happens to include a pinned background should still
-       * move everything else.
-       */
-      const delta = nudgeDelta(e.key, e.shiftKey);
-      if (delta) {
-        const focus = document.activeElement;
-        const isEditingField = focus && (
-          focus.tagName === 'INPUT' ||
-          focus.tagName === 'TEXTAREA' ||
-          focus.tagName === 'SELECT' ||
-          (focus as HTMLElement).isContentEditable ||
-          focus.getAttribute?.('role') === 'listbox' ||
-          focus.getAttribute?.('role') === 'dialog' ||
-          focus.closest?.('[role="dialog"]') ||
-          focus.closest?.('.layers-panel')
-        );
-        if (isEditingField) return;
-        const objects = useStore.getState().objects;
-        const movable = selectedIds
-          .map((id) => objects[id])
-          .filter((o): o is NonNullable<typeof o> => Boolean(o) && !(o as any).locked);
-
-        /**
-         * A picture in a grid module is nudged *inside* its module.
-         *
-         * Its box belongs to the grid, so moving it is not something an arrow
-         * key can do — the reflow would put it straight back and the press
-         * would appear to be swallowed, which is the dead-capability shape this
-         * codebase keeps finding. What the gesture plainly means for a picture
-         * in a frame is "move the picture within the frame", so that is what it
-         * does: the object stays put and the content slides under it.
-         *
-         * Split rather than branched per object so a mixed selection still does
-         * the right thing for each half in one transaction and one undo step.
-         * `nudgeSlotFocus` returns nothing for a picture with no room to travel
-         * — a module its source already fits exactly — which is why an empty
-         * result here is not the same as "no slotted pictures were selected".
-         */
-        const slotted = movable.filter((o) => 'gridSlot' in o && o.gridSlot);
-        const loose = movable.filter((o) => !('gridSlot' in o && o.gridSlot));
-
-        const patches = [
-          ...loose.map((o) => ({ id: o.id, changes: { x: o.x + delta.dx, y: o.y + delta.dy } })),
-          ...nudgeSlotFocus(slotted.map((o) => o.id), delta.dx, delta.dy),
-        ];
-        // Still swallow the press when the only thing selected is content that
-        // cannot travel any further: the alternative is the arrow escaping to
-        // the page and scrolling the board out from under a pinned picture.
-        if (patches.length === 0) {
-          if (slotted.length > 0) e.preventDefault();
-          return;
-        }
-        e.preventDefault();
-        // One transaction, so a nudge is one press to undo however many
-        // objects moved.
-        applyNodePatches(patches);
-        return;
-      }
-
-      // Everything below only makes sense for exactly one selected object.
-      if (selectedIds.length !== 1) return;
-      // Narrow to the sole id here rather than closing over a value derived up
-      // in the component body. Identical result, but the dependency list can be
-      // checked statically instead of resting on a reader noticing that the
-      // outer value was a function of `selectedIds` all along.
-      const soleId = selectedIds[0];
-      const obj = useStore.getState().objects[soleId];
-      if (!obj) return;
-
-      // Typography lives in one canonical place now, so Cmd+B/I/U and the
-      // Properties panel write the same fields — previously the shortcuts
-      // wrote content.fontWeight/fontStyle/textDecoration while the renderer
-      // read a different set, so none of the three had any visible effect.
-      const styled = obj.type === 'text' || obj.type === 'shape' || obj.type === 'sticky';
-      if (styled && (e.metaKey || e.ctrlKey) && 'biu'.includes(e.key.toLowerCase())) {
-        const typography = (obj as any).typography ?? DEFAULT_TYPOGRAPHY;
-        e.preventDefault();
-        if (e.key.toLowerCase() === 'b') {
-          updateNode(soleId, {
-            typography: { ...typography, fontWeight: typography.fontWeight >= 600 ? 400 : 700 },
-          });
-        } else if (e.key.toLowerCase() === 'i') {
-          updateNode(soleId, { typography: { ...typography, italic: !typography.italic } });
-        } else {
-          updateNode(soleId, { typography: { ...typography, underline: !typography.underline } });
-        }
-        return;
-      }
-      if (e.key === 'Enter') {
-        if (obj.type === 'text' || obj.type === 'sticky' || obj.type === 'comment') {
-          e.preventDefault();
-          // We can't directly trigger isEditing inside ObjectRenderer from Canvas easily without an event or ref.
-          // But since ObjectRenderer listens to global clicks, we can dispatch an event to the document that ObjectRenderer can catch.
-          // For now we'll fire a custom event that ObjectRenderer can listen to.
-          document.dispatchEvent(new CustomEvent('requestEditNode', { detail: { id: soleId } }));
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedIds, setSelectedIds]);
+  useCanvasShortcuts({ selectedIds, setSelectedIds, canEditRef });
+  useContentShortcuts({ selectedIds });
 
   useEffect(() => {
     const handleNavigate = (e: any) => {
@@ -677,6 +468,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
    * moving it again to make an entrance would undo the framing that the whole
    * arrival exists to get right.
    */
+  const boardBackground = useBoardBackground();
   const [arriving, setArriving] = useState(false);
   useEffect(() => {
     const onArrive = () => {
@@ -724,6 +516,13 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   // Subscribed, so dragging the Area slider resizes the ring as you drag it.
   const forceRadiusScale = useStore((state) => state.forceRadiusScale);
 
+  // The force ring follows the pointer and pulses on the render tick, so the
+  // frame loop must keep running while a force tool is armed.
+  useEffect(() => {
+    if (!activeForce) return;
+    return canvasEngine.hold();
+  }, [activeForce]);
+
   // Entering a force tool snapshots the layout so the whole session can be put
   // back, and leaving it drops the ring.
   useEffect(() => {
@@ -746,13 +545,6 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
 
 
 
-  // The viewport used to be published from *here as well*, with a raw
-  // `setLocalStateField` on every `CameraChanged` — the same two-writer bug
-  // that the `cursor` field had, and worse in one way: it had no throttle at
-  // all, so a single pan broadcast an awareness update on every frame to
-  // every peer, and every peer's presence subscribers woke up for each one.
-  // The one publisher is the `presenceManager.updateViewport` call further
-  // down, which shares the 15Hz gate with everything else ephemeral.
 
 
   const {
@@ -765,9 +557,36 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     currentAuthorId,
   } = useComments();
 
-  const sortedObjects = useMemo(() => {
-    return Object.values(objects).sort((a: any, b: any) => (a.zIndex || 0) - (b.zIndex || 0));
+  /**
+   * Every id in draw order, bottom first.
+   *
+   * Re-sorted only when membership or a z-index changed: most transactions
+   * move or restyle something, and re-sorting the board for each was an
+   * O(n log n) pass on every remote edit. The check is O(n) and keeps the
+   * array's identity, so nothing downstream recomputes either.
+   */
+  const orderRef = useRef<{ ids: string[]; z: Map<string, number> } | null>(null);
+  const orderedIds = useMemo(() => {
+    const prev = orderRef.current;
+    const keys = Object.keys(objects);
+    if (prev && prev.ids.length === keys.length) {
+      let same = true;
+      for (const id of keys) {
+        const z = prev.z.get(id);
+        if (z === undefined || z !== (objects[id]?.zIndex || 0)) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return prev.ids;
+    }
+    const sorted = sortByStacking(Object.values(objects) as Array<{ id: string; zIndex?: number }>);
+    const next = { ids: sorted.map((o) => o.id), z: new Map(sorted.map((o) => [o.id, o.zIndex || 0])) };
+    orderRef.current = next;
+    return next.ids;
   }, [objects]);
+
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
   /**
    * Objects an export needs mounted regardless of where the camera is.
@@ -783,21 +602,15 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
    */
   const requiredIds = useSyncExternalStore(renderScope.subscribe, renderScope.getSnapshot, renderScope.getSnapshot);
 
-  const visibleObjects = useMemo(() => {
-    const storeObjects = Object.values(objects);
-    if (storeObjects.length === 0) return [];
-
-    // Spatial culling: render visible items (plus selected and export-required
-    // items), in canonical z-index order.
-    const mounted = mountedSet(
-      sortedObjects.map((o: any) => o.id),
-      visibleIds,
-      selectedIds,
-      requiredIds
-    );
-    if (!mounted) return sortedObjects;
-    return sortedObjects.filter((o: any) => mounted.has(o.id));
-  }, [sortedObjects, visibleIds, selectedIds, objects, requiredIds]);
+  /**
+   * The ids to mount, in draw order: what the culler says is in view, plus the
+   * selection (whose handles must work off-screen) and anything an export has
+   * asked for. Before the culler's first report, everything.
+   */
+  const mountedIds = useMemo(() => {
+    if (!visibleIds) return orderedIds;
+    return orderedIds.filter((id) => visibleIds.has(id) || selectedSet.has(id) || requiredIds?.has(id));
+  }, [orderedIds, visibleIds, selectedSet, requiredIds]);
 
   // The engine pushes RenderTick every frame. We apply camera to Konva and Grid directly bypassing React!
   useEffect(() => {
@@ -946,16 +759,8 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   // into a real CSS cursor. Nothing here draws a pointer any more.
   const cursorMode = cursorModeForTool(activeTool, { spacePressed: isSpacePressed });
 
-  // Room.tsx's export handlers (and ExportModal) read this to reach
-  // PNGExporter, which requires a live Stage reference — Canvas.tsx is the
-  // only component that actually has one. Without this assignment the global
-  // was always undefined, so every PNG export silently failed (Room.tsx's
-  // handler no-ops on a falsy stage) or threw (ExportModal calls
-  // ExportService directly with no stage at all). There used to be a second,
-  // completely separate 'export-png' handler here too, downloading straight
-  // from stage.toDataURL() and bypassing ExportService/PNGExporter entirely —
-  // two uncoordinated implementations of the same feature, only one of which
-  // could ever have actually run depending on which handler happened to fire.
+  // The raster exporters need the live Stage, and this is the component that
+  // owns it; Room and the export dialog read it from here.
   useEffect(() => {
     (window as any)._konva_stage = stageRef.current;
     return () => {
@@ -966,13 +771,8 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   }, []);
 
   // Reads the pointer from the stage rather than the event, so it works
-  // identically for mouse and touch.
-  //
-  // Both of these go through `presenceManager` rather than writing awareness
-  // directly. It owns the throttle and the idle timer, and — the reason this
-  // changed — it is now the only writer of the `cursor` field, so leaving the
-  // canvas actually clears it instead of being overwritten by the next
-  // presence update. See the comment on `PresenceEngine`.
+  // identically for mouse and touch. Both go through `presenceManager`, the
+  // one writer of the `cursor` field, which owns the throttle and idle timer.
   const handleMouseMove = () => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -997,13 +797,15 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     presenceManager.updateSelection(selectedIds);
   }, [selectedIds]);
 
-  const [overlayState, setOverlayState] = useState<any>(null);
   // Dedicated HandTool instance for the "hold Space to pan" convention,
   // independent of whatever tool is actually active — see handleStageClick/
   // handleMouseMoveExt/handleMouseUp below for why this needs its own
   // pointer-event routing rather than going through toolManager.
   const spacePanTool = useRef(new HandTool()).current;
   const spacePanActiveRef = useRef(false);
+  /** A press on the stage that has not yet been released. */
+  const pressActiveRef = useRef(false);
+  const contentLayerRef = useRef<Konva.Layer>(null);
   const toolManager = useMemo(() => {
     const tm = new ToolManager({ editor, camera: cameraSystem, setOverlayState });
     tm.registerTool(new SelectTool());
@@ -1050,6 +852,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     containerRef,
     stageRef,
     onCancelInteractions: () => {
+      pressActiveRef.current = false;
       toolManager.handlePointerUp({ target: { getStage: () => stageRef.current } });
       setOverlayState(null);
     },
@@ -1061,25 +864,16 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     toolManager.setActiveTool(mappedTool);
   }, [activeTool, toolManager]);
 
-  // ToolManager.handleKeyDown existed but nothing ever called it — tools
-  // implementing onKeyDown (e.g. Escape/Enter to finish a bezier path) never
-  // actually received keyboard events.
-  //
-  // `handleKeyUp` was the same story one layer deeper and outlasted the fix:
-  // `Tool.onKeyUp` is declared on the interface and dispatched by the manager,
-  // and nothing has ever called the manager. So a tool could learn that a
-  // modifier went *down* and never that it came back up — which is exactly
-  // what a "hold Shift to constrain" gesture needs in order to stop
-  // constraining.
+  // Keys reach the active tool (Escape/Enter to finish a path, Shift held to
+  // constrain), behind the same focus guard as every other canvas shortcut.
   useEffect(() => {
-    const isTyping = () =>
-      document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA';
     const handleToolKeyDown = (e: KeyboardEvent) => {
-      if (isTyping()) return;
+      if (keyBelongsToFocus(e.key)) return;
       toolManager.handleKeyDown(e);
     };
+    // Key-ups always reach the tool, so a modifier released while focus moved
+    // into a field cannot leave a "held" state stuck.
     const handleToolKeyUp = (e: KeyboardEvent) => {
-      if (isTyping()) return;
       toolManager.handleKeyUp(e);
     };
     window.addEventListener('keydown', handleToolKeyDown);
@@ -1093,15 +887,10 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   const handleStageClick = (e: any) => {
     // A pinch in progress owns the viewport; tools must not also fire.
     if (isMultiTouchRef.current) return;
-    // Holding Space is meant to be a temporary pan override regardless of
-    // whatever tool is actually active (the Figma/Photoshop convention) —
-    // this used to just bail out here with a comment claiming it prevented
-    // "creating objects while panning", but nothing ever actually panned:
-    // toolManager.handlePointerDown was skipped (so Hand's own drag-tracking
-    // never started either, since Hand usually isn't the active tool during
-    // a space-hold) and handleMouseMoveExt below only ever forwarded to
-    // whichever tool WAS active. Routing straight to a dedicated HandTool
-    // instance is what actually makes the space-pan gesture work.
+    pressActiveRef.current = true;
+    // Holding Space pans whatever tool is active (the Figma/Photoshop
+    // convention), through a dedicated HandTool so the active tool never sees
+    // the gesture.
     if (isSpacePressed) {
       spacePanActiveRef.current = true;
       spacePanTool.onPointerDown({ editor, camera: cameraSystem, setOverlayState }, e);
@@ -1153,7 +942,9 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
 
   const handleMouseMoveExt = (e: any) => {
     if (isMultiTouchRef.current) return;
-    handleMouseMove(); // keep existing awareness broadcast
+    // The container's own mousemove already publishes the cursor for a mouse;
+    // a touch drag fires no mousemove, so it is published from here.
+    if (typeof e?.evt?.type === 'string' && e.evt.type.startsWith('touch')) handleMouseMove();
 
     // Keyed off the ref (which tool actually started this drag), not the
     // live isSpacePressed flag — so releasing Space mid-drag doesn't yank
@@ -1186,6 +977,8 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
 
   const handleMouseUp = (e: any) => {
     if (isMultiTouchRef.current) return;
+    const hadPress = pressActiveRef.current;
+    pressActiveRef.current = false;
     if (spacePanActiveRef.current) {
       spacePanActiveRef.current = false;
       spacePanTool.onPointerUp({ editor, camera: cameraSystem, setOverlayState }, e);
@@ -1198,8 +991,76 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     // that end over a panel, which is exactly where a "still drawing" state
     // would otherwise get stuck forever.
     presenceManager.updateActivity(null);
-    toolManager.handlePointerUp(e);
+    // Only a press this canvas saw gets a release: a window-level release
+    // below may already have ended it.
+    if (hadPress || toolManager.gestureActive) toolManager.handlePointerUp(e);
   };
+
+  /**
+   * End a gesture whose release the stage will never see.
+   *
+   * The stage only hears pointer-up over itself. Released over a panel, the
+   * dock or the rulers — or cancelled by the browser, or interrupted by the
+   * window losing focus — a stroke kept drawing with the button up, a marquee
+   * stayed open and Space-pan kept panning. Releases over the stage are left
+   * to the stage's own handler, which runs with Konva's event.
+   */
+  const handleMouseUpRef = useRef(handleMouseUp);
+  handleMouseUpRef.current = handleMouseUp;
+  useEffect(() => {
+    const endOutside = (ev: Event) => {
+      if (!pressActiveRef.current && !spacePanActiveRef.current) return;
+      const stage = stageRef.current;
+      const overStage =
+        ev.type === 'pointerup' && stage && ev.target instanceof Node && stage.container().contains(ev.target);
+      if (overStage) return;
+      handleMouseUpRef.current({ target: stage ?? { getStage: () => null }, evt: ev });
+    };
+    window.addEventListener('pointerup', endOutside);
+    window.addEventListener('pointercancel', endOutside);
+    window.addEventListener('blur', endOutside);
+    return () => {
+      window.removeEventListener('pointerup', endOutside);
+      window.removeEventListener('pointercancel', endOutside);
+      window.removeEventListener('blur', endOutside);
+    };
+  }, []);
+
+  /**
+   * The content layer's hit graph is switched off while the camera moves.
+   *
+   * Nothing can be hovered or picked mid-pan, and redrawing a hit canvas for
+   * every object on every pan frame doubled the cost of the move. It comes
+   * back a moment after the camera settles — or at once, before Konva
+   * hit-tests, when a press arrives first, so a click straight after a scroll
+   * still lands on what is under it.
+   */
+  useEffect(() => {
+    let timer = 0;
+    const restore = () => {
+      window.clearTimeout(timer);
+      const layer = contentLayerRef.current;
+      if (!layer || layer.listening()) return;
+      layer.listening(true);
+      layer.drawHit();
+    };
+    const off = engineEvents.on('CameraChanged', () => {
+      const layer = contentLayerRef.current;
+      if (!layer) return;
+      if (layer.listening()) layer.listening(false);
+      window.clearTimeout(timer);
+      timer = window.setTimeout(restore, 150);
+    });
+    const container = containerRef.current;
+    const layer = contentLayerRef.current;
+    container?.addEventListener('pointerdown', restore, true);
+    return () => {
+      off();
+      container?.removeEventListener('pointerdown', restore, true);
+      window.clearTimeout(timer);
+      layer?.listening(true);
+    };
+  }, []);
 
   // Remote cursors and selections are DOM overlays (RemoteCursors,
   // PresenceRenderer). The local pointer is the OS one.
@@ -1215,7 +1076,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       // The dot field is a CSS background on this element, so switching it off
       // is one attribute rather than a second painting path.
       data-grid={showGrid ? 'on' : 'off'}
-      style={{ touchAction: 'none' }}
+      style={{ touchAction: 'none', ...boardBackgroundStyle(boardBackground) }}
       ref={containerRef}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
@@ -1326,23 +1187,28 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
         }}
         draggable={false} // Disable Konva dragging. We will pan manually, or let Spacebar trigger pan in mouse events.
       >
+        {/* The board's content, in its own layer so that redrawing the
+            chrome (a marquee, a handle, a guide) does not repaint every
+            object, and so its hit graph can be switched off while panning. */}
+        <Layer ref={contentLayerRef}>
+          {mountedIds.map((id) => (
+            <ObjectRenderer
+              key={id}
+              objId={id}
+              isSelected={selectedSet.has(id)}
+              onSelect={handleObjectSelect}
+              selectable={canSelectWith(activeTool)}
+              canDuplicate={activeTool === 'select'}
+              onThrow={handleThrow}
+              selectedIdsRef={selectedIdsRef}
+            />
+          ))}
+        </Layer>
+
+        {/* Chrome: everything drawn over the content that is not the content. */}
         <Layer>
-          {visibleObjects.map((obj: any) => {
-            const id = typeof obj === 'string' ? obj : obj.id;
-            return (
-              <ObjectRenderer
-                key={id}
-                objId={id}
-                isSelected={selectedIds.includes(id)}
-                onSelect={handleObjectSelect}
-                selectable={canSelectWith(activeTool)}
-                canDuplicate={activeTool === 'select'}
-                onThrow={handleThrow}
-                stageScale={cameraSystem.zoom}
-                selectedIdsRef={selectedIdsRef}
-              />
-            );
-          })}
+          <DataLinkOverlay selectedIds={selectedIds} />
+          <LayerHoverOutline />
 
           {/* The force field, drawn at the radius the simulation will actually
               use. Non-interactive so it never intercepts the press that applies
@@ -1371,10 +1237,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
             </Group>
           )}
 
-          {/* One shared Transformer for the whole canvas.
-              There used to be one mounted per object — with 100 objects that
-              is 100 Transformer instances, 99 of them holding an empty node
-              list and each still participating in layer draws. */}
+          {/* One shared Transformer for the whole canvas. */}
           {/* Hidden while cropping: the crop overlay draws its own handles on
               the same rectangle, and two sets of handles on one object is a
               question with no right answer for whichever one you grab. */}
@@ -1393,16 +1256,17 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
           {/* A line is edited at its two ends. The transformer stands down for
               a solo line — see its own note — so exactly one set of handles is
               ever on screen. */}
+          <ZoomScope>{(zoom) => (<>
           {!croppingId && !reframingId && !editingPathId && !editingTextId && activeTool !== 'direct-select' && selectedIds.length === 1 && (() => {
             const only = objects[selectedIds[0]];
             if (!only) return null;
             if (isLineLike(only)) {
-              return <LineEditor node={only as ShapeNode} stageScale={cameraSystem.zoom} />;
+              return <LineEditor node={only as ShapeNode} stageScale={zoom} />;
             }
             // A connector is edited at its ends for the same reason, and the
             // transformer stands down for it under the same rule.
             if (only.type === 'connector') {
-              return <ConnectorEditor node={only as ConnectorNode} stageScale={cameraSystem.zoom} />;
+              return <ConnectorEditor node={only as ConnectorNode} stageScale={zoom} />;
             }
             // The corner knob rides *alongside* the transformer rather than
             // replacing it: rounding a corner is not an alternative to resizing
@@ -1413,7 +1277,12 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
             // none — see `cornersOf`. Open runs are excluded because a line
             // has no corner to round.
             if (only.type === 'shape' && !isOpenShape(only.geometry?.kind) && !only.locked) {
-              return <CornerRadiusHandle node={only as ShapeNode} stageScale={cameraSystem.zoom} />;
+              return (
+                <>
+                  <CornerRadiusHandle node={only as ShapeNode} stageScale={zoom} />
+                  <ShapeParamHandles node={only as ShapeNode} stageScale={zoom} />
+                </>
+              );
             }
             return null;
           })()}
@@ -1430,22 +1299,20 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
               overlay hides the transformer with: a resize box drawn around a
               path you are editing point by point is a second set of handles
               answering a different question. */}
-          <PathEditor stageScale={cameraSystem.zoom} />
+          <PathEditor stageScale={zoom} />
 
           {/* Guides a person placed. Below the snap guides, because a snap
               guide explains what is happening right now and has to win. */}
-          <RulerGuides stageScale={cameraSystem.zoom} width={dimensions.width} height={dimensions.height} />
+          <RulerGuides stageScale={zoom} width={dimensions.width} height={dimensions.height} />
 
           {/* Alignment and spacing guides. Above everything, because they are
               the explanation for a snap and are useless if an object can cover
               them — which the object being dragged routinely would. */}
-          <SmartGuides stageScale={cameraSystem.zoom} />
+          <SmartGuides stageScale={zoom} />
+          <MeasureOverlay selectedIds={selectedIds} />
 
-          {/* Tool previews — the marquee, the frame's size readout, the pen's
-              in-progress path. Wrapped rather than tagged per tool: a new tool
-              would otherwise have to remember, and forgetting means its
-              preview lands in someone's export. */}
-          <Group name={EXPORT_CHROME}>{toolManager.renderOverlay(overlayState)}</Group>
+          {/* Tool previews: the marquee, a frame's size readout, the pen's stroke. */}
+          <ToolOverlay toolManager={toolManager} />
 
           {/* The shape a combine would produce, while the pointer is on its
               button. Four icons of two overlapping squares cannot say which of
@@ -1460,11 +1327,12 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
                 fill="rgba(59, 130, 246, 0.14)"
                 fillRule="evenodd"
                 stroke="#3B82F6"
-                strokeWidth={1.5 / cameraSystem.zoom}
-                dash={[6 / cameraSystem.zoom, 4 / cameraSystem.zoom]}
+                strokeWidth={1.5 / zoom}
+                dash={[6 / zoom, 4 / zoom]}
               />
             </Group>
           )}
+          </>)}</ZoomScope>
         </Layer>
       </Stage>
       {/* Canvas-space DOM overlays: positioned to match the Stage's exact coordinate origin (including rulerInset). */}
@@ -1482,6 +1350,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       >
         <PresenceRenderer />
         <GestureOverlay />
+        <FramePresenter />
         <CommentsOverlay
           comments={comments}
           objects={objects}
@@ -1494,21 +1363,43 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
         />
       </div>
 
-      {overlayState?.type === 'audio-recording' && (
-        <AudioRecordingHUD
-          elapsedMs={overlayState.elapsedMs || 0}
-          levels={overlayState.levels || []}
-          remainingMs={overlayState.remainingMs}
-          paused={overlayState.paused}
-          silent={overlayState.silent}
-          onCancel={overlayState.onCancel}
-          onTogglePause={overlayState.onTogglePause}
-          onStop={() => toolManager.handlePointerDown({ target: { getStage: () => stageRef.current } })}
-        />
-      )}
+      <AudioRecordingOverlay
+        onStop={() => toolManager.handlePointerDown({ target: { getStage: () => stageRef.current } })}
+      />
       
     </div>
   );
 };
 
+/** Re-renders its children, and only them, when the camera zoom changes. */
+const ZoomScope: React.FC<{ children: (zoom: number) => React.ReactNode }> = ({ children }) => {
+  const zoom = useCameraZoom();
+  return <>{children(zoom)}</>;
+};
 
+/**
+ * The active tool's live preview — marquee, shape being dragged out, pen
+ * stroke. Wrapped rather than tagged per tool: a new tool would otherwise have
+ * to remember, and forgetting means its preview lands in someone's export.
+ */
+const ToolOverlay: React.FC<{ toolManager: ToolManager }> = ({ toolManager }) => {
+  const overlay = useToolOverlay();
+  return <Group name={EXPORT_CHROME}>{toolManager.renderOverlay(overlay)}</Group>;
+};
+
+const AudioRecordingOverlay: React.FC<{ onStop: () => void }> = ({ onStop }) => {
+  const overlay = useToolOverlay();
+  if (overlay?.type !== 'audio-recording') return null;
+  return (
+    <AudioRecordingHUD
+      elapsedMs={overlay.elapsedMs || 0}
+      levels={overlay.levels || []}
+      remainingMs={overlay.remainingMs}
+      paused={overlay.paused}
+      silent={overlay.silent}
+      onCancel={overlay.onCancel}
+      onTogglePause={overlay.onTogglePause}
+      onStop={onStop}
+    />
+  );
+};

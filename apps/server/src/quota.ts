@@ -2,39 +2,29 @@ import type { Pool } from 'pg';
 import { DeleteObjectCommand, type S3Client } from '@aws-sdk/client-s3';
 
 /**
- * Per-IP upload volume, tracked over a day.
+ * Daily upload volume per key, where a key is a client address or a session.
  *
  * Rate limiting requests per second stops a burst but does nothing against
- * thirty 50MB files spread evenly across an afternoon, which costs the same
- * in object storage and rather more in egress. This caps total bytes.
+ * thirty 50MB files spread across an afternoon. This caps total bytes.
  *
- * ## The two backends do not agree, and the difference is visible
+ * ## Which keys are charged
  *
- * The in-memory path is a genuine **sliding** 24-hour window: it sums the
- * uploads whose timestamps fall inside the last day, so the allowance recovers
- * continuously.
+ * Every upload is charged to the client address, and to the session too when
+ * there is one (`reserveUploadAllowance`). Charging only the session was free
+ * to escape: the server mints a new session for any request without a cookie.
+ * The address is the key a client cannot reset; the session keeps two people
+ * behind one NAT from sharing a single allowance as far as the address cap
+ * allows.
  *
- * The Redis path keys on `quota:ip:<YYYY-MM-DD>:<ip>` -- a **fixed UTC
- * calendar day**. Every client's allowance resets at midnight UTC, together,
- * which is both a different guarantee and a predictable moment to aim a flood
- * at. It is written this way because `INCRBY` on a dated key is one round trip
- * and a sliding window across instances is a sorted set with pruning; that is
- * a reasonable trade, but it is a trade, and the previous version of this
- * comment described only the sliding one.
+ * ## Backends
  *
- * Nothing attaches Redis in the current deployment -- `REDIS_HOST` is unset,
- * so `setRedis` is never called and every check takes the in-memory path.
- * Which also means: **quotas reset when the instance restarts**, and on
- * Render's free tier that happens whenever the service has been idle.
+ * Without Redis the window is a genuine **sliding** 24 hours held in this
+ * process, and it resets when the process restarts.
  *
- * ## Check-then-record is not atomic
- *
- * `checkAsync` and `recordAsync` are separate calls with an upload between
- * them, so two requests that arrive together can both observe the same
- * "current" and both pass. The overshoot is bounded by concurrency times file
- * size, which is acceptable for a storage cap and would not be for anything
- * that had to be exact. Closing it means deciding on `INCRBY`'s return value
- * and giving the bytes back when the upload fails.
+ * With Redis (`setRedis`, wired from `REDIS_URL`/`REDIS_HOST`) the key is
+ * `quota:ip:<YYYY-MM-DD>:<key>`, a **fixed UTC calendar day** shared by every
+ * instance. Reservation is atomic: `INCRBY` decides, and the bytes are given
+ * back when the upload is refused later or fails.
  */
 interface IpUploadWindow {
   uploads: Array<{ timestamp: number; bytes: number }>;
@@ -265,6 +255,46 @@ export class IpDailyByteTracker {
 }
 
 export const ipDailyTracker = new IpDailyByteTracker();
+
+export interface AllowanceResult {
+  allowed: boolean;
+  /** The key that refused, when one did. */
+  refusedBy?: string;
+  currentBytes: number;
+}
+
+/**
+ * Reserve `bytes` against every key, or against none.
+ *
+ * Keys are reserved in order and rolled back if a later one refuses, so the
+ * stricter key decides and a refusal costs nobody anything.
+ */
+export async function reserveUploadAllowance(
+  tracker: IpDailyByteTracker,
+  keys: string[],
+  bytes: number,
+  maxDailyBytes: number
+): Promise<AllowanceResult> {
+  const reserved: string[] = [];
+  for (const key of keys) {
+    const check = await tracker.reserveAsync(key, bytes, maxDailyBytes);
+    if (!check.allowed) {
+      for (const done of reserved) await tracker.releaseAsync(done, bytes);
+      return { allowed: false, refusedBy: key, currentBytes: check.currentBytes };
+    }
+    reserved.push(key);
+  }
+  return { allowed: true, currentBytes: 0 };
+}
+
+/** Give back what `reserveUploadAllowance` took. */
+export async function releaseUploadAllowance(
+  tracker: IpDailyByteTracker,
+  keys: string[],
+  bytes: number
+): Promise<void> {
+  for (const key of keys) await tracker.releaseAsync(key, bytes);
+}
 
 /** Formats byte counts into human-readable strings (e.g. "200 MB"). */
 export function formatBytes(bytes: number): string {

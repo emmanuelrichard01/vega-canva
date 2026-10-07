@@ -1,4 +1,6 @@
 import { FORMAT_SPECS, resolveBackground, type Exporter, type ExportOptions, type ExportFormat } from './ExportTypes';
+import { labelPlated, shapeLabelBox } from '../model/shapes/labelBox';
+import { solidFillOf } from '../model/labelInk';
 import { useStore } from '../../hooks/useStore';
 import { THEMES } from '../model/stickyThemes';
 import type { AnyNode, ConnectorNode, ImageNode, PathNode, ShapeNode, TextNode, Typography } from '../model/schema';
@@ -13,7 +15,7 @@ import {
   LABEL_INSET,
   LABEL_SIZE,
 } from '../grid/gridStyle';
-import { fillsInterior, roughPolyline, seedFrom } from '../model/rough';
+import { fillsInterior, roughLoop, roughPolyline, seedFor } from '../model/rough';
 import { SvgPaintDefs } from './svgPaint';
 import { assembleSvg } from './svgDocument';
 import { fetchBlob, inlineImageSources } from './inlineImages';
@@ -39,20 +41,10 @@ import { tableToSvg } from '../table/tableSvg';
 import { codeToSvg } from '../code/codeSvg';
 import { linkToSvg } from '../link/linkSvg';
 import { cornerRadiiOf, fitRadii, isPerCorner, roundedRectPath } from '../model/cornerRadii';
+import { attr, escapeXml, num } from './markup';
+import { compareStacking } from '../model/stacking';
+import { familiesInNodes, fontFaceCss } from '../text/fontEmbed';
 
-/**
- * Embedding raw user text into an SVG without escaping is an XML-corruption
- * bug — a name or note containing `&`, `<`, `>` or a quote produced a
- * malformed, unopenable file.
- */
-function escapeXml(s: string): string {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
 
 /*
  * The polygon and star trigonometry used to live here, duplicating the
@@ -76,15 +68,15 @@ function textAttrs(t: Typography): string {
   const anchor = t.align === 'center' ? 'middle' : t.align === 'right' ? 'end' : 'start';
   return [
     `font-family="${escapeXml(canvasFontFamily(t.fontFamily))}"`,
-    `font-size="${t.fontSize}"`,
-    `font-weight="${t.fontWeight}"`,
+    `font-size="${num(t.fontSize)}"`,
+    `font-weight="${attr(t.fontWeight)}"`,
     `font-style="${t.italic ? 'italic' : 'normal'}"`,
     // Both at once when both are set — SVG takes a space-separated list, the
     // same as Canvas2D, which is why the model keeps them as two flags.
     textDecoration(t) ? `text-decoration="${textDecoration(t)}"` : '',
-    `fill="${t.color}"`,
-    `text-anchor="${anchor}"`,
-    t.letterSpacing ? `letter-spacing="${t.letterSpacing}"` : '',
+    `fill="${attr(t.color)}"`,
+    `text-anchor="${attr(anchor)}"`,
+    t.letterSpacing ? `letter-spacing="${num(t.letterSpacing)}"` : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -155,7 +147,7 @@ function textMarkup(node: TextNode): string {
     const d = highlightPath(layout.lines, t.highlight);
     if (d) {
       parts.push(
-        `<path d="${d}" fill="${t.highlight.color}" transform="translate(${node.x} ${node.y})" />`
+        `<path d="${d}" fill="${attr(t.highlight.color)}" transform="translate(${node.x} ${node.y})" />`
       );
     }
   }
@@ -166,11 +158,11 @@ function textMarkup(node: TextNode): string {
   if (t.glow) {
     const id = `glow-${node.id}`;
     parts.push(
-      `<defs><filter id="${id}" x="-50%" y="-50%" width="200%" height="200%">` +
-        `<feDropShadow dx="0" dy="0" stdDeviation="${t.glow.blur / 2}" flood-color="${t.glow.color}" flood-opacity="1" />` +
+      `<defs><filter id="${attr(id)}" x="-50%" y="-50%" width="200%" height="200%">` +
+        `<feDropShadow dx="0" dy="0" stdDeviation="${num(t.glow.blur / 2)}" flood-color="${attr(t.glow.color)}" flood-opacity="1" />` +
         `</filter></defs>`
     );
-    filterRef = ` filter="url(#${id})"`;
+    filterRef = ` filter="url(#${attr(id)})"`;
   }
 
   // Alignment is already resolved into each line's x, so the anchor is always
@@ -180,7 +172,7 @@ function textMarkup(node: TextNode): string {
   // solves with two draws: it puts the stroke under the fill, so the whole
   // weight lands outside the letterforms instead of eating into them.
   const outline = t.outline
-    ? ` stroke="${t.outline.color}" stroke-width="${t.outline.width * 2}" paint-order="stroke" stroke-linejoin="round"`
+    ? ` stroke="${attr(t.outline.color)}" stroke-width="${num(t.outline.width * 2)}" paint-order="stroke" stroke-linejoin="round"`
     : '';
 
   const lines = layout.lines
@@ -265,23 +257,28 @@ function connectorMarkup(node: ConnectorNode, objects: Record<string, AnyNode>):
   const tpts: { x: number; y: number }[] = [];
   for (let i = 0; i + 1 < trimmed.length; i += 2) tpts.push({ x: trimmed[i], y: trimmed[i + 1] });
 
-  // Sketched connectors export as the sketch, seeded identically to the canvas
-  // so the strokes in the file are the same strokes. The geometry is generated
-  // in node-local space by the renderer, so it is generated in world space here
-  // and needs no transform.
-  const d = node.appearance?.sketch
-    ? roughPolyline(tpts.length >= 2 ? tpts : pts, {
-        seed: seedFrom(node.id),
+  // Sketched connectors export as the sketch, made exactly as the canvas makes
+  // it — same seed, same sketcher for the route kind, same nib — so the strokes
+  // in the file are the same strokes. Generated in world space here, so it
+  // needs no transform. A dashed connector takes one lap, as on the canvas.
+  const run = tpts.length >= 2 ? tpts : pts;
+  const sketchOptions = node.appearance?.sketch
+    ? {
+        seed: seedFor(node.id, node.appearance.sketchSeed),
         closed: false,
         level: node.appearance.sketch,
-        // The same nib the canvas uses, or the file's strokes are not the
-        // canvas's strokes.
         width,
-      })
+        passes: (node.appearance.stroke?.dash?.length ?? 0) > 0 ? 1 : undefined,
+      }
+    : null;
+  const d = sketchOptions
+    ? node.routing === 'curved'
+      ? roughLoop(run, sketchOptions)
+      : roughPolyline(run, sketchOptions)
     : `M ${(tpts.length >= 2 ? tpts : pts).map((p) => `${p.x} ${p.y}`).join(' L ')}`;
 
   const parts = [
-    `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${width}"${dash} stroke-linecap="round" stroke-linejoin="round" />`,
+    `<path d="${d}" fill="none" stroke="${attr(stroke)}" stroke-width="${width}"${dash} stroke-linecap="round" stroke-linejoin="round" />`,
     capMarkup(startCap, stroke, width),
     capMarkup(endCap, stroke, width),
   ];
@@ -303,7 +300,7 @@ function capMarkup(
 ): string {
   if (!cap) return '';
   if (cap.circle) {
-    return `<circle cx="${cap.circle.x.toFixed(2)}" cy="${cap.circle.y.toFixed(2)}" r="${cap.circle.radius.toFixed(2)}" fill="${cap.filled ? stroke : 'none'}" stroke="${stroke}" stroke-width="${sw}" />`;
+    return `<circle cx="${cap.circle.x.toFixed(2)}" cy="${cap.circle.y.toFixed(2)}" r="${cap.circle.radius.toFixed(2)}" fill="${attr(cap.filled ? stroke : 'none')}" stroke="${attr(stroke)}" stroke-width="${sw}" />`;
   }
   const pts = cap.points ?? [];
   const pairs: string[] = [];
@@ -312,8 +309,8 @@ function capMarkup(
   // Open markers — the bar — are a polyline, not a polygon: closing a
   // two-point run draws it back over itself and fills nothing.
   return cap.filled
-    ? `<polygon points="${pairs.join(' ')}" fill="${stroke}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round" />`
-    : `<polyline points="${pairs.join(' ')}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" />`;
+    ? `<polygon points="${pairs.join(' ')}" fill="${attr(stroke)}" stroke="${attr(stroke)}" stroke-width="${sw}" stroke-linejoin="round" />`
+    : `<polyline points="${pairs.join(' ')}" fill="none" stroke="${attr(stroke)}" stroke-width="${sw}" stroke-linecap="round" />`;
 }
 
 function rotationTransform(node: AnyNode): string {
@@ -362,8 +359,8 @@ function rotationTransform(node: AnyNode): string {
  */
 function dashAttrs(stroke: ShapeNode['appearance']['stroke']): string {
   if (!stroke?.dash || stroke.dash.length === 0) return '';
-  const cap = stroke.cap ? ` stroke-linecap="${stroke.cap}"` : '';
-  return ` stroke-dasharray="${stroke.dash.join(' ')}"${cap}`;
+  const cap = stroke.cap ? ` stroke-linecap="${attr(stroke.cap)}"` : '';
+  return ` stroke-dasharray="${stroke.dash.map(num).join(' ')}"${cap}`;
 }
 
 /**
@@ -374,8 +371,8 @@ function dashAttrs(stroke: ShapeNode['appearance']['stroke']): string {
  * nothing and the file stays as small as the document is.
  */
 function joinAttrs(stroke: ShapeNode['appearance']['stroke']): string {
-  const join = stroke?.join ? ` stroke-linejoin="${stroke.join}"` : '';
-  const limit = stroke?.miterLimit !== undefined ? ` stroke-miterlimit="${stroke.miterLimit}"` : '';
+  const join = stroke?.join ? ` stroke-linejoin="${attr(stroke.join)}"` : '';
+  const limit = stroke?.miterLimit !== undefined ? ` stroke-miterlimit="${num(stroke.miterLimit)}"` : '';
   return `${join}${limit}`;
 }
 
@@ -450,8 +447,8 @@ function openShapeMarkup(node: ShapeNode): string {
 
   const parts = [
     drawn.length === 2
-      ? `<line x1="${drawn[0].x.toFixed(2)}" y1="${drawn[0].y.toFixed(2)}" x2="${drawn[1].x.toFixed(2)}" y2="${drawn[1].y.toFixed(2)}" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round"${dashAttrs(node.appearance.stroke)} />`
-      : `<polyline points="${drawn.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ')}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"${dashAttrs(node.appearance.stroke)} />`,
+      ? `<line x1="${drawn[0].x.toFixed(2)}" y1="${drawn[0].y.toFixed(2)}" x2="${drawn[1].x.toFixed(2)}" y2="${drawn[1].y.toFixed(2)}" stroke="${attr(stroke)}" stroke-width="${sw}" stroke-linecap="round"${dashAttrs(node.appearance.stroke)} />`
+      : `<polyline points="${drawn.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ')}" fill="none" stroke="${attr(stroke)}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"${dashAttrs(node.appearance.stroke)} />`,
   ];
 
   // Through the shared `capMarkup`, so a connector's arrowhead and a line's
@@ -503,7 +500,7 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
      * is the one thing sharing `roughShape` between the two exists to prevent.
      */
     if (sketch.silhouette && solidFill && fillsInterior(node.appearance.fillStyle)) {
-      parts.push(`<path d="${sketch.silhouette}" fill="${solidFill}"${place} />`);
+      parts.push(`<path d="${sketch.silhouette}" fill="${attr(solidFill)}"${place} />`);
     }
     if (sketch.fill && solidFill) {
       const fillSw =
@@ -511,7 +508,7 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
           ? node.appearance.sketch === 'heavy' ? 3.6 : node.appearance.sketch === 'light' ? 2.2 : 2.8
           : Math.max(0.8, nib * 0.7);
       parts.push(
-        `<path d="${sketch.fill}" fill="none" stroke="${solidFill}" stroke-width="${fillSw}" stroke-linecap="round"${place} />`
+        `<path d="${sketch.fill}" fill="none" stroke="${attr(solidFill)}" stroke-width="${fillSw}" stroke-linecap="round"${place} />`
       );
     }
     const sketchInk = stroke === 'none' ? DEFAULT_INK : stroke;
@@ -525,16 +522,16 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
      */
     if (sketch.features) {
       parts.push(
-        `<path d="${sketch.features}" fill="none" stroke="${sketchInk}" stroke-width="${Math.max(0.75, nib * 0.78)}" stroke-linecap="round" stroke-linejoin="round"${place} />`
+        `<path d="${sketch.features}" fill="none" stroke="${attr(sketchInk)}" stroke-width="${Math.max(0.75, nib * 0.78)}" stroke-linecap="round" stroke-linejoin="round"${place} />`
       );
     }
     parts.push(
-      `<path d="${sketch.outline}" fill="none" stroke="${sketchInk}" stroke-width="${nib}" stroke-linecap="round" stroke-linejoin="round"${place} />`
+      `<path d="${sketch.outline}" fill="none" stroke="${attr(sketchInk)}" stroke-width="${nib}" stroke-linecap="round" stroke-linejoin="round"${place} />`
     );
     parts.push('</g>');
     return parts.join('');
   }
-  const paint = `fill="${fill}" stroke="${stroke}" stroke-width="${sw}"${dashAttrs(node.appearance.stroke)}${joinAttrs(node.appearance.stroke)}`;
+  const paint = `fill="${attr(fill)}" stroke="${attr(stroke)}" stroke-width="${sw}"${dashAttrs(node.appearance.stroke)}${joinAttrs(node.appearance.stroke)}`;
 
   switch (node.geometry.kind) {
     case 'rect':
@@ -578,7 +575,7 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
       const features = shapeFeaturePaths(node, x, y);
       if (features.length > 0) {
         const featureLines = features
-          .map((f) => `<path d="${f}" fill="none" stroke="${stroke}" stroke-width="${sw}"${dashAttrs(node.appearance.stroke)} />`)
+          .map((f) => `<path d="${f}" fill="none" stroke="${attr(stroke)}" stroke-width="${sw}"${dashAttrs(node.appearance.stroke)} />`)
           .join('');
         return `<g${rot}><path d="${d}" fill-rule="evenodd" ${paint} />${featureLines}</g>`;
       }
@@ -598,7 +595,7 @@ export class SVGExporter implements Exporter {
     if (ids) nodes = nodes.filter((n) => ids.has(n.id));
 
     // Draw in stacking order so the export matches what is on screen.
-    nodes = nodes.filter((n) => !n.hidden).sort((a, b) => a.zIndex - b.zIndex);
+    nodes = nodes.filter((n) => !n.hidden).sort(compareStacking);
 
     const parts: string[] = [];
     const defs = new SvgPaintDefs();
@@ -630,7 +627,7 @@ export class SVGExporter implements Exporter {
     const emit = (node: AnyNode, markup: string) => {
       if (!markup) return;
       const opacity = node.opacity ?? 1;
-      parts.push(opacity >= 1 ? markup : `<g opacity="${opacity}">${markup}</g>`);
+      parts.push(opacity >= 1 ? markup : `<g opacity="${num(opacity)}">${markup}</g>`);
     };
 
     nodes.forEach((node) => {
@@ -645,9 +642,18 @@ export class SVGExporter implements Exporter {
           parts.push(shapeMarkup(node, defs));
           if (node.text && node.typography) {
             const t = node.typography;
-            const tx = node.x + node.width / 2;
+            // Centred in the label box the canvas lays the text out in.
+            const lb = shapeLabelBox(node);
+            const tx = node.x + lb.x + lb.width / 2;
+            const plate = labelPlated(node.geometry.kind) ? solidFillOf(node) : undefined;
+            if (plate) {
+              const r = Math.min(lb.width, lb.height) * 0.2;
+              parts.push(
+                `<rect x="${num(node.x + lb.x)}" y="${num(node.y + lb.y)}" width="${num(lb.width)}" height="${num(lb.height)}" rx="${num(r)}" fill="${attr(plate)}" />`
+              );
+            }
             parts.push(
-              `<text y="${node.y + node.height / 2}" ${textAttrs({ ...t, align: 'center' })} dominant-baseline="middle">${multilineTspans(applyTextCase(node.text, t.textCase), tx, t.fontSize, t.lineHeight)}</text>`
+              `<text y="${node.y + lb.y + lb.height / 2}" ${textAttrs({ ...t, align: 'center' })} dominant-baseline="middle">${multilineTspans(applyTextCase(node.text, t.textCase), tx, t.fontSize, t.lineHeight)}</text>`
             );
           }
           break;
@@ -677,7 +683,7 @@ export class SVGExporter implements Exporter {
             // the hole in and lose the entire result of a subtraction.
             const rule = node.geometry.kind === 'compound' ? ' fill-rule="evenodd"' : '';
             parts.push(
-              `<path d="${bezierPathData(node, node.x, node.y)}" fill="${fill && fill !== 'transparent' ? fill : 'none'}"${rule} stroke="${stroke ?? 'none'}" stroke-width="${sw}"${dash}${cap}${join} />`
+              `<path d="${bezierPathData(node, node.x, node.y)}" fill="${attr(fill && fill !== 'transparent' ? fill : 'none')}"${rule} stroke="${attr(stroke ?? 'none')}" stroke-width="${sw}"${dash}${cap}${join} />`
             );
           } else if (node.geometry.svgPath) {
             /**
@@ -703,12 +709,12 @@ export class SVGExporter implements Exporter {
                 : '';
             if (loop) {
               parts.push(
-                `<path d="${loop}" fill="${fill}" transform="translate(${node.x}, ${node.y})" />`
+                `<path d="${loop}" fill="${attr(fill)}" transform="translate(${node.x}, ${node.y})" />`
               );
             }
             // Freehand strokes store their outline relative to the node origin.
             parts.push(
-              `<path d="${node.geometry.svgPath}" fill="${ink}" transform="translate(${node.x}, ${node.y})" />`
+              `<path d="${attr(node.geometry.svgPath)}" fill="${attr(ink)}" transform="translate(${node.x}, ${node.y})" />`
             );
           }
           break;
@@ -729,11 +735,11 @@ export class SVGExporter implements Exporter {
         case 'sticky': {
           const theme = THEMES[node.theme] ?? THEMES.yellow;
           parts.push(
-            `<rect x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="12" fill="${theme.bg}"${rotationTransform(node)} />`
+            `<rect x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="12" fill="${attr(theme.bg)}"${rotationTransform(node)} />`
           );
           if (node.text) {
             parts.push(
-              `<text y="${node.y + 16}" font-family="Caveat, cursive" font-size="${node.fontSize}" font-weight="bold" fill="${theme.text}">${multilineTspans(node.text, node.x + 16, node.fontSize, 1.4)}</text>`
+              `<text y="${node.y + 16}" font-family="Caveat, cursive" font-size="${num(node.fontSize)}" font-weight="bold" fill="${attr(theme.text)}">${multilineTspans(node.text, node.x + 16, node.fontSize, 1.4)}</text>`
             );
           }
           break;
@@ -787,8 +793,8 @@ export class SVGExporter implements Exporter {
             const { fill, stroke, strokeWidth } = cellPaint(cell, style);
 
             const paint =
-              `fill="${fill}"` +
-              (strokeWidth > 0 && stroke ? ` stroke="${stroke}" stroke-width="${strokeWidth}"` : '');
+              `fill="${attr(fill)}"` +
+              (strokeWidth > 0 && stroke ? ` stroke="${attr(stroke)}" stroke-width="${strokeWidth}"` : '');
 
             // A sector carries its own silhouette; nothing else here can
             // describe it. Rounded by the layout's own rounder, so the file and
@@ -841,7 +847,7 @@ export class SVGExporter implements Exporter {
               parts.push(
                 `<text x="${node.x + cell.x + LABEL_INSET}" y="${node.y + cell.y + LABEL_INSET + LABEL_SIZE}" ` +
                   `font-family="Inter, sans-serif" font-size="${LABEL_SIZE}" font-weight="600" ` +
-                  `fill="${ink}" fill-opacity="0.85">${escapeXml(label)}</text>`
+                  `fill="${attr(ink)}" fill-opacity="0.85">${escapeXml(label)}</text>`
               );
             });
           }
@@ -923,11 +929,15 @@ export class SVGExporter implements Exporter {
      * `resolveBackground` the raster path uses so the two formats cannot
      * disagree about what "White" means.
      */
+    // Uploaded faces travel inside the file; see `text/fontEmbed.ts`.
+    const styles = await fontFaceCss(familiesInNodes(nodes), { embedLocal: options.embedLocalFonts });
+
     return assembleSvg({
       bounds,
       defs,
       background: resolveBackground(options.background, FORMAT_SPECS.svg),
       body: parts,
+      styles,
     });
   }
 }

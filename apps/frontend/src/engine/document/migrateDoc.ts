@@ -38,10 +38,17 @@ export function migrateDoc(
 
       const canonical = normalizeNode(raw, id) as unknown as Record<string, unknown>;
 
+      // Only keys whose value actually differs are written. The migration can
+      // race other people's edits, and rewriting a key that was already right
+      // would put a concurrent write on it that last-writer-wins could let
+      // revert their change. A nested Y type (`reactions`) is never replaced
+      // by a plain snapshot of itself: that would discard concurrent reactions.
       Object.entries(canonical).forEach(([key, value]) => {
+        const current = ymap.get(key);
+        if (current instanceof Y.AbstractType) return;
         if (value === undefined) {
           if (ymap.has(key)) ymap.delete(key);
-        } else {
+        } else if (!sameValue(raw[key], value)) {
           ymap.set(key, value);
         }
       });
@@ -56,7 +63,7 @@ export function migrateDoc(
       // from the canonical node instead means an unrecognised field cannot
       // survive, whatever it is called.
       Object.keys(raw).forEach((key) => {
-        if (!(key in canonical)) ymap.delete(key);
+        if (!(key in canonical) && !(ymap.get(key) instanceof Y.AbstractType)) ymap.delete(key);
       });
 
       migrated++;
@@ -66,4 +73,22 @@ export function migrateDoc(
   }, 'schema-migration');
 
   return { migrated, skipped };
+}
+
+/** Structural equality for JSON values, ignoring object key order. */
+export function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== typeof b || a === null || b === null || typeof a !== 'object') {
+    return Number.isNaN(a) && Number.isNaN(b);
+  }
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) {
+    const bArr = b as unknown[];
+    return a.length === bArr.length && a.every((v, i) => sameValue(v, bArr[i]));
+  }
+  const ao = a as Record<string, unknown>;
+  const bo = b as Record<string, unknown>;
+  const keys = Object.keys(ao).filter((k) => ao[k] !== undefined);
+  const bKeys = Object.keys(bo).filter((k) => bo[k] !== undefined);
+  return keys.length === bKeys.length && keys.every((k) => sameValue(ao[k], bo[k]));
 }

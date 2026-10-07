@@ -10,7 +10,10 @@ import { STICKY_PADDING, THEMES } from '../../engine/model/stickyThemes';
 import { textBox } from '../../engine/model/stickyFooter';
 import { measureStickyHeight, stickyFit, STICKY_FONT_FAMILY } from './renderers/stickyFit';
 import { STICKY_LINE_HEIGHT } from '../../engine/model/stickyText';
-import { chainSticky } from '../../engine/tools/stickyChain';
+import { chainSticky, type ChainDirection } from '../../engine/tools/stickyChain';
+import { updateNode } from '../../engine/document';
+import { applyFormat, detectListShortcut, formatCommandFor } from '../../engine/text/textShortcuts';
+import type { Typography } from '../../engine/model/schema';
 import { domTextStyle } from './renderers/shared';
 
 interface Props {
@@ -50,7 +53,7 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
   const [value, setValue] = useState(node.text ?? '');
   const [, forceReposition] = useState(0);
   const cancelledRef = React.useRef(false);
-  const chainRef = React.useRef(false);
+  const chainRef = React.useRef<ChainDirection | null>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
   /**
@@ -270,6 +273,22 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
             { ...node.typography, color: labelInk(node) ?? node.typography.color }
           : DEFAULT_TYPOGRAPHY;
 
+  /**
+   * The block's stored typography, for the nodes that carry one.
+   *
+   * Read from the node rather than from `typography` above, which is the
+   * rendering copy with the label ink folded in; writing that back would store
+   * the derived colour.
+   */
+  const blockTypography: Typography | null =
+    (node.type === 'text' || node.type === 'shape') ? (node.typography ?? DEFAULT_TYPOGRAPHY) : null;
+
+  const writeTypography = (next: Typography) => {
+    // Absent keys stay absent: a list turned off is no list, not `undefined`.
+    const clean = Object.fromEntries(Object.entries(next).filter(([, v]) => v !== undefined));
+    updateNode(node.id, { typography: clean });
+  };
+
   const handleBlur = () => {
     if (cancelledRef.current) {
       cancelledRef.current = false;
@@ -301,8 +320,9 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
     // After the commit, so the note this chains from has its text saved before
     // the next one takes the caret.
     if (chainRef.current) {
-      chainRef.current = false;
-      if (node.type === 'sticky' && value.trim()) chainSticky(node);
+      const direction = chainRef.current;
+      chainRef.current = null;
+      if (node.type === 'sticky' && value.trim()) chainSticky(node, direction);
     }
   };
 
@@ -344,6 +364,18 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
          */
         placeholder={node.type === 'text' ? 'Type…' : undefined}
         onChange={(e) => {
+          // "- ", "1. " and friends typed at the start turn the block into a
+          // list, as they do in every editor people already use.
+          const listShortcut = blockTypography
+            ? detectListShortcut(e.target.value, e.target.selectionStart ?? 0, blockTypography.list)
+            : null;
+          if (listShortcut && blockTypography) {
+            writeTypography({ ...blockTypography, list: listShortcut.list });
+            setValue(listShortcut.value);
+            const el = e.target;
+            requestAnimationFrame(() => el.setSelectionRange(listShortcut.caret, listShortcut.caret));
+            return;
+          }
           setValue(e.target.value);
           // Bare text boxes grow with their content; containers (sticky,
           // shape, comment) wrap inside fixed bounds.
@@ -376,14 +408,26 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
             cancelledRef.current = true;
             e.currentTarget.blur();
           }
-          // Tab chains a new note beside this one and puts the caret in it, so
-          // a run of ideas costs one keystroke each instead of a round trip to
-          // the toolbar. A literal tab character in a sticky is worth nothing,
-          // so nothing is lost by taking the key.
+          // Tab chains a new note to the right, Shift+Tab one below, and the
+          // caret moves into it: a run of ideas costs one keystroke each. A
+          // literal tab character in a sticky is worth nothing.
           if (e.key === 'Tab' && isSticky) {
             e.preventDefault();
-            chainRef.current = true;
+            chainRef.current = e.shiftKey ? 'down' : 'right';
             e.currentTarget.blur();
+          }
+          // Cmd/Ctrl+Enter finishes editing; on a sticky it also starts the next.
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            if (isSticky) chainRef.current = 'right';
+            e.currentTarget.blur();
+          }
+          // Formatting chords apply to the whole block, which is the unit the
+          // schema stores. Stickies keep their fixed handwriting face.
+          const command = blockTypography ? formatCommandFor(e) : null;
+          if (command && blockTypography) {
+            e.preventDefault();
+            writeTypography(applyFormat(blockTypography, command));
           }
           // Stop canvas-level shortcuts (tool switches, delete) from firing
           // while typing.

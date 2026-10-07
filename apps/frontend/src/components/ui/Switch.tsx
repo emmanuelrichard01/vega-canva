@@ -1,52 +1,46 @@
 import React from 'react';
 
 interface SwitchProps {
-  checked: boolean;
+  /** `'mixed'` when a selection disagrees; pressing it turns everything on. */
+  checked: boolean | 'mixed';
   onChange: (checked: boolean) => void;
+  /** A visible label beside the track. */
   label?: string;
+  /**
+   * The switch's name for assistive technology when there is no visible
+   * label, or when the visible one is a row label elsewhere.
+   */
+  ariaLabel?: string;
   tooltip?: string;
   /**
    * Fill the width, with the label at one end and the track at the other.
-   *
-   * A switch in a toolbar should hug its label; a switch in a menu should not.
-   * Hugging inside a menu is what left four toggles at four different
-   * horizontal positions, each one sitting wherever its label happened to
-   * end — which reads as carelessness even to someone who could not say why.
+   * A switch in a toolbar hugs its label; one in a menu justifies, so a
+   * column of them lines up.
    */
   block?: boolean;
+  disabled?: boolean;
 }
 
-/**
- * A real toggle switch — not an icon button pretending to be one.
- *
- * ## Why this stopped being inline styles
- *
- * Every rule lived in a `style` object, and an inline declaration outranks any
- * selector, so nothing that *used* this component could adjust how it sat.
- * That is fine for a component with one home and wrong for one with two: the
- * header wants it to hug, the View menu wants it to justify, and neither could
- * say so.
- *
- * The on state also painted `--amber-500` — a raw primitive from the palette
- * rather than the accent role, which is the exact drift the token system's own
- * header warns about. An armed switch is the accent, and now says so.
- */
-export const Switch: React.FC<SwitchProps> = ({ checked, onChange, label, tooltip, block }) => {
+/** A real toggle switch: `role="switch"`, armed in the accent, focus in graphite. */
+export const Switch: React.FC<SwitchProps> = ({ checked, onChange, label, ariaLabel, tooltip, block, disabled }) => {
   return (
     <button
+      type="button"
       role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={() => onChange(!checked)}
+      aria-checked={checked === 'mixed' ? 'mixed' : checked}
+      aria-label={ariaLabel ?? label}
+      disabled={disabled}
+      onClick={() => onChange(checked !== true)}
       data-tooltip={tooltip}
       data-tooltip-pos="bottom"
       className={`ui-switch${block ? ' ui-switch--block' : ''}`}
     >
       {label && (
         // Hidden by CSS on narrow viewports; the tooltip and aria-label carry
-        // the meaning there, so the control stays usable rather than being
-        // dropped from the header entirely.
-        <span className="ui-switch__label">{label}</span>
+        // the meaning there.
+        <span className="ui-switch__label" aria-hidden={ariaLabel ? true : undefined}>
+          {label}
+        </span>
       )}
       <span className="ui-switch__track" aria-hidden="true">
         <span className="ui-switch__thumb" />

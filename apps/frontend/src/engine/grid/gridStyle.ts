@@ -262,7 +262,9 @@ export function styleCells(cells: readonly GridCell[], style: GridStyle): Styled
       : shapes[Math.floor(next() * shapes.length)];
     return {
       ...cell,
-      index,
+      // The layout's own identity where it gives one, so content stays bound
+      // to its module when a neighbouring module is merged or split.
+      index: cell.index ?? index,
       shape,
       points: POINTS[shape],
       fill: colors[index],

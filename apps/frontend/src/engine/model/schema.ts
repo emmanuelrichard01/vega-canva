@@ -65,6 +65,7 @@ export type { EndCapKind } from './connectorEnds';
 import type { EndCapKind } from './connectorEnds';
 export type { GridRecipe } from '../grid/gridBuild';
 import type { GridRecipe } from '../grid/gridBuild';
+import type { LayoutAxis as LayoutGuideAxis } from './layoutGuide';
 export type { ChartSpec, ChartKind, ChartSeries } from '../chart/chartTypes';
 import type { ChartSpec } from '../chart/chartTypes';
 export type { TableSpec } from '../table/tableTypes';
@@ -110,6 +111,8 @@ import type { Paint } from './paint';
  *  schema still reads as one description of the document. */
 export type { ConnectorEnd, Port, Routing } from './connector';
 import type { ConnectorEnd, Routing } from './connector';
+export type { SegmentNudge } from './connectorRouter/pathOps';
+import type { SegmentNudge } from './connectorRouter/pathOps';
 
 /**
  * How a layer's pixels combine with what is already beneath them.
@@ -658,6 +661,13 @@ export interface BaseNode {
   opacity: number;
 
   zIndex: number;
+  /**
+   * The grid module this node sits in, when it sits in one. A binding, not a
+   * position: the node's box stays authoritative and the grid reflow
+   * recomputes it. Only the types `engine/grid/gridReflow.ts` lists as
+   * slottable carry it; the read boundary drops it on every other type.
+   */
+  gridSlot?: GridSlot;
   /** Shared synthetic id linking the members of a group. */
   parentId?: string;
   /**
@@ -812,6 +822,24 @@ export const SHAPE_KIND_VALUES = [
   'user',
   'gear',
   'wallet',
+  // Flowchart, completing the ISO 5807 set.
+  'multi_document',
+  'off_page',
+  'card',
+  'loop_limit',
+  'punched_tape',
+  'collate',
+  'sort',
+  'merge',
+  'stored_data',
+  'sequential_access',
+  'direct_access_storage',
+  'display',
+  'or_junction',
+  // Advanced system-diagram glyphs.
+  'chat',
+  'lock',
+  'sliders',
   'line',
   'arrow',
 ] as const;
@@ -1095,6 +1123,12 @@ export interface FreehandGeometry {
    * resized it or erased a piece out of the middle.
    */
   closed?: boolean;
+  /**
+   * The brush that drew it. Absent is the pen. A marker is an even felt-tip
+   * line; a highlighter is a wide translucent band that multiplies with what is
+   * under it on a light board.
+   */
+  brush?: 'marker' | 'highlighter';
 }
 
 /**
@@ -1250,6 +1284,9 @@ export interface StickyNode extends BaseNode {
   appearance?: Appearance;
 }
 
+/** The longest alt text an image keeps. */
+export const MAX_ALT_LENGTH = 500;
+
 export interface ImageNode extends BaseNode {
   type: 'image';
   /** Resolved URL of the stored asset. */
@@ -1288,6 +1325,8 @@ export interface ImageNode extends BaseNode {
    * rather than living on `BaseNode`.
    */
   gridSlot?: GridSlot;
+  /** What the picture shows, for people who cannot see it. Plain text, at most `MAX_ALT_LENGTH` characters. */
+  alt?: string;
 }
 
 export interface AudioNode extends BaseNode {
@@ -1350,8 +1389,8 @@ export interface FrameNode extends BaseNode {
    * See `engine/model/layoutGuide.ts`.
    */
   layoutGuide?: {
-    columns?: { count: number; gutter: number; margin: number };
-    rows?: { count: number; gutter: number; margin: number };
+    columns?: LayoutGuideAxis;
+    rows?: LayoutGuideAxis;
   };
   /**
    * There is deliberately no `layout` field here.
@@ -1411,21 +1450,54 @@ export interface ConnectorNode extends BaseNode {
   arrowStart?: boolean;
   /** @deprecated Superseded by `endStart`/`endEnd`. Read at the boundary only. */
   arrowEnd?: boolean;
-  /** A word or two riding the middle of the run — "yes", "no", "retry". */
-  label?: string;
   /**
-   * How far the elbows of a routed connector are rounded. Absent is square.
+   * The first label's text. Kept for documents and generators that write a
+   * single word; the boundary folds it into `labels`, which is what draws.
+   */
+  label?: string;
+  /** Words along the run, each at its own place on it. */
+  labels?: ConnectorLabel[];
+  /**
+   * How far the elbows of a routed connector are rounded. Absent draws the
+   * default `ELBOW_RADIUS`; 0 is square.
    *
    * Only an *orthogonal* route has elbows: a straight run has none and a
    * curved one is already a curve, so the field is stored on every connector
-   * and read by one of the three routings. That is the same arrangement
-   * `miterLimit` has — a number that is only meaningful beside a particular
-   * choice, kept in one place rather than in a variant per routing.
-   *
-   * Each corner takes the radius it can afford rather than the radius asked
-   * for; see `connectorCorners.ts` for why a fixed one draws a knot.
+   * and read by one of the three routings. Each corner takes the radius it can
+   * afford rather than the radius asked for.
    */
   cornerRadius?: number;
+  /**
+   * Route around other objects rather than through them. New elbow and curved
+   * connectors are created with it on; absent is off, so older boards keep
+   * the routes they were drawn with.
+   */
+  avoid?: boolean;
+  /**
+   * What this connector draws where it crosses connectors below it: a hop
+   * (`arc`), a break in the lower line (`gap`), or nothing. Absent follows the
+   * board, and connectors that avoid default to `arc`.
+   */
+  jumps?: 'none' | 'arc' | 'gap';
+  /**
+   * Interior segments the user dragged, as offsets from where the router puts
+   * them. Offsets, not points: the route stays derived, and a nudge recorded
+   * against a route of a different shape is dropped.
+   */
+  nudges?: SegmentNudge[];
+}
+
+/**
+ * A word along a connector.
+ *
+ * `t` is where it sits along the run, 0 to 1; absent lets the board place it
+ * clear of other labels. `dn` offsets it across the run.
+ */
+export interface ConnectorLabel {
+  id: string;
+  text: string;
+  t?: number;
+  dn?: number;
 }
 
 /**

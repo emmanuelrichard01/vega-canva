@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   CLIPBOARD_MAGIC,
+  MAX_PASTE_DEPTH,
+  MAX_PASTE_NODES,
   offsetOrigin,
   parseClipboard,
   pasteNodes,
   pasteOrigin,
   payloadBounds,
+  withinDepth,
   writeClipboard,
 } from './clipboard';
 import type { AnyNode } from '../model/schema';
@@ -269,5 +272,25 @@ describe('pasteOrigin', () => {
     // move something the person can see.
     const payload = writeClipboard([node({ id: 'a', x: -80, y: 100, width: 200, height: 100 })])!;
     expect(pasteOrigin(payload, viewport)).toEqual(offsetOrigin(payload));
+  });
+});
+
+describe('untrusted clipboard limits', () => {
+  it('refuses a payload with more nodes than a paste may create', () => {
+    const nodes = Array.from({ length: MAX_PASTE_NODES + 1 }, (_, i) => ({ id: `n${i}`, type: 'shape', x: 0, y: 0 }));
+    expect(parseClipboard(JSON.stringify({ kind: CLIPBOARD_MAGIC, nodes, origin: { x: 0, y: 0 } }))).toBeNull();
+  });
+
+  it('refuses a payload nested deeper than readers can safely walk', () => {
+    let deep: Record<string, unknown> = {};
+    const root = deep;
+    for (let i = 0; i < MAX_PASTE_DEPTH + 5; i++) {
+      const next = {};
+      deep.child = next;
+      deep = next;
+    }
+    const text = JSON.stringify({ kind: CLIPBOARD_MAGIC, nodes: [{ id: 'a', type: 'shape', x: 0, y: 0, data: root }], origin: { x: 0, y: 0 } });
+    expect(parseClipboard(text)).toBeNull();
+    expect(withinDepth({ a: { b: 1 } }, 3)).toBe(true);
   });
 });

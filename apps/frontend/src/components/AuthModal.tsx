@@ -4,6 +4,7 @@ import { ArrowRight, Moon, Sun } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
 import { Logo } from './ui/Logo';
 import { AuthShowcase } from './auth/AuthShowcase';
+import { storageGet } from '../utils/safeStorage';
 
 /**
  * The way in.
@@ -82,7 +83,7 @@ export const AuthModal: React.FC = () => {
   React.useEffect(() => {
     if (seeded.current) return;
     seeded.current = true;
-    if (localStorage.getItem('vega_dark_theme') !== null) return;
+    if (storageGet('vega_dark_theme') !== null) return;
     if (window.matchMedia?.('(prefers-color-scheme: dark)').matches) setDarkTheme(true);
   }, [setDarkTheme]);
   // Defaulted on: this is the behaviour someone returning to their own board

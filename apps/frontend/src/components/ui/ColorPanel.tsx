@@ -13,6 +13,7 @@ import {
 } from '../../engine/model/colorFormat';
 import { withAlpha } from '../../engine/model/paint';
 import { useStore } from '../../hooks/useStore';
+import { storageGet, storageSet } from '../../utils/safeStorage';
 
 /**
  * The body of every colour control in the app: a picker, not a popover.
@@ -69,7 +70,7 @@ type Source = 'swatches' | 'board' | 'palettes';
 
 function read<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
   try {
-    const v = localStorage.getItem(key) as T | null;
+    const v = storageGet(key) as T | null;
     return v && allowed.includes(v) ? v : fallback;
   } catch {
     return fallback;
@@ -78,7 +79,7 @@ function read<T extends string>(key: string, allowed: readonly T[], fallback: T)
 
 function write(key: string, value: string) {
   try {
-    localStorage.setItem(key, value);
+    storageSet(key, value);
   } catch {
     /* a nicety, never a requirement */
   }
@@ -86,7 +87,7 @@ function write(key: string, value: string) {
 
 function readRecents(): string[] {
   try {
-    const list = JSON.parse(localStorage.getItem(RECENTS_KEY) ?? '[]') as unknown;
+    const list = JSON.parse(storageGet(RECENTS_KEY) ?? '[]') as unknown;
     return Array.isArray(list) ? list.filter((c): c is string => typeof c === 'string').slice(0, MAX_RECENTS) : [];
   } catch {
     return [];
@@ -96,7 +97,7 @@ function readRecents(): string[] {
 function pushRecent(color: string) {
   try {
     const next = [color, ...readRecents().filter((c) => c.toUpperCase() !== color.toUpperCase())].slice(0, MAX_RECENTS);
-    localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
+    storageSet(RECENTS_KEY, JSON.stringify(next));
   } catch {
     /* ignore */
   }

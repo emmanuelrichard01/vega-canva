@@ -1,8 +1,6 @@
 import React from 'react';
-import { Pencil, RefreshCw } from 'lucide-react';
-import { Accordion, Row } from '../panelPrimitives';
-import { NumberStepper } from '../../ui/NumberStepper';
-import { SegmentedControl } from '../../ui/SegmentedControl';
+import { RefreshCw } from 'lucide-react';
+import { NumberField, PairRow, Row, Section, SegmentedControl } from '../grammar';
 import { FillStyleIcon, HatchAngleGlyph, ShadingDensityIcon, SketchLevelIcon } from '../sketchIcons';
 import { HACHURE_ANGLE, SHADING_DENSITIES } from '../../../engine/model/rough';
 import {
@@ -90,12 +88,7 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
       : `${SKETCH_LABELS[level]} · ${FILL_LABELS[style]}`;
 
   return (
-    <Accordion
-      title="Hand-drawn"
-      icon={<Pencil size={13} />}
-      defaultOpen={Boolean(level)}
-      badge={badge}
-    >
+    <Section id="style" title="Style" meta={badge}>
       <Row stack label="Sketch" hint="Draw this by hand. The result is stable and never re-randomises.">
           {(() => {
             const sketch = sharedPaint((a) => a.sketch ?? 'off');
@@ -129,8 +122,7 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
         Four flat rows read as four unrelated settings; a rule costs a pixel and
         makes the dependency legible.
       */}
-      {capabilities.supportsFill && level && allClosed && <div className="prop-rule" role="presentation" />}
-
+      
       {capabilities.supportsFill && level && allClosed && (
         /* Stacked, because five tiles do not fit the 84px control column — they
            wrapped three-and-two, which reads as a mistake next to the four
@@ -169,7 +161,7 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
         hatch, and you make them against each other.
       */}
       {capabilities.supportsFill && level && allClosed && style !== 'solid' && (
-        <div className="prop-grid">
+        <PairRow>
           {(() => {
             const density = sharedPaint((a) => a.shadingDensity ?? 'medium');
             return (
@@ -194,8 +186,8 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
             const angle = sharedPaint((a) => a.shadingAngle ?? HACHURE_ANGLE);
             const value = Math.round(angle.value ?? HACHURE_ANGLE);
             return (
-              <NumberStepper
-                aria-label="Shading angle"
+              <NumberField
+                label="Shading angle"
                 /*
                   The glyph *is* the value.
 
@@ -206,9 +198,8 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
                   question, and it costs one `rotate`.
                 */
                 glyph={<HatchAngleGlyph degrees={angle.mixed ? 0 : value} />}
-                suffix="°"
-                value={value}
-                mixed={angle.mixed}
+                unit="deg"
+                value={angle.mixed ? 'mixed' : value}
                 onChange={(v) => setAppearance({ shadingAngle: v })}
                 min={-90}
                 max={90}
@@ -216,7 +207,7 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
               />
             );
           })()}
-        </div>
+        </PairRow>
       )}
 
       {/*
@@ -233,14 +224,13 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
         giving up any of the stability — see `Appearance.sketchSeed`. Every
         value is as fixed as the original was; there is simply more than one.
 
-        It sits under the rule with the shading rather than up with the level,
+        It sits with the shading rather than up with the level,
         because it is a *verb* and everything above it is a setting. And it is
         offered whenever there is a sketch, shaded or not: the outline is drawn
         by hand either way, and the outline is usually what you want redrawn.
       */}
       {level && (
-        <div className="prop-grid prop-grid--single">
-          <button
+        <button
             type="button"
             className="sketch-redraw"
             onClick={() => {
@@ -258,8 +248,7 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
             <RefreshCw size={13} aria-hidden="true" />
             Redraw
           </button>
-        </div>
       )}
-    </Accordion>
+    </Section>
   );
 };

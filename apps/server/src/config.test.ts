@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { readConfig } from './config';
+import { readConfig, readMaintenanceConfig } from './config';
 
 /**
  * These are the tests for "the server must not boot on a published password".
@@ -16,6 +16,9 @@ const KEYS = [
   'S3_SECRET_KEY', 'REDIS_HOST', 'REDIS_PORT', 'AUTH_SECRET',
   'MIN_ROOM_ID_LENGTH', 'MAX_ROOM_STORAGE_BYTES', 'MAX_IP_DAILY_STORAGE_BYTES',
   'MAX_GLOBAL_STORAGE_BYTES', 'ROOM_TTL_DAYS', 'SENTRY_DSN', 'ENFORCE_SHARE_TOKENS',
+  'SESSION_SECRET', 'SHARE_SECRET', 'ADMIN_SECRET', 'REDIS_URL', 'REDIS_PASSWORD',
+  'REDIS_TLS', 'WS_MAX_PAYLOAD_BYTES', 'MAX_DOCUMENT_BYTES', 'HISTORY_FLUSH_MS',
+  'DATABASE_URL', 'POSTGRES_SSL',
 ];
 
 let saved: Record<string, string | undefined> = {};
@@ -44,6 +47,7 @@ function validProduction() {
   process.env.S3_SECRET_KEY = 'another-real-secret';
   process.env.ALLOWED_ORIGINS = 'https://app.example.com';
   process.env.PUBLIC_API_URL = 'https://api.example.com';
+  process.env.SESSION_SECRET = 'a-session-signing-key-of-at-least-32-chars';
 }
 
 describe('development', () => {
@@ -166,5 +170,53 @@ describe('trust proxy', () => {
 
     process.env.TRUST_PROXY = 'loopback';
     expect(readConfig().trustProxy).toBe('loopback');
+  });
+});
+
+describe('session signing key', () => {
+  it('is required in production', () => {
+    validProduction();
+    delete process.env.SESSION_SECRET;
+    expect(() => readConfig()).toThrow(/SESSION_SECRET is required/);
+  });
+
+  it('may not reuse the invite key, whose rotation revokes links', () => {
+    validProduction();
+    process.env.SHARE_SECRET = process.env.SESSION_SECRET;
+    expect(() => readConfig()).toThrow(/SESSION_SECRET must differ/);
+  });
+
+  it('is optional in development', () => {
+    expect(readConfig().sessionSecret).toBeNull();
+  });
+});
+
+describe('collaboration limits', () => {
+  it('has bounded defaults', () => {
+    const config = readConfig();
+    expect(config.collab.maxPayloadBytes).toBe(4 * 1024 * 1024);
+    expect(config.collab.maxDocumentBytes).toBe(32 * 1024 * 1024);
+  });
+
+  it('reads Redis from a URL', () => {
+    process.env.REDIS_URL = 'rediss://cache.example.com:6380';
+    expect(readConfig().redis).toMatchObject({ url: 'rediss://cache.example.com:6380' });
+  });
+});
+
+describe('maintenance scripts', () => {
+  it('refuse the development defaults unless told they are in development', () => {
+    expect(() => readMaintenanceConfig()).toThrow(/POSTGRES_PASSWORD is required/);
+    process.env.NODE_ENV = 'development';
+    expect(readMaintenanceConfig().db.password).toBe('canva_password');
+  });
+
+  it('take the database from a connection string, with TLS when it asks', () => {
+    process.env.DATABASE_URL = 'postgres://u:p@db.example.com/vega?sslmode=require';
+    process.env.S3_ACCESS_KEY = 'a-real-access-key';
+    process.env.S3_SECRET_KEY = 'another-real-secret';
+    const config = readMaintenanceConfig();
+    expect(config.db.url).toBe(process.env.DATABASE_URL);
+    expect(config.db.ssl).toBe(true);
   });
 });

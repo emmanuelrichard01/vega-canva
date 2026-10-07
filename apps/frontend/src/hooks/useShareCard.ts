@@ -3,7 +3,9 @@ import { useStore } from './useStore';
 import { buildPreview, MAX_ITEMS_RICH } from '../engine/model/boardPreview';
 import { previewColorOf, previewPointsOf } from '../engine/model/previewPaint';
 import { cardPayload, cardSignature, onCardFlush, type CardPayload } from '../engine/share/shareCard';
-import { shareCardUrl } from '../utils/endpoints';
+import { shareCardUrl, roomRequestHeaders } from '../utils/endpoints';
+import { canEditObjects } from '../engine/model/permissions';
+import { storageGet, storageSet } from '../utils/safeStorage';
 
 interface Options {
   roomId: string | null | undefined;
@@ -29,7 +31,7 @@ const TRUST_MS = 24 * 60 * 60 * 1000;
 
 function readSent(roomId: string): string | null {
   try {
-    const [signature, at] = (localStorage.getItem(sentKey(roomId)) ?? '').split('|');
+    const [signature, at] = (storageGet(sentKey(roomId)) ?? '').split('|');
     return signature && Date.now() - Number(at) < TRUST_MS ? signature : null;
   } catch {
     return null;
@@ -38,7 +40,7 @@ function readSent(roomId: string): string | null {
 
 function writeSent(roomId: string, signature: string) {
   try {
-    localStorage.setItem(sentKey(roomId), `${signature}|${Date.now()}`);
+    storageSet(sentKey(roomId), `${signature}|${Date.now()}`);
   } catch {
     /* A full store costs a repeat upload, nothing more. */
   }
@@ -84,12 +86,14 @@ export function useShareCard({ roomId, name, hidden, synced, canEdit }: Options)
 
     const send = async (keepalive = false): Promise<void> => {
       dirty.current = false;
+      // The server refuses card writes from viewers and commenters.
+      if (!canEditObjects()) return;
       const payload: CardPayload = build();
       const signature = cardSignature(payload);
       if (readSent(roomId) === signature) return;
       await fetch(shareCardUrl(roomId), {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: roomRequestHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(payload),
         keepalive,
       })

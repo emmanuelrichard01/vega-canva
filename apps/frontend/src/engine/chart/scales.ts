@@ -68,14 +68,30 @@ export function niceStep(rawStep: number): number {
  * of a temperature range, where the interesting variation is a few degrees
  * around 300K and forcing zero flattens it to a straight line.
  */
+/**
+ * The bounds every axis computation stays inside.
+ *
+ * A finite value near `Number.MAX_VALUE` is still poison here: the span
+ * between two of them overflows to Infinity, the step derived from it is
+ * Infinity, and a loop counting ticks across it never ends — one typed cell
+ * hung every tab that rendered the board. Clamping into ±1e300 keeps every sum
+ * and difference finite, and `MAX_TICKS` bounds the loops regardless.
+ */
+const AXIS_LIMIT = 1e300;
+export const MAX_TICKS = 1000;
+
+const axisValue = (v: number, fallback: number): number =>
+  Number.isFinite(v) ? Math.max(-AXIS_LIMIT, Math.min(AXIS_LIMIT, v)) : fallback;
+
 export function niceDomain(
   min: number,
   max: number,
   tickCount = 5,
   includeZero = true
 ): { domain: Domain; ticks: number[] } {
-  let lo = Number.isFinite(min) ? min : 0;
-  let hi = Number.isFinite(max) ? max : 0;
+  let lo = axisValue(min, 0);
+  let hi = axisValue(max, 0);
+  if (lo > hi) [lo, hi] = [hi, lo];
 
   if (includeZero) {
     lo = Math.min(lo, 0);
@@ -105,6 +121,11 @@ export function niceDomain(
   // Counted rather than accumulated: repeatedly adding 0.1 drifts, and an axis
   // labelled 0.30000000000000004 is the classic form of that bug.
   const steps = Math.round((end - start) / step);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || !(steps >= 0) || steps > MAX_TICKS) {
+    // A span the step cannot cover in a readable number of ticks (or at all,
+    // once precision runs out at extreme magnitudes): the two ends only.
+    return { domain: [lo, hi], ticks: [lo, hi] };
+  }
   for (let i = 0; i <= steps; i += 1) ticks.push(roundToStep(start + i * step, step));
 
   return { domain: [start, end], ticks };
@@ -234,14 +255,26 @@ export function logDomainOf(values: number[]): { ok: boolean; domain: Domain; ti
 
   if (positive.length === 0) return { ok: false, domain: [1, 10], ticks: [1, 10] };
 
-  const lo = 10 ** Math.floor(Math.log10(Math.min(...positive)));
-  const hi = 10 ** Math.ceil(Math.log10(Math.max(...positive)));
-  const domain: Domain = [lo, hi === lo ? lo * 10 : hi];
+  // Reduced rather than spread: `Math.min(...values)` overflows the stack on a
+  // large enough series.
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of positive) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+
+  // Integer decades, clamped to where `10 ** e` is a normal, non-zero number.
+  // A subnormal like 5e-324 floors to decade -324, whose power is 0 — and a
+  // loop stepping up from log10(0) = -Infinity never advances.
+  const loExp = Math.max(-300, Math.min(300, Math.floor(Math.log10(min))));
+  let hiExp = Math.max(-300, Math.min(300, Math.ceil(Math.log10(max))));
+  if (hiExp <= loExp) hiExp = loExp + 1;
+  const domain: Domain = [10 ** loExp, 10 ** hiExp];
 
   const ticks: number[] = [];
-  for (let e = Math.log10(domain[0]); e <= Math.log10(domain[1]) + 1e-9; e += 1) {
-    ticks.push(10 ** Math.round(e));
-  }
+  const stride = Math.max(1, Math.ceil((hiExp - loExp) / MAX_TICKS));
+  for (let e = loExp; e <= hiExp; e += stride) ticks.push(10 ** e);
 
   return { ok, domain, ticks };
 }

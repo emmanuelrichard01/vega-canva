@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 import { nanoid } from 'nanoid';
-import { doc, groupsMap, identitiesMap, objectsMap, provider } from './doc';
+import { doc, groupsMap, identitiesMap, metadataMap, objectsMap, provider } from './doc';
 import type { GroupPlan, GroupRecord } from '../model/groupTree';
 import { applyReactionToggle, seedReactions } from './reactions';
 import { frameForNode } from '../model/frames';
@@ -8,22 +8,19 @@ import { getColorForUser } from '../presence/ColorPalette';
 import { canEditObjects, canPostComments, getRoomRole } from '../model/permissions';
 
 /**
- * The write path for canvas objects.
+ * The write path for canvas objects, groups and board metadata.
  *
- * Every mutation goes through here so that invariants which used to be each
- * caller's responsibility — and which several callers therefore got wrong —
- * are enforced in exactly one place:
+ * Invariants enforced here rather than by each caller:
  *
- *  - **z-index.** Every tool stamped a literal `zIndex: 0`, so stacking order
- *    was decided by whatever order `Object.values()` happened to return and
- *    the Layers panel's ordering was meaningless. New nodes now always land
- *    on top.
- *  - **`updatedAt`.** Nothing ever wrote it after creation, so the Properties
- *    panel's "Updated At" permanently displayed the creation date.
- *  - **provenance and base fields.** `createdBy`/`createdAt`/`locked`/
- *    transform defaults were copy-pasted across seven tools, and drifted
- *    (TextTool and ShapeTool hardcoded `createdBy: 'local'`, which made every
- *    collaborator's panel claim they had authored every node in the room).
+ *  - **z-index.** New nodes land on top of the stack.
+ *  - **`updatedAt` / `updatedBy`.** Stamped on every write a person makes.
+ *  - **provenance and base fields.** `createdBy`/`createdAt`/`locked` and
+ *    transform defaults are stamped here; a caller's own `createdBy` is
+ *    ignored unless it is restoring a backup.
+ *  - **the role gate** (`refuseWrite`).
+ *
+ * Comments, ruler guides, backup restore and migrations write their own
+ * shared state elsewhere, and check the same role there.
  */
 
 /** Fields callers supply; everything else is stamped here. */
@@ -45,9 +42,9 @@ export interface NewNodeInput {
 /**
  * Next free stacking slot, one above everything currently in the document.
  *
- * Two clients creating simultaneously can pick the same value; that is
- * acceptable (the CRDT converges and ties break deterministically by id) and
- * far better than the previous behaviour where *every* node shared z-index 0.
+ * Two clients creating simultaneously can pick the same value. Every reader
+ * orders with `compareStacking` (engine/model/stacking.ts), which breaks ties
+ * by id, so the tie stacks the same way on every screen.
  */
 export function nextZIndex(): number {
   let max = 0;
@@ -182,6 +179,8 @@ export function localAuthor(): { id: string; name: string; color: string } {
  * reload: an unchanged identity writes nothing.
  */
 export function publishLocalIdentity(name: string, color: string): void {
+  // A viewer's connection is read-only, so the write would only fork their copy.
+  if (!canPostComments()) return;
   const id = localAuthorId();
   if (id === 'local') return; // awareness not ready; the caller retries on change
   const existing = identitiesMap.get(id);
@@ -194,9 +193,8 @@ export function publishLocalIdentity(name: string, color: string): void {
  *
  * ## Why it is here and not on the controls
  *
- * This module is invariant 1: **the only write path into the document.**
- * Nothing else touches the Y.Map. That makes it the only place a permission
- * can be enforced once and be true everywhere -- the same argument
+ * Every edit of a canvas object ends here, which makes this the one place
+ * the permission can be enforced and be true everywhere -- the same argument
  * `ToolManager.setActiveTool` makes for tools, and for the same reason: every
  * route ends here, so refusing here refuses the dock, the contextual rail, the
  * properties panel, the keyboard, the command palette, a lesson driving the
@@ -237,7 +235,17 @@ function refuseWrite(what: string): boolean {
   return true;
 }
 
-export function createNode(input: NewNodeInput): string {
+export interface CreateNodeOptions {
+  /**
+   * Keep the `createdBy*` fields the input carries. Only a backup restore
+   * should: it is putting back authorship the document already recorded.
+   * Everything else, paste and duplicate included, is authored by whoever
+   * performs it.
+   */
+  preserveAuthorship?: boolean;
+}
+
+export function createNode(input: NewNodeInput, options: CreateNodeOptions = {}): string {
   // Returns '' rather than throwing: callers place the node and move on, and a
   // throw here would take out a drop of nine images on the first one.
   if (refuseWrite('createNode')) return '';
@@ -254,15 +262,19 @@ export function createNode(input: NewNodeInput): string {
     hidden: false,
     ...input,
     id,
-    createdBy: input.createdBy ?? author.id,
-    createdByName: input.createdByName ?? author.name,
-    createdByColor: input.createdByColor ?? author.color,
+    createdBy: (options.preserveAuthorship && input.createdBy) || author.id,
+    createdByName: (options.preserveAuthorship && input.createdByName) || author.name,
+    createdByColor: (options.preserveAuthorship && input.createdByColor) || author.color,
     createdAt: now,
     updatedAt: now,
+    updatedBy: undefined,
+    updatedByName: undefined,
     // Always a fresh top slot, even when the caller spread an existing node
     // (duplicate/paste) whose stale z-index would otherwise be inherited.
     zIndex: nextZIndex(),
   };
+  // A copy starts with nobody's reactions: those were responses to the original.
+  if (!options.preserveAuthorship) delete node.reactions;
 
   // Derived from where the node actually is, not from `input` — a duplicate or
   // a paste spreads the original's `frameId`, which is the wrong frame the
@@ -361,12 +373,23 @@ export function updateNode(id: string, updates: Record<string, unknown>): void {
      * Comparing first means a run of edits by one person writes the pair once.
      * A `Y.Map` read is local and cheap; the write is neither.
      */
-    const author = localAuthorId();
-    if (ymap.get('updatedBy') !== author) {
-      ymap.set('updatedBy', author);
-      ymap.set('updatedByName', localAuthor().name);
-    }
+    stampUpdatedBy(ymap, localAuthorId());
   });
+}
+
+function stampUpdatedBy(ymap: Y.Map<unknown>, author: string): void {
+  if (ymap.get('updatedBy') === author) return;
+  ymap.set('updatedBy', author);
+  ymap.set('updatedByName', localAuthor().name);
+}
+
+/** Options for writes made on the document's behalf rather than a person's. */
+export interface WriteOptions {
+  /**
+   * Transaction origin. Pass `DERIVED_ORIGIN` for reflows and repairs so the
+   * write stays out of undo and does not claim a person as its author.
+   */
+  origin?: unknown;
 }
 
 /**
@@ -387,6 +410,7 @@ export function updateNodes(ids: readonly string[], updates: Record<string, unkn
   if (refuseWrite('updateNodes')) return;
   if (ids.length === 0) return;
   const now = Date.now();
+  const author = localAuthorId();
   doc.transact(() => {
     ids.forEach((id) => {
       const ymap = objectsMap.get(id);
@@ -396,6 +420,7 @@ export function updateNodes(ids: readonly string[], updates: Record<string, unkn
         else ymap.set(key, value);
       });
       ymap.set('updatedAt', now);
+      stampUpdatedBy(ymap, author);
     });
   });
 }
@@ -410,11 +435,14 @@ export function updateNodes(ids: readonly string[], updates: Record<string, unkn
  * patches.
  */
 export function applyNodePatches(
-  patches: ReadonlyArray<{ id: string; changes: Record<string, unknown> }>
+  patches: ReadonlyArray<{ id: string; changes: Record<string, unknown> }>,
+  options: WriteOptions = {}
 ): void {
   if (refuseWrite('applyNodePatches')) return;
   if (patches.length === 0) return;
   const now = Date.now();
+  const derived = options.origin !== undefined && options.origin !== null;
+  const author = localAuthorId();
   doc.transact(() => {
     patches.forEach(({ id, changes }) => {
       const ymap = objectsMap.get(id);
@@ -423,9 +451,11 @@ export function applyNodePatches(
         if (value === undefined) ymap.delete(key);
         else ymap.set(key, value);
       });
+      if (derived) return;
       ymap.set('updatedAt', now);
+      stampUpdatedBy(ymap, author);
     });
-  });
+  }, options.origin ?? null);
 }
 
 /**
@@ -445,7 +475,7 @@ export function applyNodePatches(
  * grouping a selection that happens to *be* a whole group, or a drag that
  * would put a folder inside itself.
  */
-export function applyGroupPlan(plan: GroupPlan): void {
+export function applyGroupPlan(plan: GroupPlan, options: WriteOptions = {}): void {
   if (refuseWrite('applyGroupPlan')) return;
   const touchesNothing =
     plan.nodes.length === 0 && plan.groups.length === 0 && !plan.create && plan.remove.length === 0;
@@ -472,7 +502,7 @@ export function applyGroupPlan(plan: GroupPlan): void {
     // Deleted last, so a group being emptied and a group being removed in the
     // same plan cannot resurrect each other through ordering.
     for (const id of plan.remove) groupsMap.delete(id);
-  });
+  }, options.origin ?? null);
 }
 
 /**
@@ -539,6 +569,17 @@ export function deleteNode(id: string): void {
     revokeIfBlobUrl(ymap.get('src'));
   }
   objectsMap.delete(id);
+}
+
+/**
+ * Write a board-level setting (its name, whether its link unfurls).
+ *
+ * Gated like every other edit: the server drops a viewer's writes, so letting
+ * one through would only fork that viewer's copy of the board.
+ */
+export function setBoardMetadata(key: string, value: string): void {
+  if (refuseWrite('setBoardMetadata')) return;
+  metadataMap.set(key, value);
 }
 
 /** Snapshot of a single node, or null if it no longer exists. */

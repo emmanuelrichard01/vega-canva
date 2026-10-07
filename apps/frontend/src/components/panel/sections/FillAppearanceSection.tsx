@@ -1,15 +1,14 @@
 import React from 'react';
-import { Palette } from 'lucide-react';
-import { Accordion, Row } from '../panelPrimitives';
-import { ColorPickerPopover } from '../../ui/ColorPickerPopover';
+import { Blend, Minus } from 'lucide-react';
+import { ColorChip, NumberField, Row, Section, Select } from '../grammar';
 import { EyedropperButton } from '../../ui/EyedropperButton';
 import { FillEditor } from '../../ui/FillEditor';
-import { Slider } from '../../ui/Slider';
 import {
   BLEND_MODES,
   type AnyNode,
   type Appearance,
   type BlendMode,
+  type Paint,
 } from '../../../engine/model/schema';
 import type { Shared } from '../../../engine/model/selection';
 import { CornerRadiusRow } from '../CornerRadiusRow';
@@ -21,25 +20,55 @@ const BLEND_LABELS: Record<BlendMode, string> = {
   overlay: 'Overlay',
   darken: 'Darken',
   lighten: 'Lighten',
-  'color-dodge': 'Color Dodge',
-  'color-burn': 'Color Burn',
-  'hard-light': 'Hard Light',
-  'soft-light': 'Soft Light',
+  'color-dodge': 'Colour dodge',
+  'color-burn': 'Colour burn',
+  'hard-light': 'Hard light',
+  'soft-light': 'Soft light',
   difference: 'Difference',
   exclusion: 'Exclusion',
   hue: 'Hue',
   saturation: 'Saturation',
-  color: 'Color',
+  color: 'Colour',
   luminosity: 'Luminosity',
 };
 
-interface FillAppearanceSectionProps {
-  capabilities: {
-    supportsFill?: boolean;
-    supportsOpacity?: boolean;
-    supportsRadius?: boolean;
-    supportsStroke?: boolean;
-  };
+const BLEND_GROUP: Record<BlendMode, string> = {
+  normal: 'Normal',
+  multiply: 'Darken',
+  darken: 'Darken',
+  'color-burn': 'Darken',
+  screen: 'Lighten',
+  lighten: 'Lighten',
+  'color-dodge': 'Lighten',
+  overlay: 'Contrast',
+  'soft-light': 'Contrast',
+  'hard-light': 'Contrast',
+  difference: 'Compare',
+  exclusion: 'Compare',
+  hue: 'Component',
+  saturation: 'Component',
+  color: 'Component',
+  luminosity: 'Component',
+};
+
+const NO_FILL: Paint = { type: 'solid', color: 'transparent', opacity: 0 };
+const DEFAULT_FILL: Paint = { type: 'solid', color: '#D9D9D9' };
+
+/** A paint that draws nothing: no fill at all, or a transparent solid. */
+export function isEmptyPaint(paint: Paint | undefined): boolean {
+  if (!paint) return true;
+  return paint.type === 'solid' && (paint.color === 'transparent' || paint.opacity === 0);
+}
+
+interface Capabilities {
+  supportsFill?: boolean;
+  supportsOpacity?: boolean;
+  supportsRadius?: boolean;
+  supportsStroke?: boolean;
+}
+
+interface AppearanceSectionProps {
+  capabilities: Capabilities;
   appearance: Appearance | undefined;
   openShape: boolean;
   hasConnector: boolean;
@@ -47,16 +76,12 @@ interface FillAppearanceSectionProps {
   opacityShared: Shared<number | undefined>;
   setAppearance: (patch: Partial<Appearance>) => void;
   set: (updates: Partial<AnyNode>) => void;
-  /*
-    `nudgeEach` was here for the opacity stepper's arrows, which applied a
-    *relative* change so a mixed selection kept its differences. A track has no
-    arrows and sets an absolute value, so the prop went with them rather than
-    staying as an unused parameter somebody would later wire back up.
-  */
-  setConnectorLikeColor: (color: string) => void;
+  /** Moves each object's opacity by a delta, for a mixed selection. */
+  nudgeOpacity: (delta: number) => void;
 }
 
-export const FillAppearanceSection: React.FC<FillAppearanceSectionProps> = ({
+/** Appearance: opacity, corner radius and blend, the layer-level look. */
+export const AppearanceSection: React.FC<AppearanceSectionProps> = ({
   capabilities,
   appearance,
   openShape,
@@ -65,117 +90,149 @@ export const FillAppearanceSection: React.FC<FillAppearanceSectionProps> = ({
   opacityShared,
   setAppearance,
   set,
-  setConnectorLikeColor,
+  nudgeOpacity,
 }) => {
-  if (!capabilities.supportsFill && !capabilities.supportsOpacity && !capabilities.supportsRadius) {
-    return null;
-  }
+  const showRadius = capabilities.supportsRadius && !openShape;
+  const showBlend = Boolean(appearance) && !hasConnector;
+  if (!capabilities.supportsOpacity && !showRadius && !showBlend) return null;
+  const blend = sharedPaint((a) => a.blendMode ?? 'normal');
 
   return (
-    <Accordion title="Appearance" icon={<Palette size={13} />}>
-      {capabilities.supportsFill && appearance && !openShape && (
-        <Row label="Fill" hint="Solid colour or gradient. Click the swatch to change the kind.">
-          <FillEditor
-            paint={appearance.fill?.[0]}
-            mixed={sharedPaint((a) => a.fill?.[0]).mixed}
-            onChange={(fill) => setAppearance({ fill: [fill] })}
+    <Section id="appearance" title="Appearance">
+      {capabilities.supportsOpacity && (
+        <Row label="Opacity">
+          <NumberField
+            label="Opacity"
+            glyph={<Blend size={12} />}
+            unit="%"
+            min={0}
+            max={100}
+            value={opacityShared.mixed ? 'mixed' : Math.round((opacityShared.value ?? 1) * 100)}
+            onChange={(v) => set({ opacity: v / 100 })}
+            onNudge={(d) => nudgeOpacity(d / 100)}
           />
         </Row>
       )}
-
-      {capabilities.supportsRadius && !openShape && (
+      {showRadius && (
         <CornerRadiusRow
           value={sharedPaint((a) => a.cornerRadius)}
           onChange={(cornerRadius) => setAppearance({ cornerRadius })}
         />
       )}
-
-      {/*
-        Opacity is the canonical slider quantity, and it was a stepper.
-
-        A number field is right where the value is a *measurement* — a width, a
-        radius, a font size — because you usually arrive knowing it. Opacity is
-        the other kind: you almost never want 63%, you want "a bit more see-
-        through", and finding that with a stepper means pressing an arrow
-        repeatedly while looking somewhere else. Every design tool makes this
-        one a track for that reason.
-
-        Nothing is lost by the change, which is what makes it safe: the readout
-        is typable, so 63% is still one click and three keystrokes away.
-
-        No tick marks. They were tried at a quarter, a half and three quarters
-        and taken out: three of them cut the bar into four equal segments,
-        which reads as four separate things rather than as one continuous
-        quantity — and none of the three is a fact worth pointing at.
-
-        No hint either. "How much of what is behind this object shows through"
-        is a sentence explaining the word *opacity* to somebody who found the
-        opacity control, and a row that carries one has a tooltip waiting over
-        every part of it.
-      */}
-      {capabilities.supportsOpacity && (
-        <Slider
-          label="Opacity"
-          unit="%"
-          value={Math.round((opacityShared.value ?? 1) * 100)}
-          min={0}
-          max={100}
-          onChange={(v) => set({ opacity: v / 100 })}
-        />
-      )}
-
-      {!capabilities.supportsFill && capabilities.supportsStroke && appearance && (
-        <Row label="Color">
-          {/*
-            A named class, not an inline flex with its own gap.
-
-            This was `gap: 4` written by hand while every other pair in the
-            panel sits on `--space-2`, so the swatch and the pipette were four
-            pixels closer together than any comparable pair one row above —
-            which is the whole of "the buttons look misaligned": nothing here
-            is *wrong*, several things are each slightly their own. An inline
-            style is also invisible to the token layer, so it could not follow
-            a change to the scale even in principle. `0b83d28` moved the colour
-            picker off inline styles for the same reason and this pair was
-            missed.
-          */}
-          <div className="prop-pair">
-            <ColorPickerPopover
-              color={appearance.stroke?.color ?? 'transparent'}
-              mixed={sharedPaint((a) => a.stroke?.color ?? 'transparent').mixed}
-              onChange={(color) => setConnectorLikeColor(color)}
-            />
-            <EyedropperButton
-              label="Pick a colour from the screen"
-              onPick={(color) => setConnectorLikeColor(color)}
-            />
-          </div>
-        </Row>
-      )}
-
-      {appearance && !hasConnector && (
+      {showBlend && (
         <Row label="Blend" hint="How this object's pixels combine with whatever is beneath it.">
-          <select
-            className="prop-select"
-            value={sharedPaint((a) => a.blendMode ?? 'normal').mixed ? '__mixed' : appearance.blendMode ?? 'normal'}
-            onChange={(e) => {
-              if (e.target.value === '__mixed') return;
-              setAppearance({
-                blendMode: e.target.value === 'normal' ? undefined : (e.target.value as BlendMode),
-              });
-            }}
-          >
-            {sharedPaint((a) => a.blendMode ?? 'normal').mixed && (
-              <option value="__mixed">Mixed</option>
-            )}
-            {BLEND_MODES.map((mode) => (
-              <option key={mode} value={mode}>
-                {BLEND_LABELS[mode]}
-              </option>
-            ))}
-          </select>
+          <Select<BlendMode>
+            label="Blend mode"
+            value={blend.mixed ? 'mixed' : (blend.value as BlendMode)}
+            options={BLEND_MODES.map((mode) => ({ value: mode, label: BLEND_LABELS[mode], group: BLEND_GROUP[mode] }))}
+            onChange={(mode) => setAppearance({ blendMode: mode === 'normal' ? undefined : mode })}
+          />
         </Row>
       )}
-    </Accordion>
+    </Section>
+  );
+};
+
+interface FillSectionProps {
+  capabilities: Capabilities;
+  appearance: Appearance | undefined;
+  openShape: boolean;
+  sharedPaint: <T>(read: (a: Appearance) => T) => Shared<T>;
+  setAppearance: (patch: Partial<Appearance>) => void;
+  /** For line-like objects with no fill, whose one colour is their stroke. */
+  setConnectorLikeColor: (color: string) => void;
+}
+
+function paintLabel(paint: Paint): string {
+  switch (paint.type) {
+    case 'linear':
+      return 'Linear';
+    case 'radial':
+      return 'Radial';
+    case 'conic':
+      return 'Angular';
+    case 'diamond':
+      return 'Diamond';
+    default:
+      return 'Solid';
+  }
+}
+
+/**
+ * Fill: the object's paint, as a list of one.
+ *
+ * The renderers draw a single paint, so the list never offers a second. An
+ * empty fill shrinks the section to its header and `+`; `−` removes it.
+ */
+export const FillSection: React.FC<FillSectionProps> = ({
+  capabilities,
+  appearance,
+  openShape,
+  sharedPaint,
+  setAppearance,
+  setConnectorLikeColor,
+}) => {
+  if (!appearance) return null;
+
+  if (!capabilities.supportsFill && capabilities.supportsStroke) {
+    const color = sharedPaint((a) => a.stroke?.color ?? 'transparent');
+    return (
+      <Section id="fill" title="Colour">
+        <div className="pg-list-item">
+          <ColorChip
+            label="Colour"
+            value={color.mixed ? 'mixed' : appearance.stroke?.color ?? 'transparent'}
+            onChange={setConnectorLikeColor}
+          />
+          <EyedropperButton label="Pick a colour from the screen" onPick={setConnectorLikeColor} />
+        </div>
+      </Section>
+    );
+  }
+
+  if (!capabilities.supportsFill || openShape) return null;
+
+  const paint = appearance.fill?.[0];
+  const mixed = sharedPaint((a) => JSON.stringify(a.fill?.[0] ?? null)).mixed;
+  const empty = !mixed && isEmptyPaint(paint);
+
+  const setPaint = (next: Paint) => setAppearance({ fill: [next] });
+
+  return (
+    <Section
+      id="fill"
+      title="Fill"
+      empty={empty}
+      onAdd={empty ? () => setPaint(DEFAULT_FILL) : undefined}
+      addLabel="Add fill"
+    >
+      <div className="pg-list-item">
+        {paint && paint.type === 'solid' && !mixed ? (
+          <ColorChip
+            label="Fill"
+            value={paint.color}
+            opacity={paint.opacity ?? 1}
+            allowNone={false}
+            swatch={<FillEditor paint={paint} mixed={mixed} onChange={setPaint} />}
+            onChange={(color) => setPaint({ ...paint, color })}
+            onOpacityChange={(o) => setPaint({ ...paint, opacity: o >= 1 ? undefined : o })}
+          />
+        ) : (
+          <div className="pg-paint">
+            <FillEditor paint={paint} mixed={mixed} onChange={setPaint} />
+            <span className="pg-paint__name">{mixed ? 'Mixed' : paint ? paintLabel(paint) : 'None'}</span>
+          </div>
+        )}
+        <button
+          type="button"
+          className="pg-icon-btn"
+          aria-label="Remove fill"
+          data-tooltip="Remove fill"
+          onClick={() => setPaint(NO_FILL)}
+        >
+          <Minus size={14} aria-hidden="true" />
+        </button>
+      </div>
+    </Section>
   );
 };

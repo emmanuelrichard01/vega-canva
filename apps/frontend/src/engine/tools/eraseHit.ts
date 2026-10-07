@@ -416,3 +416,88 @@ export function clipPolylineByCapsule(
   cut();
   return runs;
 }
+
+/** Even-odd point-in-polygon test. The polygon is closed implicitly. */
+export function pointInPolygon(p: Pt, polygon: readonly Pt[]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const a = polygon[i];
+    const b = polygon[j];
+    if (a.y > p.y !== b.y > p.y && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/** Where segment ab crosses segment cd, as the parameter along ab, or null. */
+function crossing(a: Pt, b: Pt, c: Pt, d: Pt): number | null {
+  const rx = b.x - a.x, ry = b.y - a.y;
+  const sx = d.x - c.x, sy = d.y - c.y;
+  const denom = rx * sy - ry * sx;
+  if (denom === 0) return null;
+  const t = ((c.x - a.x) * sy - (c.y - a.y) * sx) / denom;
+  const u = ((c.x - a.x) * ry - (c.y - a.y) * rx) / denom;
+  return t > 0 && t < 1 && u >= 0 && u <= 1 ? t : null;
+}
+
+/**
+ * The parts of a polyline outside a lasso.
+ *
+ * Every segment is split exactly where it crosses the lasso's edge, so the cut
+ * follows the loop the hand drew rather than snapping to samples. Runs of
+ * fewer than two points are dropped, as in `clipPolylineByCapsule`.
+ */
+export function clipPolylineByPolygon(points: readonly Pt[], polygon: readonly Pt[]): Pt[][] {
+  const runs: Pt[][] = [];
+  if (points.length === 0) return runs;
+  if (polygon.length < 3) return points.length >= 2 ? [points.slice()] : runs;
+
+  let current: Pt[] = [];
+  const cut = () => {
+    if (current.length >= 2) runs.push(current);
+    current = [];
+  };
+
+  for (let i = 0; i < points.length; i += 1) {
+    const b = points[i];
+    if (i > 0) {
+      const a = points[i - 1];
+      const hits: number[] = [];
+      for (let k = 0; k < polygon.length; k += 1) {
+        const t = crossing(a, b, polygon[k], polygon[(k + 1) % polygon.length]);
+        if (t !== null) hits.push(t);
+      }
+      hits.sort((x, y) => x - y);
+      for (const t of hits) {
+        const mid = lerp(a, b, t);
+        // Leaving the lasso starts a run; entering it ends one.
+        const goingOut = !pointInPolygon(lerp(a, b, Math.min(1, t + 1e-6)), polygon);
+        if (goingOut) {
+          cut();
+          current.push(mid);
+        } else {
+          current.push(mid);
+          cut();
+        }
+      }
+    }
+    if (!pointInPolygon(b, polygon)) current.push(b);
+  }
+  cut();
+  return runs;
+}
+
+/** Whether a box lies entirely inside a lasso: all four corners inside. */
+export function boxInPolygon(
+  box: { x: number; y: number; width: number; height: number },
+  polygon: readonly Pt[]
+): boolean {
+  if (polygon.length < 3) return false;
+  return [
+    { x: box.x, y: box.y },
+    { x: box.x + box.width, y: box.y },
+    { x: box.x + box.width, y: box.y + box.height },
+    { x: box.x, y: box.y + box.height },
+  ].every((c) => pointInPolygon(c, polygon));
+}

@@ -1,4 +1,4 @@
-import { cellKey, type CellStyle, type CellType, type ColourRule, type TableSpec, type TableTheme } from './tableTypes';
+import { cellKey, migrateTableRefs, type CellStyle, type CellType, type ColourRule, type TableSpec, type TableTheme } from './tableTypes';
 
 /**
  * Tables you can start from.
@@ -153,7 +153,12 @@ const NO = '—';
 // The examples
 // ---------------------------------------------------------------------------
 
-export const TABLE_EXAMPLES: TableExample[] = [
+/**
+ * Written with the older row count (the header unnumbered, so `B1` is the first
+ * row of data), which is easier to read beside the rows; `migrateTableRefs`
+ * turns each into the spreadsheet count it ships with.
+ */
+const WRITTEN: TableExample[] = [
   // ── Planning ────────────────────────────────────────────────────────────
   {
     id: 'project-tracker',
@@ -870,6 +875,8 @@ export const TABLE_EXAMPLES: TableExample[] = [
     }),
   },
 ];
+
+export const TABLE_EXAMPLES: TableExample[] = WRITTEN.map((e) => ({ ...e, spec: migrateTableRefs(e.spec) }));
 
 export const tableExampleById = (id: string) => TABLE_EXAMPLES.find((e) => e.id === id);
 

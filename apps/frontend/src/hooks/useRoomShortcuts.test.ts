@@ -85,11 +85,13 @@ describe('useRoomShortcuts', () => {
     metaKey?: boolean;
     altKey?: boolean;
     shiftKey?: boolean;
+    code?: string;
     target?: any;
   }) => {
     const event = {
       type: 'keydown',
       key: init.key,
+      code: init.code ?? '',
       ctrlKey: Boolean(init.ctrlKey),
       metaKey: Boolean(init.metaKey),
       altKey: Boolean(init.altKey),
@@ -175,6 +177,36 @@ describe('useRoomShortcuts', () => {
 
     fireKeyDown({ key: '?' });
     expect(options.setShowHelp).toHaveBeenCalledWith(true);
+  });
+
+  it('binds B to the table tool', () => {
+    useRoomShortcuts(options);
+
+    fireKeyDown({ key: 'b' });
+    expect(options.selectTool).toHaveBeenCalledWith('table');
+  });
+
+  it('opens the View menu on Alt+Shift+V', () => {
+    useRoomShortcuts(options);
+
+    const event = fireKeyDown({ key: '◊', code: 'KeyV', altKey: true, shiftKey: true });
+    expect(options.selectTool).not.toHaveBeenCalled();
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect((globalThis as any).window.dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'vega:open-view-menu' })
+    );
+  });
+
+  it('leaves keys pressed inside a dialog or menu to it', () => {
+    useRoomShortcuts(options);
+
+    for (const role of ['dialog', 'menu']) {
+      const target = { tagName: 'BUTTON', closest: (s: string) => (s.includes(role) ? {} : null) };
+      fireKeyDown({ key: 'v', target });
+      fireKeyDown({ key: '?', target });
+    }
+    expect(options.selectTool).not.toHaveBeenCalled();
+    expect(options.setShowHelp).not.toHaveBeenCalled();
   });
 
   it('toggles command palette on Cmd+K', () => {

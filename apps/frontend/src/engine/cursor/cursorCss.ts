@@ -55,8 +55,56 @@ import type { CursorVisual } from './cursorVisual';
  * placed the old element is the number a `url()` cursor wants, negated.
  */
 export function cursorCss(visual: CursorVisual, fallback: string): string {
-  const uri = `data:image/svg+xml,${encodeURIComponent(visual.svg)}`;
-  return `url("${uri}") ${-visual.offsetX} ${-visual.offsetY}, ${fallback}`;
+  const one = `url("${svgUri(visual.svg)}")`;
+  const hotspot = `${-visual.offsetX} ${-visual.offsetY}`;
+  const set = imageSetSyntax();
+  if (set) {
+    const two = `url("${svgUri(atScale(visual.svg, 2))}")`;
+    return `${set}(${one} 1x, ${two} 2x) ${hotspot}, ${fallback}`;
+  }
+  return `${one} ${hotspot}, ${fallback}`;
+}
+
+const svgUri = (svg: string) => `data:image/svg+xml,${encodeURIComponent(svg)}`;
+
+/**
+ * The same art with its declared size multiplied.
+ *
+ * The viewBox is untouched, so the drawing is identical; only the raster the
+ * browser makes from it is larger. Offered as the 2x candidate, it is shown at
+ * the 1x size on a high-density screen and stays crisp instead of being a
+ * 28px bitmap scaled up.
+ */
+export function atScale(svg: string, factor: number): string {
+  return svg.replace(/^<svg([^>]*?) width="([0-9.]+)" height="([0-9.]+)"/, (_, pre, w, h) =>
+    `<svg${pre} width="${Number(w) * factor}" height="${Number(h) * factor}"`
+  );
+}
+
+let imageSet: string | null | undefined;
+
+/**
+ * Which image-set syntax this browser accepts inside `cursor`, or `null`.
+ *
+ * Asked once, of the real parser, because a `cursor` value the browser cannot
+ * parse is dropped whole and the board would inherit the page arrow. Where
+ * neither form parses (or there is no `CSS.supports`, as in tests), the plain
+ * `url()` form is used, which every browser takes.
+ */
+export function imageSetSyntax(): string | null {
+  if (imageSet !== undefined) return imageSet;
+  imageSet = null;
+  if (typeof CSS === 'undefined' || typeof CSS.supports !== 'function') return imageSet;
+  const probe = (fn: string) =>
+    CSS.supports('cursor', `${fn}(url("data:image/svg+xml,%3Csvg%2F%3E") 1x, url("data:image/svg+xml,%3Csvg%2F%3E") 2x) 1 1, auto`);
+  if (probe('image-set')) imageSet = 'image-set';
+  else if (probe('-webkit-image-set')) imageSet = '-webkit-image-set';
+  return imageSet;
+}
+
+/** Test seam: forget the probed syntax. */
+export function resetImageSetProbe(value?: string | null): void {
+  imageSet = value;
 }
 
 /**

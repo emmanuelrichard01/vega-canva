@@ -18,7 +18,10 @@ schema, and persistence tables **as implemented**.
 | `objects: Y.Map<id, Y.Map>` | One `Y.Map` per canvas node |
 | `metadata: Y.Map<string>` | Room name, `schemaVersion` |
 | `comments: Y.Map<id, Y.Map>` | Comment threads, separate from canvas objects |
-| `history: Y.Array` | Recent authoring events, capped (see §5) |
+| `groups: Y.Map<id, record>` | Group records `{ id, parentId?, name? }`; a group's own parent is what lets groups nest |
+| `identities: Y.Map<id, {name, color}>` | Display identity per author id, so Time Travel can name editors |
+| `rulerGuides: Y.Array` | Ruler guides (not in the undo scope) |
+| `history: Y.Array` | Legacy: an authoring log older boards still carry. No longer written or read |
 
 Each object is its own `Y.Map`, so concurrent edits to different objects — or to
 different fields of the same object — merge without conflict.
@@ -50,7 +53,8 @@ the note above; version 3 removed `TextNode.autoHeight` in favour of `resize`.
 BaseNode {
   id: string
   type: "text" | "shape" | "sticky" | "image" | "audio" | "path"
-      | "comment" | "frame" | "connector"
+      | "comment" | "frame" | "connector" | "grid" | "chart" | "table"
+      | "code" | "link"
 
   x, y: number                  // top-left in world space
   width, height: number         // unrotated, unscaled — the only bounds source
@@ -58,25 +62,29 @@ BaseNode {
   scaleX, scaleY: number        // sign carries flip
   opacity: number
 
-  zIndex: number                // assigned centrally; new nodes land on top
-  parentId?: string             // synthetic id shared by group members
+  zIndex: number                // assigned centrally; new nodes land on top.
+                                // Ties are possible; order is zIndex, then id
+  parentId?: string             // the group this node belongs to (groups map)
   frameId?: string              // the frame this node sits in, by real node id
   locked: boolean
   hidden: boolean               // there is no `visible` field
   material?: string             // 'feather'|'paper'|'rubber'|'wood'|'stone'
   title?: string                // user-supplied name, shown in the Layers panel
 
-  createdBy: string             // awareness clientID as a string
+  createdBy: string             // persisted user id (AuthContext), not a clientID
+                                // client-asserted: nothing on the server verifies it
   createdByName?: string        // denormalized so authorship outlives the session
   createdByColor?: string
   createdAt: number             // epoch ms
   updatedAt: number             // stamped on every write
+  updatedBy?: string            // who last changed it, stamped with updatedAt
+  updatedByName?: string
 }
 ```
 
-`parentId` and `frameId` are deliberately **not** the same field. `parentId` is
-synthetic — shared by the members of a group, belonging to no node — and
-everything sharing one is selected together. `frameId` names a real frame node,
+`parentId` and `frameId` are deliberately **not** the same field. `parentId`
+names a group record in the `groups` map — not a node — and everything sharing
+one is selected together. `frameId` names a real frame node,
 and clicking one object inside a frame must not select the rest. An object can
 therefore be in a group *and* in a frame, which are independent facts about it.
 
@@ -294,8 +302,10 @@ rectangle; everything that navigates *to* a person wants the middle instead, via
 `viewportCenter()`.
 
 Cursor updates are throttled to ~15Hz and smoothed by local interpolation.
-`PresenceManager` is the only writer of local awareness and
-`collaboratorStore` the only reader of everyone else's. Because none of this
+`PresenceManager` publishes the cursor and viewport and `collaboratorStore` is
+the main reader of everyone else's. Other fields have their own writers: the
+identity (`user`, from `Room.tsx`), `canWrite` (`engine/document/election.ts`),
+in-flight physics bodies (`usePhysics`), gestures and editor focus. Because none of this
 touches the document, ephemeral state never enters history or snapshots.
 
 ## 4. Room routing
@@ -352,9 +362,8 @@ room-scoped and ordered.
 
 Media bytes live in MinIO (S3-compatible), never inline in the CRDT.
 
-The in-document `history` array is distinct from `room_updates`: it holds recent
-authoring events for the activity feed, is capped at 200 entries, and is
-replicated to every client. Time Travel replays `room_updates`, not this.
+Time Travel replays `room_updates`. Older boards also carry an in-document
+`history` array, an authoring log that nothing read; it is no longer written.
 
 ## Related docs
 

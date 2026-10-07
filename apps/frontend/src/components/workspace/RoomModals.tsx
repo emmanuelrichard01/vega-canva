@@ -5,6 +5,9 @@ import { CanvasContextMenu } from '../CanvasContextMenu';
 import type { DiagramBuildOptions } from '../../engine/diagram/build';
 import { useStore } from '../../hooks/useStore';
 import { ModalLoader } from '../ui/Loading';
+import { FeatureBoundary } from '../ui/FeatureBoundary';
+import { MotionConfig } from 'framer-motion';
+import type { ExportFormat } from '../../engine/export/ExportTypes';
 
 /**
  * The dialogs, none of which is part of opening a board.
@@ -152,85 +155,128 @@ export const RoomModals: React.FC<RoomModalsProps> = ({
 
   React.useEffect(warmDialogs, []);
 
+  /** The format Share's Export tab asked for; the dialog's own default otherwise. */
+  const [exportFormat, setExportFormat] = React.useState<ExportFormat | undefined>(undefined);
+  const closeExport = () => {
+    setShowExportMenu(false);
+    setExportFormat(undefined);
+  };
+
+  // Reduced motion applies to every dialog's entrance (the palette's spring,
+  // the flatten dialog), not only to the dock that declared it first.
   return (
-    <>
-      <Suspense fallback={showShareModal ? <ModalLoader /> : null}>
-        {showShareModal && <ShareModal onClose={() => setShowShareModal(false)} />}
-      </Suspense>
+    <MotionConfig reducedMotion="user">
+      <FeatureBoundary name="share dialog" variant="modal" resetKey={showShareModal} onClose={() => setShowShareModal(false)}>
+        <Suspense fallback={showShareModal ? <ModalLoader /> : null}>
+          {showShareModal && (
+            <ShareModal
+              onClose={() => setShowShareModal(false)}
+              onExport={(format) => {
+                setShowShareModal(false);
+                setExportFormat(format);
+                setShowExportMenu(true);
+              }}
+            />
+          )}
+        </Suspense>
+      </FeatureBoundary>
 
-      <Suspense fallback={showExportMenu ? <ModalLoader /> : null}>
-        {showExportMenu && (
-          <ExportModal
-            onClose={() => setShowExportMenu(false)}
-            title={localTitle}
-            selectionIds={exportSelectionIds}
-            startWithSelection={exportFromSelection}
-          />
-        )}
-      </Suspense>
+      <FeatureBoundary name="export dialog" variant="modal" resetKey={showExportMenu} onClose={closeExport}>
+        <Suspense fallback={showExportMenu ? <ModalLoader /> : null}>
+          {showExportMenu && (
+            <ExportModal
+              onClose={closeExport}
+              initialFormat={exportFormat}
+              title={localTitle}
+              selectionIds={exportSelectionIds}
+              startWithSelection={exportFromSelection}
+            />
+          )}
+        </Suspense>
+      </FeatureBoundary>
 
-      <CanvasContextMenu
-        target={contextTarget}
-        onClose={() => setContextTarget(null)}
-        objects={diagramObjects}
-        actions={contextActions}
-        canEdit={canEdit}
-        allObjects={diagramObjects}
-      />
+      <FeatureBoundary name="context menu" variant="modal" resetKey={contextTarget} onClose={() => setContextTarget(null)}>
+        <CanvasContextMenu
+          target={contextTarget}
+          onClose={() => setContextTarget(null)}
+          objects={diagramObjects}
+          actions={contextActions}
+          canEdit={canEdit}
+          allObjects={diagramObjects}
+        />
+      </FeatureBoundary>
 
-      <Suspense fallback={showHelp ? <ModalLoader /> : null}>
-        {showHelp && <HelpModal open onClose={() => setShowHelp(false)} />}
-      </Suspense>
+      <FeatureBoundary name="help" variant="modal" resetKey={showHelp} onClose={() => setShowHelp(false)}>
+        <Suspense fallback={showHelp ? <ModalLoader /> : null}>
+          {showHelp && <HelpModal open onClose={() => setShowHelp(false)} />}
+        </Suspense>
+      </FeatureBoundary>
 
-      <Suspense fallback={diagramOpen ? <ModalLoader /> : null}>
-        {diagramOpen && (
-          <MermaidModal
-            open
-            onClose={() => setDiagramOpen(false)}
-            initialSource={diagramSource}
-            replacing={Boolean(diagramReplacing)}
-            onApply={applyDiagram}
-          />
-        )}
-      </Suspense>
+      <FeatureBoundary name="diagram editor" variant="modal" resetKey={diagramOpen} onClose={() => setDiagramOpen(false)}>
+        <Suspense fallback={diagramOpen ? <ModalLoader /> : null}>
+          {diagramOpen && (
+            <MermaidModal
+              open
+              onClose={() => setDiagramOpen(false)}
+              initialSource={diagramSource}
+              replacing={Boolean(diagramReplacing)}
+              onApply={applyDiagram}
+            />
+          )}
+        </Suspense>
+      </FeatureBoundary>
 
-      <Suspense fallback={showCommandPalette ? <ModalLoader /> : null}>
-        {showCommandPalette && (
-          <CommandPalette
-            onClose={() => setShowCommandPalette(false)}
-            onSelectAction={handleCommandPaletteAction}
-          />
-        )}
-      </Suspense>
+      <FeatureBoundary name="command palette" variant="modal" resetKey={showCommandPalette} onClose={() => setShowCommandPalette(false)}>
+        <Suspense fallback={showCommandPalette ? <ModalLoader /> : null}>
+          {showCommandPalette && (
+            <CommandPalette
+              onClose={() => setShowCommandPalette(false)}
+              onSelectAction={handleCommandPaletteAction}
+            />
+          )}
+        </Suspense>
+      </FeatureBoundary>
 
-      <Suspense fallback={null}>
-        {flattenNodeId && <FlattenShapeModal />}
-      </Suspense>
+      <FeatureBoundary name="flatten dialog" variant="modal" resetKey={flattenNodeId} onClose={() => useStore.getState().setFlattenConfirmNodeId(null)}>
+        <Suspense fallback={null}>
+          {flattenNodeId && <FlattenShapeModal />}
+        </Suspense>
+      </FeatureBoundary>
 
-      <Suspense fallback={null}>
-        {chartDataModalNodeId && (
-          <ChartDataModal
-            nodeId={chartDataModalNodeId}
-            onClose={() => setChartDataModalNodeId(null)}
-          />
-        )}
-      </Suspense>
+      <FeatureBoundary name="data sheet" variant="modal" resetKey={chartDataModalNodeId} onClose={() => setChartDataModalNodeId(null)}>
+        <Suspense fallback={null}>
+          {chartDataModalNodeId && (
+            <ChartDataModal
+              nodeId={chartDataModalNodeId}
+              onClose={() => setChartDataModalNodeId(null)}
+            />
+          )}
+        </Suspense>
+      </FeatureBoundary>
 
       {/* The table's cells, open in place over the board. */}
-      <Suspense fallback={null}>
-        {tableEditNodeId && (
-          <TableEditor key={tableEditNodeId} nodeId={tableEditNodeId} onClose={() => setTableEditNodeId(null)} />
-        )}
-      </Suspense>
+      <FeatureBoundary name="table editor" variant="modal" resetKey={tableEditNodeId} onClose={() => setTableEditNodeId(null)}>
+        <Suspense fallback={null}>
+          {tableEditNodeId && (
+            <TableEditor key={tableEditNodeId} nodeId={tableEditNodeId} onClose={() => setTableEditNodeId(null)} />
+          )}
+        </Suspense>
+      </FeatureBoundary>
 
       {/* A code block's source, open in place; the one live embed; the link field. */}
-      <Suspense fallback={null}>
-        {codeEditNodeId && (
-          <CodeEditor key={codeEditNodeId} nodeId={codeEditNodeId} onClose={() => useStore.getState().setCodeEditNodeId(null)} />
-        )}
-        {embedActiveNodeId && <EmbedLayer />}
-        {linkComposerOpen && <LinkComposer />}
-      </Suspense>
-    </>
+      <FeatureBoundary name="code editor" variant="modal" resetKey={codeEditNodeId} onClose={() => useStore.getState().setCodeEditNodeId(null)}>
+        <Suspense fallback={null}>
+          {codeEditNodeId && (
+            <CodeEditor key={codeEditNodeId} nodeId={codeEditNodeId} onClose={() => useStore.getState().setCodeEditNodeId(null)} />
+          )}
+        </Suspense>
+      </FeatureBoundary>
+      <FeatureBoundary name="embed" variant="panel" resetKey={embedActiveNodeId}>
+        <Suspense fallback={null}>{embedActiveNodeId && <EmbedLayer />}</Suspense>
+      </FeatureBoundary>
+      <FeatureBoundary name="link field" variant="modal" resetKey={linkComposerOpen} onClose={() => useStore.getState().setLinkComposer(null)}>
+        <Suspense fallback={null}>{linkComposerOpen && <LinkComposer />}</Suspense>
+      </FeatureBoundary>
+    </MotionConfig>
   );
 };

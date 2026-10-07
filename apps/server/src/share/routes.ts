@@ -5,6 +5,8 @@ import { checkRoomId } from '../rooms';
 import { normalizeCard, normalizePreview, type BoardCard } from './cardData';
 import { boardCardSvg, privateCardSvg } from './cardSvg';
 import { svgToPng } from './raster';
+import { requireRole, type AccessPolicy } from '../access';
+import { captureError } from '../observability';
 
 /**
  * Share cards: what a board link looks like when it is pasted somewhere.
@@ -24,6 +26,12 @@ import { svgToPng } from './raster';
  * keyed by the token, and nothing handed back contains the room id: an unfurl
  * of a view link must not become a way to learn the edit link.
  *
+ * ## Under `ENFORCE_SHARE_TOKENS`
+ *
+ * A room id alone grants nothing, so the room-keyed card answers "not found"
+ * and writing a card needs an editor invite in `X-Invite-Token`. Invite-keyed
+ * cards still work: the token is the access.
+ *
  * ## Rendering is dear, so it is cached
  *
  * A card is a few hundred milliseconds of layout and rasterising, and one link
@@ -34,8 +42,8 @@ import { svgToPng } from './raster';
  */
 
 interface Deps {
-  pool: Pool;
-  shareSecret: string | null;
+  pool: Pick<Pool, 'query'>;
+  access: AccessPolicy;
   minRoomIdLength: number;
   limiter: RequestHandler;
   uploadLimiter: RequestHandler;
@@ -58,7 +66,7 @@ function remember(key: string, png: Buffer) {
   while (pngCache.size > PNG_CACHE_LIMIT) pngCache.delete(pngCache.keys().next().value as string);
 }
 
-async function readCard(pool: Pool, roomId: string): Promise<{ card: BoardCard; version: number } | null> {
+async function readCard(pool: Pick<Pool, 'query'>, roomId: string): Promise<{ card: BoardCard; version: number } | null> {
   const { rows } = await pool.query<CardRow>(
     'SELECT name, hidden, preview, updated_at FROM room_cards WHERE room_id = $1',
     [roomId]
@@ -94,9 +102,13 @@ function describe(card: BoardCard | null) {
 export function registerShareRoutes(app: Express, deps: Deps) {
   const { pool } = deps;
 
-  app.put('/rooms/:roomId/card', deps.uploadLimiter, async (req: any, res: any) => {
+  const validRoom = (req: any, res: any, next: any) => {
     const check = checkRoomId(req.params.roomId, deps.minRoomIdLength);
     if (!check.ok) return res.status(400).json({ error: check.reason });
+    next();
+  };
+
+  app.put('/rooms/:roomId/card', deps.uploadLimiter, validRoom, requireRole(deps.access, 'editor'), async (req: any, res: any) => {
     const card = normalizeCard(req.body);
     if (!card) return res.status(400).json({ error: 'A card is a name and a preview' });
 
@@ -111,7 +123,7 @@ export function registerShareRoutes(app: Express, deps: Deps) {
       );
       res.status(204).end();
     } catch (err) {
-      console.error('Could not store a share card:', err);
+      captureError('Could not store a share card', err);
       res.status(500).json({ error: 'The card could not be saved' });
     }
   });
@@ -135,7 +147,7 @@ export function registerShareRoutes(app: Express, deps: Deps) {
           image: `${deps.apiBase(req)}${imagePath(req)}?v=${stored.version.toString(36)}`,
         });
       } catch (err) {
-        console.error('Could not read a share card:', err);
+        captureError('Could not read a share card', err);
         res.json({ found: false });
       }
     };
@@ -168,15 +180,17 @@ export function registerShareRoutes(app: Express, deps: Deps) {
         res.setHeader('Cache-Control', current ? 'public, max-age=31536000, immutable' : 'public, max-age=300');
         res.send(png);
       } catch (err) {
-        console.error('Could not draw a share card:', err);
+        captureError('Could not draw a share card', err);
         res.removeHeader('Content-Type');
         res.status(500).json({ error: 'The card could not be drawn' });
       }
     };
 
   const room = (req: any): Target | null =>
-    checkRoomId(req.params.roomId, deps.minRoomIdLength).ok ? { roomId: String(req.params.roomId) } : null;
-  const invite = (req: any) => roomFromToken(String(req.params.token ?? ''), deps.shareSecret);
+    !deps.access.enforceShareTokens && checkRoomId(req.params.roomId, deps.minRoomIdLength).ok
+      ? { roomId: String(req.params.roomId) }
+      : null;
+  const invite = (req: any) => roomFromToken(String(req.params.token ?? ''), deps.access.shareSecret);
 
   app.get('/cards/room/:roomId', deps.limiter, cardJson(room, (req) => `/cards/room/${encodeURIComponent(req.params.roomId)}/image.png`));
   app.get('/cards/room/:roomId/image.png', deps.limiter, cardImage(room));

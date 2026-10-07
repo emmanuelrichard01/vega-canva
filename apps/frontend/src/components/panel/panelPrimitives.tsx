@@ -1,48 +1,47 @@
 import React, { useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { Switch } from '../ui/Switch';
+import { Section, Row as GrammarRow } from './grammar';
 import type { StrokeStyleId } from '../../engine/model/strokeStyle';
 
+/**
+ * The older section API, kept for sections that have not moved to the grammar
+ * yet. It renders the grammar's `Section`, so every section in the panel has
+ * one header, one rhythm and one divider whichever API built it.
+ */
 export const Accordion: React.FC<{
   title: string;
   children: React.ReactNode;
   defaultOpen?: boolean;
   badge?: string;
+  /** Accepted for compatibility; the grammar's headers carry no icon. */
   icon?: React.ReactNode;
-  /**
-   * One level in, inside another accordion.
-   *
-   * Drop shadow and inner shadow are two answers to one question — which way
-   * does the light fall — and sat as siblings of Blur and of Typography, so the
-   * panel offered "shadow" twice at the top level and never said the two were
-   * related. Nesting says it, and it costs a quieter header rather than a
-   * second component: a sub-section that looked like a section would defeat the
-   * grouping it exists to express.
-   */
+  /** A sub-heading inside another section rather than a section of its own. */
   nested?: boolean;
-}> = ({ title, children, defaultOpen = true, badge, icon, nested }) => {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-  const id = React.useId();
+  /** Stable id for remembered open state. Defaults to the title. */
+  id?: string;
+}> = ({ title, children, defaultOpen = true, badge, nested, id }) => {
+  if (nested) {
+    return (
+      <div className="pg-subsection">
+        <h4 className="pg-subsection__title">
+          {title}
+          {badge && <span className="pg-section__meta">{badge}</span>}
+        </h4>
+        {children}
+      </div>
+    );
+  }
   return (
-    <section className="prop-section" data-open={isOpen || undefined} data-nested={nested || undefined}>
-      <button
-        type="button"
-        className="prop-section__header"
-        aria-expanded={isOpen}
-        aria-controls={`${id}-panel`}
-        onClick={() => setIsOpen(!isOpen)}
-      >
-        <ChevronRight size={12} className="prop-section__chevron" aria-hidden="true" />
-        {icon && <span className="prop-section__icon" aria-hidden="true">{icon}</span>}
-        <span className="prop-section__title">{title}</span>
-        {badge && <span className="prop-section__badge">{badge}</span>}
-      </button>
-      {isOpen && (
-        <div id={`${id}-panel`} role="region" aria-label={title} className="prop-section__body">
-          {children}
-        </div>
-      )}
-    </section>
+    <Section
+      id={id ?? title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}
+      title={title}
+      meta={badge}
+      collapsible
+      defaultOpen={defaultOpen}
+    >
+      {children}
+    </Section>
   );
 };
 
@@ -59,18 +58,13 @@ export const StrokeStyleIcon: React.FC<{ style: StrokeStyleId }> = ({ style }) =
   </svg>
 );
 
-export const Row: React.FC<{
-  label: string;
-  children: React.ReactNode;
-  hint?: string;
-  stack?: boolean;
-}> = ({ label, children, hint, stack }) => (
-  <div className={stack ? 'prop-row prop-row--stack' : 'prop-row'}>
-    <span className="prop-row__label" data-tooltip={hint} data-tooltip-pos="left">{label}</span>
-    <div className="prop-row__control">{children}</div>
-  </div>
-);
+/** The labelled row. Same component as the grammar's `Row`. */
+export const Row = GrammarRow;
 
+/**
+ * A group switched on and off as a whole: a drop shadow, a measure. The switch
+ * is the group's label row; its settings appear beneath it while it is on.
+ */
 export const SubGroup: React.FC<{
   label: string;
   hint?: string;
@@ -79,13 +73,14 @@ export const SubGroup: React.FC<{
   children?: React.ReactNode;
 }> = ({ label, hint, on, onToggle, children }) => (
   <div className="prop-subgroup" data-on={on || undefined}>
-    <Row label={label} hint={hint}>
-      <Switch checked={on} onChange={onToggle} />
-    </Row>
+    <GrammarRow label={label} hint={hint}>
+      <Switch checked={on} onChange={onToggle} ariaLabel={label} />
+    </GrammarRow>
     {on && children && <div className="prop-subgroup__body">{children}</div>}
   </div>
 );
 
+/** A quiet disclosure inside a section, for settings most people never open. */
 export const Details: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => {
   const [open, setOpen] = useState(false);
   const id = React.useId();
@@ -105,28 +100,3 @@ export const Details: React.FC<{ label: string; children: React.ReactNode }> = (
     </div>
   );
 };
-
-export const ToggleButton: React.FC<{
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  mixed?: boolean;
-  children: React.ReactNode;
-}> = ({ active, onClick, label, mixed = false, children }) => (
-  <button
-    className="btn-icon"
-    aria-pressed={mixed ? 'mixed' : active}
-    aria-label={label}
-    onClick={onClick}
-    style={{
-      padding: '4px 6px', borderRadius: '4px',
-      background: !mixed && active ? 'var(--surface-primary)' : 'transparent',
-      color: mixed || active ? 'var(--text-primary)' : 'var(--text-secondary)',
-      boxShadow: !mixed && active ? 'var(--shadow-sm)' : 'none',
-      outline: mixed ? '1px dashed var(--border-strong, var(--border-divider))' : 'none',
-      outlineOffset: '-2px',
-    }}
-  >
-    {children}
-  </button>
-);

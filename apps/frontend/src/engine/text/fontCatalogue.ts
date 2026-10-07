@@ -39,13 +39,19 @@
  *   one as unverified until it has been.
  */
 
+import { dynamicEntry, ensureDynamicFamily } from './fontLibrary';
+
 export type FontSource =
   /** Compiled into the app's CSS via `@fontsource`. Always present, no fetch. */
   | 'bundled'
   /** Fetched from Google Fonts on first use. */
   | 'google'
   /** Whatever the operating system has. No fetch, and no guarantee. */
-  | 'system';
+  | 'system'
+  /** Uploaded to this board and loaded through `FontFace`. See `fontLibrary.ts`. */
+  | 'board'
+  /** Installed on this device and chosen through the Local Font Access API. */
+  | 'local';
 
 export type FontCategory =
   | 'sans'
@@ -205,7 +211,13 @@ export const FONTS: FontEntry[] = [
 const BY_FAMILY = new Map(FONTS.map((f) => [f.family, f]));
 
 export function fontEntry(family: string | undefined): FontEntry | undefined {
-  return family ? BY_FAMILY.get(family) : undefined;
+  if (!family) return undefined;
+  return BY_FAMILY.get(family) ?? dynamicEntry(family);
+}
+
+/** Whether a family is one of the built-in faces, as opposed to an uploaded or local one. */
+export function isBuiltInFamily(family: string | undefined): boolean {
+  return !!family && BY_FAMILY.has(family);
 }
 
 /** The last resort, appended to every stack. */
@@ -276,8 +288,12 @@ const READY = Promise.resolve();
 export function ensureFamilyStylesheet(family: string | undefined): Promise<void> {
   if (typeof document === 'undefined') return READY;
   const entry = fontEntry(family);
+  // Uploaded and local faces load through `FontFace`, not a stylesheet. An
+  // unknown family may be a board font whose registry has not synced yet;
+  // asking records it, and it loads as soon as the registry arrives.
+  if (!entry || entry.source === 'board' || entry.source === 'local') return ensureDynamicFamily(family);
   // Bundled and system faces are already present; there is nothing to wait for.
-  if (!entry || entry.source !== 'google' || !entry.spec) return READY;
+  if (entry.source !== 'google' || !entry.spec) return READY;
 
   const existing = sheets.get(entry.family);
   if (existing) return existing;

@@ -2,8 +2,9 @@ import React from 'react';
 import { Arc, Circle, Group, Line, Path, Rect, Text } from 'react-konva';
 import type { ChartNode } from '../../../engine/model/schema';
 import { layoutChart, type ChartLayout, type Measure } from '../../../engine/chart/chartLayout';
+import { settlePlane } from '../../../engine/chart/planeView';
 import type { ChartInk } from '../../../engine/chart/chartInk';
-import { measureChartText } from '../../../engine/chart/chartMeasure';
+import { CHART_FONT_FAMILY, measureChartText } from '../../../engine/chart/chartMeasure';
 import { ThemeService } from '../../../engine/ThemeService';
 import { EXPORT_CHROME } from '../../../engine/export/chrome';
 import { currentChartInk, featureInk } from '../../../engine/chart/chartInk';
@@ -24,6 +25,15 @@ import {
 import { hachure, SKETCH_FONT, SKETCH_FONT_SCALE } from '../../../engine/chart/chartSketch';
 import { updateChart } from '../../../engine/chart/chartApply';
 import { useStore } from '../../../hooks/useStore';
+import { Html } from 'react-konva-utils';
+import './chartCanvas.css';
+import { resolveChartSpec } from '../../../engine/chart/chartFromTable';
+import { useChartSoleSelection } from '../../../engine/chart/chartFocus';
+import { draggedValue, nearestHandle, valueHandles, withValue, type ValueHandle } from '../../../engine/chart/chartHandles';
+import { easeOut, morphLayout, MORPH_MS } from '../../../engine/chart/chartMorph';
+import { useCameraZoom } from '../../../engine/useCameraZoom';
+import { claimCursor } from '../../../engine/cursor/cursorOverride';
+import type { TableSpec } from '../../../engine/table/tableTypes';
 import { canvasPlateFill } from '../../../engine/ThemeService';
 import {
   rectRing,
@@ -73,13 +83,6 @@ interface PlaneDomain {
   yPlotMax: number;
 }
 
-/**
- * Three decimals, which is finer than a pixel at any zoom this supports.
- *
- * Rounding at all is what stops a pan writing `-6.500000000000001` into the
- * document and into everybody's undo history.
- */
-const round3 = (v: number) => Number(v.toFixed(3));
 
 /**
  * The colour a label is legible in, given what it is drawn on.
@@ -126,15 +129,75 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
    */
   const [draftPlane, setDraftPlane] = React.useState<PlaneDomain | null>(null);
 
-  const shownSpec = React.useMemo(
-    () => (draftPlane ? { ...node.chart, ...draftPlane } : node.chart),
-    [node.chart, draftPlane]
+  const selected = useChartSoleSelection(node.id);
+  const zoom = useCameraZoom();
+
+  // A linked chart reads its table on every render, so a cell edit reaches it
+  // in the same tick on every client.
+  const linkedTable = useStore((s) => {
+    const id = node.chart.link?.tableId;
+    const t = id ? s.objects[id] : undefined;
+    return t && (t as { type?: string }).type === 'table' ? ((t as unknown as { table: TableSpec }).table) : null;
+  });
+  const dataSpec = React.useMemo(() => resolveChartSpec(node.chart, linkedTable), [node.chart, linkedTable]);
+
+  /** A value being dragged, before it is written down. */
+  const [draftValue, setDraftValue] = React.useState<{ si: number; ci: number; value: number } | null>(null);
+
+  const shownSpec = React.useMemo(() => {
+    let spec = draftPlane ? { ...dataSpec, ...draftPlane } : dataSpec;
+    if (draftValue) spec = withValue(spec, draftValue.si, draftValue.ci, draftValue.value);
+    return spec;
+  }, [dataSpec, draftPlane, draftValue]);
+
+  const settled = React.useMemo(
+    () => layoutChart(shownSpec, node.width, node.height, measure, { showHidden: selected }),
+    [shownSpec, node.width, node.height, measure, selected]
   );
 
+  // The tween between kinds: the layout a kind change left behind, eased into
+  // the new one. Reduced motion skips straight to the destination.
+  const [morphT, setMorphT] = React.useState(1);
+  const fromRef = React.useRef<ChartLayout | null>(null);
+  const lastRef = React.useRef<{ kind: string; layout: ChartLayout } | null>(null);
+  React.useEffect(() => {
+    const last = lastRef.current;
+    lastRef.current = { kind: node.chart.kind, layout: settled };
+    if (!last || last.kind === node.chart.kind) return;
+    if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    fromRef.current = last.layout;
+    const start = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / MORPH_MS);
+      setMorphT(easeOut(t));
+      if (t < 1) raf = requestAnimationFrame(tick);
+      else fromRef.current = null;
+    };
+    setMorphT(0);
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [node.chart.kind, settled]);
+
   const layout = React.useMemo(
-    () => layoutChart(shownSpec, node.width, node.height, measure),
-    [shownSpec, node.width, node.height, measure]
+    () => (fromRef.current && morphT < 1 ? morphLayout(fromRef.current, settled, morphT) : settled),
+    [settled, morphT]
   );
+
+  const groupRef = React.useRef<any>(null);
+  const [handle, setHandle] = React.useState<ValueHandle | null>(null);
+  const handles = React.useMemo(
+    () => (selected && !draftValue ? valueHandles(settled, dataSpec) : []),
+    [selected, draftValue, settled, dataSpec]
+  );
+  const [editingLabel, setEditingLabel] = React.useState<LabelField | null>(null);
+  React.useEffect(() => {
+    if (!selected) {
+      setHandle(null);
+      setEditingLabel(null);
+    }
+  }, [selected]);
+  React.useEffect(() => () => claimCursor(`chart-${node.id}`, null), [node.id]);
 
   /**
    * Re-read on every render rather than memoised: the theme toggle rewrites a
@@ -248,13 +311,21 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
       const dxDomain = -(dx / plotW) * xSpan;
       const dyDomain = (dy / plotH) * ySpan;
 
-      setDraftPlane({
-        xMin: round3(dragStartRef.current.xMin + dxDomain),
-        xMax: round3(dragStartRef.current.xMax + dxDomain),
-        yPlotMin: round3(dragStartRef.current.yPlotMin + dyDomain),
-        yPlotMax: round3(dragStartRef.current.yPlotMax + dyDomain),
-      });
+      setDraftPlane(
+        settlePlane(
+          dragStartRef.current.xMin + dxDomain,
+          dragStartRef.current.xMax + dxDomain,
+          dragStartRef.current.yPlotMin + dyDomain,
+          dragStartRef.current.yPlotMax + dyDomain
+        )
+      );
       return;
+    }
+
+    if (handles.length) {
+      const near = nearestHandle(handles, p, 9 / Math.max(zoom, 0.05));
+      setHandle(near);
+      claimCursor(`chart-${node.id}`, near ? (near.axis === 'v' ? 'ns-resize' : 'ew-resize') : null);
     }
 
     setHover(
@@ -267,9 +338,9 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
         // name the box under the pointer, so the series names stand in.
         categories:
           isSampleKind(node.chart.kind) && node.chart.kind !== 'histogram'
-            ? node.chart.series.map((s) => s.name)
-            : node.chart.categories,
-        seriesNames: node.chart.series.map((s) => s.name),
+            ? shownSpec.series.map((s) => s.name)
+            : layout.categoryNames ?? shownSpec.categories,
+        seriesNames: shownSpec.series.map((s) => s.name),
         keyedOnCategories: legendNamesCategories(node.chart.kind),
       })
     );
@@ -309,12 +380,7 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
        * timer: long enough that one continuous zoom is one edit, short enough
        * that letting go feels like it landed.
        */
-      setDraftPlane({
-        xMin: round3(nextXMin),
-        xMax: round3(nextXMax),
-        yPlotMin: round3(nextYMin),
-        yPlotMax: round3(nextYMax),
-      });
+      setDraftPlane(settlePlane(nextXMin, nextXMax, nextYMin, nextYMax));
       if (settleRef.current !== null) window.clearTimeout(settleRef.current);
       settleRef.current = window.setTimeout(() => {
         settleRef.current = null;
@@ -331,13 +397,85 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
    * Left to fall through instead, which is what every other object does with
    * a double-click it has no use for.
    */
-  const onDblClick = () => {
+  const onDblClick = (e: any) => {
+    const p = e?.currentTarget?.getRelativePointerPosition?.();
+    if (selected && p) {
+      const field = labelFieldAt(layout, p);
+      if (field) {
+        e.cancelBubble = true;
+        setEditingLabel(field);
+        return;
+      }
+    }
     if (!chartCapabilities(node.chart.kind).data) return;
     useStore.getState().setChartDataModalNodeId(node.id);
   };
 
+  /** Start dragging the handle under the pointer: one write when it lands. */
+  const startValueDrag = (e: any) => {
+    if (!handle || !groupRef.current) return;
+    e.cancelBubble = true;
+    e.evt?.preventDefault?.();
+    const group = groupRef.current;
+    const stage = group.getStage();
+    const start = group.getRelativePointerPosition();
+    if (!start) return;
+    const plot = { width: settled.plot.width, height: settled.plot.height };
+    const target = handle;
+    let last = target.value;
+    const move = (ev: PointerEvent) => {
+      stage?.setPointersPositions(ev);
+      const now = group.getRelativePointerPosition();
+      if (!now) return;
+      last = draggedValue(target, start, now, plot, !ev.altKey);
+      setDraftValue({ si: target.seriesIndex, ci: target.categoryIndex, value: last });
+    };
+    const end = (commit: boolean) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('keydown', key);
+      setDraftValue(null);
+      claimCursor(`chart-${node.id}`, null);
+      if (commit && last !== target.value) {
+        updateChart(node.id, withValue(node.chart, target.seriesIndex, target.categoryIndex, last));
+      }
+    };
+    const up = () => end(true);
+    const cancel = () => end(false);
+    const key = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') end(false);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
+    window.addEventListener('keydown', key);
+    setDraftValue({ si: target.seriesIndex, ci: target.categoryIndex, value: target.value });
+  };
+
+  /** Legend click: hide or show that series. Alt-click shows it alone. */
+  const toggleSeries = (si: number, solo: boolean) => {
+    const series = node.chart.series;
+    if (!series[si]) return;
+    const next = solo
+      ? (() => {
+          const alreadySolo = series.every((s, i) => (i === si ? !s.hidden : s.hidden));
+          return series.map((s, i) => {
+            const { hidden: _h, ...rest } = s;
+            return alreadySolo || i === si ? rest : { ...rest, hidden: true };
+          });
+        })()
+      : series.map((s, i) => {
+          if (i !== si) return s;
+          const { hidden: _h, ...rest } = s;
+          return s.hidden ? rest : { ...rest, hidden: true };
+        });
+    updateChart(node.id, { ...node.chart, series: next });
+  };
+
   return (
     <Group
+      ref={groupRef}
       onPointerDown={onPointerDown}
       onPointerMove={onMove}
       onPointerUp={onPointerUp}
@@ -348,6 +486,10 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
         // end of the gesture, not a reason to throw away where it got to.
         commitPlane();
         setHover(null);
+        if (!draftValue) {
+          setHandle(null);
+          claimCursor(`chart-${node.id}`, null);
+        }
       }}
     >
       <Rect
@@ -401,7 +543,214 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
           }}
         />
       )}
-      <Readout hit={hover} node={node} ink={ink} />
+      {!draftValue && <Readout hit={hover} node={node} ink={ink} />}
+      {selected && (
+        <LegendToggles layout={layout} ink={ink} onToggle={toggleSeries} nodeId={node.id} />
+      )}
+      {selected && (handle || draftValue) && (
+        <ValueHandleMark
+          layout={settled}
+          handle={handle}
+          draft={draftValue}
+          spec={shownSpec}
+          zoom={zoom}
+          ink={ink}
+          onPointerDown={startValueDrag}
+        />
+      )}
+      {editingLabel && (
+        <LabelEditor
+          field={editingLabel}
+          layout={layout}
+          value={String(node.chart[editingLabel] ?? '')}
+          onDone={(text) => {
+            setEditingLabel(null);
+            if (text === null) return;
+            const next = { ...node.chart };
+            if (text.trim()) next[editingLabel] = text.trim();
+            else delete next[editingLabel];
+            updateChart(node.id, next);
+          }}
+        />
+      )}
+    </Group>
+  );
+};
+
+type LabelField = 'title' | 'subtitle' | 'xAxisLabel' | 'yAxisLabel';
+
+/** Which editable label, if any, is under a point in the chart. */
+function labelFieldAt(layout: ChartLayout, p: { x: number; y: number }): LabelField | null {
+  const inBox = (l: ChartLabel | null | undefined, x: number, y: number, w: number, h: number) =>
+    Boolean(l) && p.x >= x && p.x <= x + w && p.y >= y - 3 && p.y <= y + h + 3;
+  const t = layout.title;
+  if (t && inBox(t, t.x, t.y, t.width, t.fontSize * 1.3)) return 'title';
+  const st = layout.subtitle;
+  if (st && inBox(st, st.x, st.y, st.width, st.fontSize * 1.3)) return 'subtitle';
+  const xa = layout.xAxisTitle;
+  if (xa && inBox(xa, xa.x - xa.width / 2, xa.y, xa.width, xa.fontSize * 1.3)) return 'xAxisLabel';
+  const ya = layout.yAxisTitle;
+  if (ya && p.x >= ya.x - 2 && p.x <= ya.x + ya.fontSize * 1.4 && p.y >= ya.y - ya.width / 2 && p.y <= ya.y + ya.width / 2) {
+    return 'yAxisLabel';
+  }
+  return null;
+}
+
+/**
+ * The label being edited in place: an input laid over it, in the chart's own
+ * space, so it sits exactly where the text was. Enter or a click away commits;
+ * Escape leaves the label as it was.
+ */
+const LabelEditor: React.FC<{
+  field: LabelField;
+  layout: ChartLayout;
+  value: string;
+  onDone: (text: string | null) => void;
+}> = ({ field, layout, value, onDone }) => {
+  const [text, setText] = React.useState(value);
+  const done = React.useRef(false);
+  const finish = (out: string | null) => {
+    if (done.current) return;
+    done.current = true;
+    onDone(out);
+  };
+  const box = (() => {
+    const l = field === 'title' ? layout.title : field === 'subtitle' ? layout.subtitle : field === 'xAxisLabel' ? layout.xAxisTitle : null;
+    if (l) {
+      const x = field === 'xAxisLabel' ? l.x - l.width / 2 : l.x;
+      return { x, y: l.y - 3, width: l.width, size: l.fontSize };
+    }
+    const plot = layout.plot;
+    return { x: plot.x, y: plot.y - 22, width: Math.min(plot.width, 220), size: 11 };
+  })();
+  return (
+    <Html>
+      <input
+        className="chart-label-editor"
+        aria-label={field === 'title' ? 'Chart title' : field === 'subtitle' ? 'Subtitle' : field === 'xAxisLabel' ? 'Horizontal axis title' : 'Vertical axis title'}
+        autoFocus
+        value={text}
+        placeholder={field === 'title' ? 'Title' : 'Label'}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === 'Enter') finish(text);
+          else if (e.key === 'Escape') finish(null);
+        }}
+        onBlur={() => finish(text)}
+        style={{
+          left: `${box.x}px`,
+          top: `${box.y}px`,
+          width: `${Math.max(80, box.width)}px`,
+          fontSize: `${box.size}px`,
+          fontWeight: field === 'title' ? 600 : 400,
+        }}
+      />
+    </Html>
+  );
+};
+
+/**
+ * The legend as a set of switches, while the chart is selected.
+ *
+ * A hidden series keeps its entry, faded and struck through, so it can be
+ * turned back on where it was turned off. Never exported: the entries are
+ * chrome over the legend the layout already drew.
+ */
+const LegendToggles: React.FC<{
+  layout: ChartLayout;
+  ink: ChartInk;
+  nodeId: string;
+  onToggle: (seriesIndex: number, solo: boolean) => void;
+}> = ({ layout, ink, nodeId, onToggle }) => (
+  <Group name={EXPORT_CHROME}>
+    {layout.legend.map((e, i) => {
+      if (e.seriesIndex === undefined) return null;
+      const textW = measureChartText(e.label, e.fontSize);
+      const width = e.textX - e.x + textW + 4;
+      const press = (ev: any) => {
+        ev.cancelBubble = true;
+        onToggle(e.seriesIndex!, Boolean(ev.evt?.altKey));
+      };
+      return (
+        <Group key={`lt${i}`}>
+          {e.hidden && (
+            <Line
+              points={[e.textX, e.y + e.fontSize / 2, e.textX + textW, e.y + e.fontSize / 2]}
+              stroke={ink.chrome}
+              strokeWidth={1}
+              listening={false}
+            />
+          )}
+          <Rect
+            x={e.x - 3}
+            y={e.y - 4}
+            width={width + 3}
+            height={e.swatch + 8}
+            fill="rgba(0,0,0,0)"
+            onClick={press}
+            onTap={press}
+            onMouseDown={(ev: any) => {
+              ev.cancelBubble = true;
+            }}
+            onTouchStart={(ev: any) => {
+              ev.cancelBubble = true;
+            }}
+            onMouseEnter={() => claimCursor(`chart-legend-${nodeId}`, 'pointer')}
+            onMouseLeave={() => claimCursor(`chart-legend-${nodeId}`, null)}
+          />
+        </Group>
+      );
+    })}
+  </Group>
+);
+
+/**
+ * The handle on the end of a mark, and the value it is being dragged to.
+ * Held at a constant size on screen, like every other handle on the board.
+ */
+const ValueHandleMark: React.FC<{
+  layout: ChartLayout;
+  handle: ValueHandle | null;
+  draft: { si: number; ci: number; value: number } | null;
+  spec: ChartNode['chart'];
+  zoom: number;
+  ink: ChartInk;
+  onPointerDown: (e: any) => void;
+}> = ({ layout, handle, draft, spec, zoom, ink, onPointerDown }) => {
+  const k = 1 / Math.max(zoom, 0.05);
+  // While dragging, follow the drafted value's own handle in the new layout.
+  const live = draft
+    ? valueHandles(layout, spec).find((h) => h.seriesIndex === draft.si && h.categoryIndex === draft.ci) ?? handle
+    : handle;
+  if (!live) return null;
+  const size = 8 * k;
+  const label = draft ? formatValue(draft.value, spec) : null;
+  const labelW = label ? measureChartText(label, 11) * k + 12 * k : 0;
+  return (
+    <Group name={EXPORT_CHROME}>
+      <Rect
+        x={live.x - size / 2}
+        y={live.y - size / 2}
+        width={size}
+        height={size}
+        cornerRadius={1.5 * k}
+        fill={ink.sliceEdge}
+        stroke={ink.ink}
+        strokeWidth={1.5 * k}
+        hitStrokeWidth={10 * k}
+        // Konva starts a node drag on mousedown and touchstart, so those are
+        // the events the handle has to take for itself.
+        onMouseDown={onPointerDown}
+        onTouchStart={onPointerDown}
+        perfectDrawEnabled={false}
+      />
+      {label && (
+        <Group x={live.x + 10 * k} y={live.y - 10 * k} listening={false}>
+          <Rect width={labelW} height={20 * k} cornerRadius={4 * k} fill={ink.ink} />
+          <Text x={6 * k} y={4.5 * k} text={label} fontSize={11 * k} fontFamily={CHART_FONT_FAMILY} fontStyle="600" fill={ink.sliceEdge} />
+        </Group>
+      )}
     </Group>
   );
 };
@@ -1399,6 +1748,7 @@ const Marks: React.FC<{
         // second silently winning.
         opacity={
           (a.gradient ? 0.45 : (areaOpacity ?? 0.22)) *
+          (a.opacity ?? 1) *
           (hoveredSeriesIndex !== undefined && a.seriesIndex !== hoveredSeriesIndex ? 0.4 : 1)
         }
         listening={false}
@@ -1678,7 +2028,9 @@ const Marks: React.FC<{
  * the sketch treatment makes. Only the hand changes.
  */
 const Labels: React.FC<{ layout: ChartLayout; ink: ChartInk; sketch?: SketchLevel }> = ({ layout, ink, sketch }) => {
-  const font = sketch ? SKETCH_FONT : undefined;
+  // The face the layout measured with: drawing in another one is how a tick
+  // label comes out a few pixels wider than the gutter made room for.
+  const font = sketch ? SKETCH_FONT : CHART_FONT_FAMILY;
   const k = sketch ? SKETCH_FONT_SCALE : 1;
   const weight = (w: string | undefined) => (sketch ? 'bold' : w);
   // A hatched fill is a pale wash, so a label "on" one reads against the
@@ -1763,9 +2115,15 @@ const Labels: React.FC<{ layout: ChartLayout; ink: ChartInk; sketch?: SketchLeve
       <Text
         key={`t${i}`}
         text={l.text}
-        x={l.x}
+        // A turned label pivots on the right end of its top edge.
+        x={l.rotation ? l.x + l.width : l.x}
         y={l.y}
+        offsetX={l.rotation ? l.width : 0}
+        rotation={l.rotation ?? 0}
         width={l.width}
+        // A tick or a name is one line: measured a hair short in some faces,
+        // wrapping would split "700" into "70" over "0".
+        wrap="none"
         align={l.align}
         fontSize={l.fontSize * k}
         fontFamily={font}
@@ -1837,6 +2195,7 @@ const Labels: React.FC<{ layout: ChartLayout; ink: ChartInk; sketch?: SketchLeve
           width={e.swatch}
           height={e.swatch}
           fill={e.color}
+          opacity={e.hidden ? 0.35 : 1}
           cornerRadius={2}
           listening={false}
         />
@@ -1847,7 +2206,7 @@ const Labels: React.FC<{ layout: ChartLayout; ink: ChartInk; sketch?: SketchLeve
           fontSize={e.fontSize * k}
           fontFamily={font}
           fontStyle={weight(undefined)}
-          fill={ink.ink}
+          fill={e.hidden ? ink.chrome : ink.ink}
           listening={false}
         />
       </React.Fragment>

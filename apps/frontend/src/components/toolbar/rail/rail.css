@@ -1,0 +1,262 @@
+/* ===========================================================================
+   Contextual rail: the parts the per-subject modules add.
+
+   The rail itself (.ctx-toolbar, .ctx-btn, .ctx-popover) lives in index.css.
+   These are the pieces that make the anatomy legible: the kind chip that is
+   also a swapper, values you can scrub, and the small pickers inside popovers.
+   Selected states are ink washes; focus is the neutral ring.
+   =========================================================================== */
+
+/* The kind chip when it is also a control: glyph, name, a quiet chevron. */
+.rail-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 168px;
+  color: var(--text-primary);
+}
+
+.rail-kind__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.rail-kind__chevron,
+.rail-kind__spark {
+  flex: none;
+  color: var(--text-tertiary);
+}
+
+/* A value you can drag: the glyph is the handle. */
+.rail-scrub {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+/* Font family and size in one trigger: "Inter 24". */
+.rail-font {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 156px;
+}
+
+.rail-font__family {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+
+.rail-glyph {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+}
+
+.rail-ends {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+/* Rows of small toggles inside a popover. */
+.rail-toggle-row {
+  display: flex;
+  gap: 4px;
+}
+
+.rail-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+}
+
+.rail-align-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 32px);
+  gap: 4px;
+}
+
+.rail-reactions {
+  display: flex;
+  gap: 4px;
+}
+
+/* A vertical list of choices: sort columns, combine operations, point modes. */
+.rail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.rail-list__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.rail-list__item:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.rail-list__item[aria-checked='true'] {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.rail-list__item:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+.rail-list__item:focus-visible,
+.rail-theme:focus-visible,
+.rail-display:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.rail-list__key {
+  flex: none;
+  min-width: 18px;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-tertiary);
+}
+
+.rail-list__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Link displays, each drawn as the card it produces. */
+.rail-display-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  min-width: 220px;
+}
+
+.rail-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.rail-display:hover { background: var(--surface-hover); color: var(--text-primary); }
+.rail-display[aria-checked='true'] { background: var(--surface-active); color: var(--text-primary); }
+.rail-display__auto { color: var(--text-tertiary); }
+
+/* Table themes as tiny tables. */
+.rail-themes {
+  display: grid;
+  grid-template-columns: repeat(5, 56px);
+  gap: 6px;
+}
+
+.rail-theme {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 4px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  cursor: pointer;
+}
+
+.rail-theme:hover { background: var(--surface-hover); }
+.rail-theme[aria-checked='true'] { background: var(--surface-active); color: var(--text-primary); }
+
+.rail-tbl {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  width: 22px;
+  height: 16px;
+  gap: 1px;
+  padding: 1px;
+  border-radius: 3px;
+  /* The rules between cells: strong enough to read as a table at 22px. */
+  background: color-mix(in srgb, var(--text-primary) 24%, transparent);
+}
+
+.rail-tbl > i { background: var(--surface-elevated); }
+.rail-tbl[data-theme='bold'] > i:nth-child(-n + 3),
+.rail-tbl[data-theme='striped'] > i:nth-child(-n + 3) { background: var(--tbl-accent); }
+.rail-tbl[data-theme='striped'] > i:nth-child(n + 7) { background: color-mix(in srgb, var(--tbl-accent) 18%, var(--surface-elevated)); }
+.rail-tbl[data-theme='clean'] > i:nth-child(-n + 3) { background: color-mix(in srgb, var(--text-primary) 14%, var(--surface-elevated)); }
+.rail-tbl[data-theme='minimal'] { background: transparent; }
+.rail-tbl[data-theme='minimal'] > i { background: transparent; border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 24%, transparent); }
+.rail-tbl[data-theme='grid'] { background: var(--text-tertiary); }
+
+/* A grid's palette, as its own strip. */
+.rail-ribbon {
+  display: inline-flex;
+  width: 26px;
+  height: 12px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.rail-ribbon > i { flex: 1; }
+
+/* Columns − n +, read as one control. */
+.rail-stepper {
+  display: inline-flex;
+  align-items: center;
+}
+
+.rail-stepper .ctx-btn { min-width: 24px; padding: 0 4px; }
+.rail-stepper__value { min-width: 2ch; text-align: center; }
+
+/* What is waiting outside the arrangement, said on the kind chip. */
+.rail-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-active);
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}

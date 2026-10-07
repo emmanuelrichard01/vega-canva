@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { EyeOff } from 'lucide-react';
 import { metadataMap, roomId as currentRoomId } from '../../engine/document/doc';
+import { setBoardMetadata } from '../../engine/document/mutations';
 import { useRoomState } from '../../hooks/useSync';
 import { useRoomPermissions } from '../../hooks/useRoomPermissions';
 import { useStore } from '../../hooks/useStore';
@@ -80,7 +81,7 @@ export const LinkPreview: React.FC<{ role: RoomRole }> = ({ role }) => {
 
   const toggle = () => {
     if (!canEdit) return;
-    metadataMap.set(SHARE_PREVIEW_KEY, hidden ? 'on' : 'off');
+    setBoardMetadata(SHARE_PREVIEW_KEY, hidden ? 'on' : 'off');
   };
 
   return (

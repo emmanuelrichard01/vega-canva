@@ -42,7 +42,6 @@ import { useStore } from './useStore';
 export interface UseRoomContextMenuActionsOptions {
   selectedIds: string[];
   setSelectedIds: (ids: string[]) => void;
-  diagramObjects: Record<string, AnyNode>;
   contextTarget: ContextTarget | null;
   localTitle: string;
   clipboardRef: React.MutableRefObject<ClipboardPayload | null>;
@@ -63,6 +62,14 @@ export interface UseRoomContextMenuActionsOptions {
   setDiagramOpen: (open: boolean) => void;
 }
 
+/**
+ * The document as it is now, read when an action runs.
+ *
+ * Read lazily rather than passed in, so the room does not have to subscribe to
+ * every change of every object just to keep these callbacks current.
+ */
+const liveObjects = () => useStore.getState().objects;
+
 /** Where on the board "here" is: the menu's spot, or the middle of the view. */
 function spotOf(target: ContextTarget | null): { x: number; y: number } {
   if (target && !target.viaKeyboard) return clientToWorld(target.x, target.y);
@@ -77,7 +84,6 @@ function spotOf(target: ContextTarget | null): { x: number; y: number } {
 export function useRoomContextMenuActions({
   selectedIds,
   setSelectedIds,
-  diagramObjects,
   contextTarget,
   localTitle,
   clipboardRef,
@@ -94,8 +100,8 @@ export function useRoomContextMenuActions({
   setDiagramOpen,
 }: UseRoomContextMenuActionsOptions): CanvasContextMenuActions {
   const selectedNodes = useCallback(
-    () => selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[],
-    [selectedIds, diagramObjects]
+    () => selectedIds.map((id) => liveObjects()[id]).filter(Boolean) as AnyNode[],
+    [selectedIds]
   );
 
   const handleCopy = useCallback(() => {
@@ -188,34 +194,34 @@ export function useRoomContextMenuActions({
 
   const handleRestack = useCallback(
     (op: RestackOp) => {
-      const patches = restackSelection(Object.values(diagramObjects), selectedIds, op);
+      const patches = restackSelection(Object.values(liveObjects()), selectedIds, op);
       if (patches.length > 0) applyNodePatches(patches);
       else if (op === 'forward' || op === 'backward') {
         showToast(op === 'forward' ? 'Nothing overlapping above it' : 'Nothing overlapping below it');
       }
     },
-    [diagramObjects, selectedIds, showToast]
+    [selectedIds, showToast]
   );
 
   const handleSelectAll = useCallback(() => {
-    setSelectedIds(Object.keys(diagramObjects));
-  }, [diagramObjects, setSelectedIds]);
+    setSelectedIds(Object.keys(liveObjects()));
+  }, [setSelectedIds]);
 
   const handleSelectMatching = useCallback(
     (mode: 'kind' | 'style') => {
       const seeds = selectedNodes();
       if (seeds.length === 0) return;
-      const ids = matchingIds(Object.values(diagramObjects), seeds, mode);
+      const ids = matchingIds(Object.values(liveObjects()), seeds, mode);
       setSelectedIds(ids);
       const added = ids.length - seeds.length;
       if (added === 0) showToast('Nothing else on the board matches');
     },
-    [selectedNodes, diagramObjects, setSelectedIds, showToast]
+    [selectedNodes, setSelectedIds, showToast]
   );
 
   const handleCopyPng = useCallback(
     async (ids: string[]) => {
-      const scope = exportScope(diagramObjects, ids, localTitle);
+      const scope = exportScope(liveObjects(), ids, localTitle);
       const { ExportService } = await import('../engine/export');
       const result = await ExportService.copy('png', {
         ...scopeOptions(scope),
@@ -223,17 +229,17 @@ export function useRoomContextMenuActions({
       } as never);
       showToast(result.ok ? `Copied ${scope.subject} as PNG` : result.message!);
     },
-    [diagramObjects, localTitle, showToast]
+    [localTitle, showToast]
   );
 
   const handleCopySvg = useCallback(
     async (ids: string[]) => {
-      const scope = exportScope(diagramObjects, ids, localTitle);
+      const scope = exportScope(liveObjects(), ids, localTitle);
       const { ExportService } = await import('../engine/export');
       const result = await ExportService.copy('svg', scopeOptions(scope));
       showToast(result.ok ? `Copied ${scope.subject} as SVG` : result.message!);
     },
-    [diagramObjects, localTitle, showToast]
+    [localTitle, showToast]
   );
 
   const handleExportSelection = useCallback(
@@ -273,13 +279,13 @@ export function useRoomContextMenuActions({
   }, [selectedIds]);
 
   const handleEditLinePoints = useCallback(() => {
-    const only = selectedIds.length === 1 ? diagramObjects[selectedIds[0]] : null;
+    const only = selectedIds.length === 1 ? liveObjects()[selectedIds[0]] : null;
     if (only && isLineLike(only) && !only.locked) lineEdit.begin(only.id);
-  }, [selectedIds, diagramObjects]);
+  }, [selectedIds]);
 
   const handleToPath = useCallback(() => {
     if (selectedIds.length !== 1) return;
-    const target = diagramObjects[selectedIds[0]];
+    const target = liveObjects()[selectedIds[0]];
 
     const land = (newId: string) => {
       setSelectedIds([newId]);
@@ -307,7 +313,7 @@ export function useRoomContextMenuActions({
 
     const newId = flattenToPath(selectedIds[0]);
     if (newId) land(newId);
-  }, [selectedIds, diagramObjects, setSelectedIds, showToast]);
+  }, [selectedIds, setSelectedIds, showToast]);
 
   const handleOutlineStroke = useCallback(() => {
     if (selectedIds.length !== 1) return;

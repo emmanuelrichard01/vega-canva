@@ -24,90 +24,110 @@ interface Signal {
 
 const S = (re: RegExp, weight: number): Signal => ({ re, weight });
 
+/*
+ * Every pattern here runs on every multi-line paste, on every keystroke in the
+ * code editor and on collaborators' blocks, so each one has to be linear in
+ * the length of the text.
+ *
+ * - Horizontal whitespace is spelled `[ \t]`. With the `m` flag a `\s` after
+ *   `^` or before `$` crosses newlines, so a run of blank lines is retried
+ *   from every one of them.
+ * - No two adjacent quantifiers can match the same characters
+ *   (`\s+.*\s+` took 20s on an `import` followed by spaces).
+ * - Unbounded runs that could start at many positions (`[^>]*` after every
+ *   `<p`) carry an upper bound.
+ */
 const SIGNALS: Record<string, Signal[]> = {
   typescript: [
-    S(/\b(interface|type)\s+[A-Z]\w*\s*(<[^>]*>)?\s*[={]/, 4),
-    S(/:\s*(string|number|boolean|void|unknown|any|never)\b/, 4),
+    S(/\b(interface|type)[ \t]+[A-Z]\w*[ \t]*(<[^>\n]{0,200}>)?[ \t]*[={]/, 4),
+    S(/:[ \t]*(string|number|boolean|void|unknown|any|never)\b/, 4),
     S(/\b(as const|satisfies|keyof|readonly)\b/, 3),
-    S(/\b(public|private|protected)\s+\w+\s*[:(]/, 1),
-    S(/import\s+.*\s+from\s+['"]/, 1),
-    S(/\b(const|let)\s+\w+\s*=/, 1),
+    S(/\b(public|private|protected)[ \t]+\w+[ \t]*[:(]/, 1),
+    S(/\bimport\b[^\n]*?[ \t]from[ \t]*['"]/, 1),
+    S(/\b(const|let)[ \t]+\w+[ \t]*=/, 1),
     S(/=>/, 1),
   ],
   javascript: [
-    S(/\b(const|let|var)\s+\w+\s*=/, 2),
-    S(/=>\s*[{(]?/, 1),
-    S(/\bfunction\s*\w*\s*\(/, 3),
+    S(/\b(const|let|var)[ \t]+\w+[ \t]*=/, 2),
+    S(/=>[ \t]*[{(]?/, 1),
+    S(/\bfunction[ \t]*\w*[ \t]*\(/, 3),
     S(/\b(console\.log|document\.|window\.|require\(|module\.exports)/, 3),
-    S(/import\s+.*\s+from\s+['"]/, 1),
-    S(/\bexport\s+(default|const|function)\b/, 1),
+    S(/\bimport\b[^\n]*?[ \t]from[ \t]*['"]/, 1),
+    S(/\bexport[ \t]+(default|const|function)\b/, 1),
   ],
   python: [
-    S(/^\s*def\s+\w+\s*\(.*\)\s*(->\s*[\w[\], .]+)?\s*:\s*$/m, 5),
-    S(/^\s*(from\s+[\w.]+\s+)?import\s+[\w.]+(\s+as\s+\w+)?\s*$/m, 2),
-    S(/^\s*class\s+\w+(\(.*\))?\s*:\s*$/m, 4),
+    S(/^[ \t]*def[ \t]+\w+[ \t]*\([^\n]*\)[ \t]*(->[^\n:]{1,120})?:[ \t]*$/m, 5),
+    S(/^[ \t]*(from[ \t]+[\w.]+[ \t]+)?import[ \t]+[\w.]+([ \t]+as[ \t]+\w+)?[ \t]*$/m, 2),
+    S(/^[ \t]*class[ \t]+\w+(\([^\n]*\))?[ \t]*:[ \t]*$/m, 4),
     S(/\b(elif|self\.|None|True|False|print\()\b/, 2),
-    S(/^\s*(if|for|while|with|try|except)\b.*:\s*$/m, 2),
-    S(/^\s*@\w+/m, 1),
+    S(/^[ \t]*(if|for|while|with|try|except)\b[^\n]*:[ \t]*$/m, 2),
+    S(/^[ \t]*@\w+/m, 1),
   ],
   sql: [
     S(/\bselect\b[\s\S]+\bfrom\b/i, 5),
-    S(/\b(insert\s+into|update\s+\w+\s+set|delete\s+from|create\s+(table|index|view))\b/i, 5),
-    S(/\b(where|join|group\s+by|order\s+by|limit)\b/i, 2),
+    S(/\b(insert[ \t]+into|update[ \t]+\w+[ \t]+set|delete[ \t]+from|create[ \t]+(table|index|view))\b/i, 5),
+    S(/\b(where|join|group[ \t]+by|order[ \t]+by|limit)\b/i, 2),
   ],
   html: [
     S(/<!doctype html>/i, 6),
-    S(/<(html|head|body|div|span|section|main|nav|ul|li|p|a|button|img|form|input|template)(\s[^>]*)?>/i, 3),
+    S(/<(html|head|body|div|span|section|main|nav|ul|li|p|a|button|img|form|input|template)([ \t\n][^>]{0,500})?>/i, 3),
     S(/<\/\w+>/, 2),
   ],
   css: [
-    S(/^[\s.#:\w-[\]="'>+~*,()]+\{\s*$/m, 3),
-    S(/^\s*[\w-]+\s*:\s*[^;]+;\s*$/m, 3),
+    S(/^[ \t.#:\w\-[\]="'>+~*,()]+\{[ \t]*$/m, 3),
+    S(/^[ \t]*[\w-]+[ \t]*:[ \t]*[^;\n]+;[ \t]*$/m, 3),
     S(/@media|@import|@keyframes|:root|var\(--/, 3),
   ],
-  json: [S(/^\s*[{[][\s\S]*[}\]]\s*$/, 1), S(/^\s*"[\w-]+"\s*:/m, 3)],
+  json: [S(/^\s*[{[][\s\S]*[}\]]\s*$/, 1), S(/^[ \t]*"[\w-]+"[ \t]*:/m, 3)],
   bash: [
-    S(/^#!\/(usr\/)?bin\/(env\s+)?(ba|z)?sh/m, 8),
-    S(/^\s*\$\s+\w+/m, 4),
-    S(/^\s*(sudo|apt(-get)?|brew|npm|npx|pnpm|yarn|git|docker|kubectl|curl|cd|export|echo|chmod|mkdir)\s/m, 3),
+    S(/^#!\/(usr\/)?bin\/(env[ \t]+)?(ba|z)?sh/m, 8),
+    S(/^[ \t]*\$[ \t]+\w+/m, 4),
+    S(/^[ \t]*(sudo|apt(-get)?|brew|npm|npx|pnpm|yarn|git|docker|kubectl|curl|cd|export|echo|chmod|mkdir)[ \t]/m, 3),
     S(/\b(fi|done|esac)\b/, 3),
-    S(/&&|\|\s*grep\b/, 1),
+    S(/&&|\|[ \t]*grep\b/, 1),
   ],
   java: [
-    S(/\bpublic\s+(static\s+)?(final\s+)?(class|void|interface)\b/, 4),
-    S(/System\.out\.println|import\s+java\./, 6),
+    S(/\bpublic[ \t]+(static[ \t]+)?(final[ \t]+)?(class|void|interface)\b/, 4),
+    S(/System\.out\.println|import[ \t]+java\./, 6),
     S(/@Override/, 3),
   ],
-  c: [S(/#include\s*<\w+\.h>/, 6), S(/\bint\s+main\s*\(/, 3), S(/\bprintf\s*\(/, 2), S(/\bmalloc\s*\(/, 2)],
-  cpp: [S(/#include\s*<(iostream|vector|string|memory|map)>/, 7), S(/\bstd::/, 5), S(/\bcout\s*<</, 4), S(/\btemplate\s*</, 3)],
-  csharp: [S(/\busing\s+System(\.\w+)*;/, 6), S(/\bnamespace\s+[\w.]+/, 2), S(/Console\.WriteLine/, 6), S(/\bpublic\s+(async\s+)?Task\b/, 4)],
-  go: [S(/^package\s+\w+/m, 6), S(/\bfunc\s+(\(\w+\s+\*?\w+\)\s*)?\w+\s*\(/, 4), S(/:=/, 2), S(/\bfmt\.\w+/, 4)],
-  rust: [S(/\bfn\s+\w+\s*(<[^>]*>)?\s*\(/, 4), S(/\blet\s+mut\b/, 5), S(/\bimpl\b/, 3), S(/\w+!\(/, 2), S(/->\s*(Self|Result|Option|&?\w+)/, 1)],
-  php: [S(/<\?php/, 8), S(/\$\w+\s*=/, 3), S(/->\w+\(/, 1), S(/\becho\s/, 1)],
-  dart: [S(/\bvoid\s+main\s*\(\s*\)/, 3), S(/\bWidget\s+build\(/, 6), S(/\b(final|late)\s+\w+/, 2), S(/@override/, 3)],
-  kotlin: [S(/\bfun\s+\w+\s*\(/, 5), S(/\bval\s+\w+\s*[:=]/, 3), S(/\bdata\s+class\b/, 5)],
-  swift: [S(/\bimport\s+(SwiftUI|UIKit|Foundation)\b/, 7), S(/\bvar\s+body:\s*some\s+View/, 7), S(/\bfunc\s+\w+\s*\(/, 2), S(/\bguard\s+let\b/, 5)],
-  ruby: [S(/^\s*def\s+\w+[?!]?(\(.*\))?\s*$/m, 4), S(/^\s*end\s*$/m, 3), S(/\b(puts|require_relative|attr_accessor)\b/, 4), S(/\bdo\s*\|\w+\|/, 4)],
-  yaml: [S(/^\s*[\w-]+:\s+\S/m, 2), S(/^\s*-\s+[\w-]+:\s/m, 3), S(/^---\s*$/m, 3), S(/^\s*[\w-]+:\s*$/m, 1)],
-  markdown: [S(/^#{1,6}\s+\S/m, 4), S(/^\s*[-*]\s+\S/m, 1), S(/\[[^\]]+\]\([^)]+\)/, 3), S(/\*\*[^*]+\*\*/, 2), S(/^```/m, 3)],
-  graphql: [S(/^\s*(query|mutation|subscription|fragment)\s+\w*[\s\S]*\{/m, 6), S(/^\s*type\s+\w+\s*\{/m, 3), S(/\bon\s+[A-Z]\w+\s*\{/, 3)],
-  dockerfile: [S(/^FROM\s+[\w./:-]+/m, 7), S(/^(RUN|COPY|WORKDIR|ENTRYPOINT|CMD|EXPOSE)\s/m, 4)],
+  c: [S(/#include[ \t]*<\w+\.h>/, 6), S(/\bint[ \t]+main[ \t]*\(/, 3), S(/\bprintf[ \t]*\(/, 2), S(/\bmalloc[ \t]*\(/, 2)],
+  cpp: [S(/#include[ \t]*<(iostream|vector|string|memory|map)>/, 7), S(/\bstd::/, 5), S(/\bcout[ \t]*<</, 4), S(/\btemplate[ \t]*</, 3)],
+  csharp: [S(/\busing[ \t]+System(\.\w+)*;/, 6), S(/\bnamespace[ \t]+[\w.]+/, 2), S(/Console\.WriteLine/, 6), S(/\bpublic[ \t]+(async[ \t]+)?Task\b/, 4)],
+  go: [S(/^package[ \t]+\w+/m, 6), S(/\bfunc[ \t]+(\(\w+[ \t]+\*?\w+\)[ \t]*)?\w+[ \t]*\(/, 4), S(/:=/, 2), S(/\bfmt\.\w+/, 4)],
+  rust: [S(/\bfn[ \t]+\w+[ \t]*(<[^>\n]{0,200}>)?[ \t]*\(/, 4), S(/\blet[ \t]+mut\b/, 5), S(/\bimpl\b/, 3), S(/\w!\(/, 2), S(/->[ \t]*(Self|Result|Option|&?\w+)/, 1)],
+  php: [S(/<\?php/, 8), S(/\$\w+[ \t]*=/, 3), S(/->\w+\(/, 1), S(/\becho[ \t]/, 1)],
+  dart: [S(/\bvoid[ \t]+main[ \t]*\([ \t]*\)/, 3), S(/\bWidget[ \t]+build\(/, 6), S(/\b(final|late)[ \t]+\w+/, 2), S(/@override/, 3)],
+  kotlin: [S(/\bfun[ \t]+\w+[ \t]*\(/, 5), S(/\bval[ \t]+\w+[ \t]*[:=]/, 3), S(/\bdata[ \t]+class\b/, 5)],
+  swift: [S(/\bimport[ \t]+(SwiftUI|UIKit|Foundation)\b/, 7), S(/\bvar[ \t]+body:[ \t]*some[ \t]+View/, 7), S(/\bfunc[ \t]+\w+[ \t]*\(/, 2), S(/\bguard[ \t]+let\b/, 5)],
+  ruby: [S(/^[ \t]*def[ \t]+\w+[?!]?(\([^\n]*\))?[ \t]*$/m, 4), S(/^[ \t]*end[ \t]*$/m, 3), S(/\b(puts|require_relative|attr_accessor)\b/, 4), S(/\bdo[ \t]*\|\w+\|/, 4)],
+  yaml: [S(/^[ \t]*[\w-]+:[ \t]+\S/m, 2), S(/^[ \t]*-[ \t]+[\w-]+:[ \t]/m, 3), S(/^---[ \t]*$/m, 3), S(/^[ \t]*[\w-]+:[ \t]*$/m, 1)],
+  markdown: [S(/^#{1,6}[ \t]+\S/m, 4), S(/^[ \t]*[-*][ \t]+\S/m, 1), S(/\[[^\]\n]{1,200}\]\([^)\n]{1,500}\)/, 3), S(/\*\*[^*\n]{1,200}\*\*/, 2), S(/^```/m, 3)],
+  graphql: [S(/^[ \t]*(query|mutation|subscription|fragment)[ \t]+\w*[^{]{0,500}\{/m, 6), S(/^[ \t]*type[ \t]+\w+[ \t]*\{/m, 3), S(/\bon[ \t]+[A-Z]\w+[ \t]*\{/, 3)],
+  dockerfile: [S(/^FROM[ \t]+[\w./:-]+/m, 7), S(/^(RUN|COPY|WORKDIR|ENTRYPOINT|CMD|EXPOSE)[ \t]/m, 4)],
   mermaid: [
-    S(/^\s*(graph|flowchart)\s+(TD|TB|BT|RL|LR)\b/m, 9),
-    S(/^\s*(sequenceDiagram|classDiagram|stateDiagram(-v2)?|erDiagram|gantt|pie|mindmap|journey|timeline)\b/m, 9),
+    S(/^[ \t]*(graph|flowchart)[ \t]+(TD|TB|BT|RL|LR)\b/m, 9),
+    S(/^[ \t]*(sequenceDiagram|classDiagram|stateDiagram(-v2)?|erDiagram|gantt|pie|mindmap|journey|timeline)\b/m, 9),
     S(/-->|---|==>/, 1),
   ],
 };
 
 /** Detection signals that are a *different* language's evidence, subtracted. */
 const PENALTIES: Record<string, Signal[]> = {
-  javascript: [S(/:\s*(string|number|boolean)\b|\binterface\s+[A-Z]/, 4)],
+  javascript: [S(/:[ \t]*(string|number|boolean)\b|\binterface[ \t]+[A-Z]/, 4)],
   css: [S(/\b(function|const|return|def|class)\b/, 4)],
-  yaml: [S(/[;{}]\s*$/m, 4), S(/^\s*(def|class|function|import)\b/m, 4)],
-  json: [S(/^\s*\w+\s*:/m, 2)],
-  c: [S(/\bstd::|#include\s*<(iostream|vector|string)>/, 6)],
-  markdown: [S(/[;{}]\s*$/m, 3)],
+  yaml: [S(/[;{}][ \t]*$/m, 4), S(/^[ \t]*(def|class|function|import)\b/m, 4)],
+  json: [S(/^[ \t]*\w+[ \t]*:/m, 2)],
+  c: [S(/\bstd::|#include[ \t]*<(iostream|vector|string)>/, 6)],
+  markdown: [S(/[;{}][ \t]*$/m, 3)],
 };
+
+/**
+ * How much of a snippet detection reads. The marks that identify a language
+ * sit in its first lines; reading further only adds time on a paste that is
+ * mostly data.
+ */
+export const DETECT_LIMIT = 4000;
 
 export interface Detection {
   language: string;
@@ -117,7 +137,7 @@ export interface Detection {
 }
 
 export function detectLanguage(source: string): Detection {
-  const text = source.slice(0, 8000);
+  const text = source.slice(0, DETECT_LIMIT);
   if (!text.trim()) return { language: 'plaintext', confidence: 0, score: 0 };
 
   const scores: Array<[string, number]> = Object.entries(SIGNALS).map(([id, signals]) => {

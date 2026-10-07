@@ -13,7 +13,10 @@ import {
   type AdjustmentId,
 } from '../../../engine/model/imageAdjustments';
 import { shadowProps } from './shared';
-import { useResolvedSrc } from '../../../utils/pendingMedia';
+import { uploadIdFromSrc, useResolvedSrc } from '../../../utils/pendingMedia';
+import { retryUpload, uploadFraction, useUploadState } from '../../../engine/media/upload';
+import { canEditObjects } from '../../../engine/model/permissions';
+import { UploadOverlay } from './UploadOverlay';
 
 interface Props {
   node: ImageNode;
@@ -70,6 +73,7 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
    * See `pendingMedia.ts`.
    */
   const { src: resolvedSrc, pendingUpload } = useResolvedSrc(node.src);
+  const upload = useUploadState(node.src);
 
   const [corsImage, corsStatus] = useImage(resolvedSrc, 'anonymous');
   const needsPlainRetry = corsStatus === 'failed';
@@ -244,7 +248,7 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
     );
   }
 
-  return (
+  const picture = (
     <KonvaImage
       ref={shapeRef}
       image={image}
@@ -261,6 +265,23 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
       saturation={konva.saturation}
       blurRadius={konva.blurRadius}
     />
+  );
+
+  if (!upload) return picture;
+
+  const uploadId = uploadIdFromSrc(node.src);
+  return (
+    <Group>
+      {picture}
+      <UploadOverlay
+        width={node.width}
+        height={node.height}
+        fraction={uploadFraction(upload)}
+        failedReason={upload.phase === 'failed' ? upload.reason : null}
+        queued={upload.phase === 'queued'}
+        onRetry={uploadId && canEditObjects() ? () => void retryUpload(uploadId) : undefined}
+      />
+    </Group>
   );
 });
 

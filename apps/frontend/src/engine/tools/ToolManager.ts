@@ -98,7 +98,15 @@ export class ToolManager {
     return this.getActiveTool()?.cursor || 'default';
   }
 
+  /** Whether a press has gone down that has not yet come back up. */
+  get gestureActive(): boolean {
+    return this.pressed;
+  }
+
+  private pressed = false;
+
   handlePointerDown(e: any) {
+    this.pressed = true;
     this.getActiveTool()?.onPointerDown(this.context, e);
   }
 
@@ -107,6 +115,7 @@ export class ToolManager {
   }
 
   handlePointerUp(e: any) {
+    this.pressed = false;
     this.getActiveTool()?.onPointerUp(this.context, e);
   }
 

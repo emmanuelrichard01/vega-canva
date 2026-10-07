@@ -277,8 +277,8 @@ export function parallelogramContour(w: number, h: number, skew: number): Contou
  *
  * The sign of `inset` chooses the edge, exactly as the sign of a
  * parallelogram's `skew` chooses which way it leans: positive draws the top in
- * (wide base, the manual-operation symbol), negative draws the bottom in (wide
- * top, its inverse).
+ * (wide base), negative draws the bottom in (wide top: the ISO 5807
+ * manual-operation symbol).
  *
  * The range used to be positive-only, which made the two forms the same
  * picture. Mermaid distinguishes them — `[/A\]` against `[\A/]` — and so does
@@ -1044,4 +1044,270 @@ export function userContour(w: number, h: number): ContourGeometry {
     .lineTo(w, h)
     .close();
   return compound(head, body);
+}
+
+// -- Flowchart, completed ------------------------------------------------------
+//
+// The rest of the ISO 5807 set. Each one fills its box on both axes, so
+// selection, snapping and connector ports agree with what is drawn.
+
+/** How far each sheet behind the front one is stepped. */
+export function multiDocumentStep(w: number, h: number): number {
+  return clamp(Math.min(w, h) * 0.08, 3, 18);
+}
+
+/**
+ * Several documents: the front sheet with its torn edge, and the two behind it
+ * stepped up and to the right.
+ *
+ * One silhouette rather than three overlapping sheets, so the fill is one
+ * colour and a hit anywhere on the stack selects it. The edges of the back
+ * sheets that lie over the front one are drawn as features.
+ */
+export function multiDocumentContour(w: number, h: number, waveHeight: number): ContourGeometry {
+  const d = multiDocumentStep(w, h);
+  const fw = w - 2 * d;
+  const a = clamp(waveHeight, 0.05, 0.35) * (h - 2 * d);
+  const base = h - a;
+  const lift = (4 / 3) * a;
+  return pen()
+    .moveTo(2 * d, 0)
+    .lineTo(w, 0)
+    .lineTo(w, h - 2 * d - a)
+    .lineTo(w - d, h - 2 * d - a)
+    .lineTo(w - d, h - d - a)
+    .lineTo(fw, h - d - a)
+    .lineTo(fw, base)
+    .curveTo((fw * 5) / 6, base + lift, (fw * 2) / 3, base + lift, fw / 2, base)
+    .curveTo(fw / 3, base - lift, fw / 6, base - lift, 0, base)
+    .lineTo(0, 2 * d)
+    .lineTo(d, 2 * d)
+    .lineTo(d, d)
+    .lineTo(2 * d, d)
+    .close();
+}
+
+/** Off-page connector: a box whose bottom edge comes to a point. */
+export function offPageContour(w: number, h: number, indent: number): ContourGeometry {
+  const shoulder = h * (1 - clamp(indent, 0.1, 0.5));
+  return polygonContour([
+    { x: 0, y: 0 },
+    { x: w, y: 0 },
+    { x: w, y: shoulder },
+    { x: w / 2, y: h },
+    { x: 0, y: shoulder },
+  ]);
+}
+
+/** Punched card: a rectangle with its top-left corner cut off. */
+export function cardContour(w: number, h: number, indent: number): ContourGeometry {
+  const c = clamp(indent, 0.05, 0.5) * Math.min(w, h);
+  return polygonContour([
+    { x: c, y: 0 },
+    { x: w, y: 0 },
+    { x: w, y: h },
+    { x: 0, y: h },
+    { x: 0, y: c },
+  ]);
+}
+
+/**
+ * Loop limit: a rectangle with both top corners chamfered.
+ *
+ * The symbol for the start of a loop, drawn upright; the matching end is the
+ * same shape flipped, which the transformer already does.
+ */
+export function loopLimitContour(w: number, h: number, indent: number): ContourGeometry {
+  const c = clamp(indent, 0.05, 0.5) * Math.min(w, h);
+  return polygonContour([
+    { x: c, y: 0 },
+    { x: w - c, y: 0 },
+    { x: w, y: c },
+    { x: w, y: h },
+    { x: 0, y: h },
+    { x: 0, y: c },
+  ]);
+}
+
+/**
+ * Punched tape: a band whose top and bottom edges wave in step.
+ *
+ * Both edges run the same phase, so the band keeps one thickness along its
+ * length the way a strip of tape does; edges in opposite phase pinch it into a
+ * chain of beads.
+ */
+export function punchedTapeContour(w: number, h: number, waveHeight: number): ContourGeometry {
+  const a = clamp(waveHeight, 0.05, 0.25) * h;
+  const lift = (4 / 3) * a;
+  return pen()
+    .moveTo(0, a)
+    .curveTo(w / 6, a - lift, w / 3, a - lift, w / 2, a)
+    .curveTo((w * 2) / 3, a + lift, (w * 5) / 6, a + lift, w, a)
+    .lineTo(w, h - a)
+    .curveTo((w * 5) / 6, h - a + lift, (w * 2) / 3, h - a + lift, w / 2, h - a)
+    .curveTo(w / 3, h - a - lift, w / 6, h - a - lift, 0, h - a)
+    .close();
+}
+
+/** Collate: two triangles meeting point to point, like an hourglass. */
+export function collateContour(w: number, h: number): ContourGeometry {
+  return polygonContour([
+    { x: 0, y: 0 },
+    { x: w, y: 0 },
+    { x: w / 2, y: h / 2 },
+    { x: w, y: h },
+    { x: 0, y: h },
+    { x: w / 2, y: h / 2 },
+  ]);
+}
+
+/** Merge: a triangle on its point. Extract is the same triangle upright. */
+export function mergeContour(w: number, h: number): ContourGeometry {
+  return polygonContour([
+    { x: 0, y: 0 },
+    { x: w, y: 0 },
+    { x: w / 2, y: h },
+  ]);
+}
+
+/**
+ * Stored data: a convex left end and a concave right end.
+ *
+ * The symbol for data held on any medium, and the one shape in the set whose
+ * outline bends inward. `indent` is how deep both curves are, as a share of
+ * the width.
+ */
+export function storedDataContour(w: number, h: number, indent: number): ContourGeometry {
+  const r = clamp(indent, 0.05, 0.3) * w;
+  return pen()
+    .moveTo(r, 0)
+    .lineTo(w, 0)
+    .arc(w, h / 2, r, h / 2, -Math.PI / 2, (-Math.PI * 3) / 2)
+    .lineTo(r, h)
+    .arc(r, h / 2, r, h / 2, Math.PI / 2, (Math.PI * 3) / 2)
+    .close();
+}
+
+/** The reel's horizontal radius: the circle takes the height, the tape the rest. */
+export function sequentialReelRadius(w: number, h: number): number {
+  return Math.min(h / 2, w * 0.41);
+}
+
+/**
+ * Sequential access storage: a reel, with the tape leaving it along the
+ * bottom.
+ *
+ * The tape is a run out to the box's right edge and back, so it strokes as a
+ * single line and adds no area to the fill.
+ */
+export function sequentialAccessContour(w: number, h: number): ContourGeometry {
+  const rx = sequentialReelRadius(w, h);
+  return pen()
+    .moveTo(w, h)
+    .lineTo(rx, h)
+    .arc(rx, h / 2, rx, h / 2, Math.PI / 2, Math.PI / 2 + Math.PI * 2)
+    .close();
+}
+
+/**
+ * Direct access storage: a drum lying on its side.
+ *
+ * `rimRatio` is the end's depth as a share of the width, the horizontal twin of
+ * the upright cylinder's rim.
+ */
+export function directAccessContour(w: number, h: number, rimRatio: number): ContourGeometry {
+  const rx = clamp(rimRatio, 0.05, 0.3) * w;
+  return pen()
+    .moveTo(rx, 0)
+    .lineTo(w - rx, 0)
+    .arc(w - rx, h / 2, rx, h / 2, -Math.PI / 2, Math.PI / 2)
+    .lineTo(rx, h)
+    .arc(rx, h / 2, rx, h / 2, Math.PI / 2, (Math.PI * 3) / 2)
+    .close();
+}
+
+/** Display: a pointed left end and a rounded right end. */
+export function displayContour(w: number, h: number, indent: number): ContourGeometry {
+  const d = clamp(indent, 0.05, 0.35) * w;
+  return pen()
+    .moveTo(0, h / 2)
+    .lineTo(d, 0)
+    .lineTo(w - d, 0)
+    .arc(w - d, h / 2, d, h / 2, -Math.PI / 2, Math.PI / 2)
+    .lineTo(d, h)
+    .close();
+}
+
+// -- Advanced ---------------------------------------------------------------
+//
+// System-diagram glyphs drawn on the same terms as the rest of the set: one
+// stroke weight (the shape's own), soft corners at a share of the short side,
+// and detail held between a floor and a ceiling so the glyph reads at 24px and
+// at 400px.
+
+/** Where a chat bubble's body ends and its tail begins. */
+export function chatBodyHeight(h: number): number {
+  return h * 0.8;
+}
+
+/**
+ * A chat bubble: a soft rectangle with a short tail at the lower left.
+ *
+ * Distinct from the callout, whose tail is long and can point anywhere: this is
+ * the message-in-a-thread mark, and its tail is a fixed, small hook.
+ */
+export function chatContour(w: number, h: number): ContourGeometry {
+  const bh = chatBodyHeight(h);
+  const r = Math.min(bh, w) * 0.22;
+  const tailL = Math.max(r, w * 0.14);
+  const tailR = Math.min(w - r, tailL + Math.max(w * 0.18, 8));
+  const tipX = Math.max(0, tailL - w * 0.06);
+  return pen()
+    .moveTo(r, 0)
+    .lineTo(w - r, 0)
+    .arc(w - r, r, r, r, -Math.PI / 2, 0)
+    .lineTo(w, bh - r)
+    .arc(w - r, bh - r, r, r, 0, Math.PI / 2)
+    .lineTo(tailR, bh)
+    .lineTo(tipX, h)
+    .lineTo(tailL, bh)
+    .lineTo(r, bh)
+    .arc(r, bh - r, r, r, Math.PI / 2, Math.PI)
+    .lineTo(0, r)
+    .arc(r, r, r, r, Math.PI, (Math.PI * 3) / 2)
+    .close();
+}
+
+/** Where a padlock's body starts. The shackle takes the box above it. */
+export function lockBodyTop(h: number): number {
+  return h * 0.44;
+}
+
+/**
+ * A padlock: a soft body and a shackle with straight legs.
+ *
+ * The shackle is a band with its own inner edge, so it fills and strokes as a
+ * solid hoop rather than as a single line, and it reads as metal at any size.
+ */
+export function lockContour(w: number, h: number): ContourGeometry {
+  const top = lockBodyTop(h);
+  const short = Math.min(w, h);
+  const body = roundedBox(0, top, w, h - top, short * 0.12);
+  const cx = w / 2;
+  const t = clamp(short * 0.11, 2, 30);
+  const rxo = w * 0.32;
+  const rxi = Math.max(rxo - t, 1);
+  const ryo = Math.min(rxo, top * 0.8);
+  const ryi = Math.max(ryo - t, 1);
+  const shackle = pen()
+    .moveTo(cx - rxo, top)
+    .lineTo(cx - rxo, ryo)
+    .arc(cx, ryo, rxo, ryo, Math.PI, Math.PI * 2)
+    .lineTo(cx + rxo, top)
+    .lineTo(cx + rxi, top)
+    .lineTo(cx + rxi, ryo)
+    .arc(cx, ryo, rxi, ryi, 0, -Math.PI)
+    .lineTo(cx - rxi, top)
+    .close();
+  return compound(body, shackle);
 }

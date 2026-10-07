@@ -1,0 +1,416 @@
+/*
+ * The properties panel: one flat scroll under a 40px header.
+ *
+ * The header is shared with the Layers panel (`.panel-head`), so the two side
+ * panels open on the same line. Sections and rows come from the grammar.
+ */
+
+@media (min-width: 1025px) {
+  .context-inspector:not([data-collapsed='true']) {
+    width: var(--inspector-w, var(--panel-w));
+  }
+}
+
+/* The shell holds the resize edge outside the scroller, so the edge stays
+   put however far the panel is scrolled. */
+.props-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.props-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-bottom: var(--space-6, 24px);
+  background: var(--surface-primary);
+  user-select: none;
+}
+
+/* Nothing in the column shrinks: a tall panel scrolls, it never squeezes. */
+.props-panel > * {
+  flex-shrink: 0;
+}
+
+.props-panel__hint {
+  margin: 0;
+  padding: var(--space-3) var(--section-pad-x) var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+
+.props-panel .panel-head {
+  gap: var(--space-1);
+}
+
+.panel-head__glyph {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 20px;
+  margin-right: 2px;
+  color: var(--text-secondary);
+}
+
+.panel-head__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.panel-head__name--button {
+  height: 26px;
+  margin-left: -6px;
+  padding: 0 6px;
+  border: 1px solid var(--control-border, transparent);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: text;
+  transition: border-color var(--motion-hover);
+}
+
+.panel-head__name--button:hover {
+  border-color: var(--border-strong);
+}
+
+.panel-head__name--button:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.panel-head__name-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  margin-left: -6px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  outline: none;
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.panel-head__name-input:focus {
+  outline: 1.5px solid var(--focus-field-color);
+  outline-offset: 0;
+}
+
+.panel-head__editors {
+  display: flex;
+  flex-shrink: 0;
+  padding: 0 2px;
+}
+
+.panel-head__avatar {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-left: -4px;
+  border-radius: 50%;
+  background: var(--who);
+  box-shadow: 0 0 0 1.5px var(--surface-primary);
+  color: var(--who-ink, #fff);
+  font-size: 8px;
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+}
+
+.panel-head__avatar:first-child {
+  margin-left: 0;
+}
+
+.panel-head__avatar--more {
+  background: var(--surface-active);
+  color: var(--text-secondary);
+}
+
+/* ── Resize edge ─────────────────────────────────────────────────────────── */
+
+.panel-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 11;
+  width: 6px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.panel-resize::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: transparent;
+  transition: background-color var(--motion-hover);
+}
+
+.panel-resize:hover::after,
+.panel-resize:active::after {
+  background: var(--border-strong);
+}
+
+.panel-resize:focus-visible {
+  outline: none;
+}
+
+.panel-resize:focus-visible::after {
+  background: var(--focus-ring-color);
+}
+
+@media (max-width: 1024px) {
+  .panel-resize {
+    display: none;
+  }
+}
+
+/* ── Rows specific to the panel ──────────────────────────────────────────── */
+
+.pg-rotation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--control-h-sm) var(--control-h-sm);
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--control-h-sm);
+}
+
+.pg-pair--align {
+  grid-template-columns: minmax(0, 4fr) minmax(0, 3fr);
+}
+
+.pg-toggles {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+
+.pg-glyph-text {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+}
+
+.pg-ramp {
+  display: block;
+  width: 16px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--ramp);
+}
+
+.pg-paint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.pg-paint > .pg-color {
+  flex: 1;
+}
+
+.pg-paint__name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.pg-paint .fill-swatch {
+  flex-shrink: 0;
+}
+
+.pg-effect {
+  display: flex;
+  flex-direction: column;
+  gap: var(--row-gap);
+}
+
+.pg-effect + .pg-effect {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-divider);
+}
+
+.pg-effect__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 24px;
+}
+
+.pg-effect__icon {
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+}
+
+.pg-effect__name {
+  flex: 1;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+
+.pg-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--row-gap);
+}
+
+.pg-subsection__title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.pg-use-count {
+  flex-shrink: 0;
+  min-width: 20px;
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.pg-info {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  font-size: var(--text-xs);
+}
+
+.pg-info dt {
+  color: var(--text-secondary);
+}
+
+.pg-info dd {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+/* The callout tail pad places its cells by data attribute. */
+.tailpad__cell[data-tail='top-left'] { grid-row: 1; grid-column: 1; }
+.tailpad__cell[data-tail='top-right'] { grid-row: 1; grid-column: 3; }
+.tailpad__cell[data-tail='left'] { grid-row: 2; grid-column: 1; }
+.tailpad__cell[data-tail='right'] { grid-row: 2; grid-column: 3; }
+.tailpad__cell[data-tail='bottom-left'] { grid-row: 3; grid-column: 1; }
+.tailpad__cell[data-tail='bottom'] { grid-row: 3; grid-column: 2; }
+.tailpad__cell[data-tail='bottom-right'] { grid-row: 3; grid-column: 3; }
+
+/* ── Board section ───────────────────────────────────────────────────────── */
+
+.board-swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(24px, 1fr));
+  gap: var(--space-1);
+}
+
+.board-swatch {
+  aspect-ratio: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--swatch);
+  box-shadow: inset 0 0 0 1px var(--swatch-edge);
+  cursor: pointer;
+  transition: transform var(--motion-hover);
+}
+
+.board-swatch:hover {
+  transform: scale(1.08);
+}
+
+.board-swatch:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+.board-styles {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.board-style {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 24px;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--control-h-sm);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.board-style:hover {
+  background: var(--surface-hover);
+}
+
+.board-style:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.board-style__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-style__spec,
+.board-style__count {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.board-style__count {
+  text-align: right;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .board-swatch:hover {
+    transform: none;
+  }
+}

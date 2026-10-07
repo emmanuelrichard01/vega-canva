@@ -43,6 +43,19 @@ import {
   bannerContour,
   boltContour,
   calloutContour,
+  cardContour,
+  chatContour,
+  collateContour,
+  directAccessContour,
+  displayContour,
+  lockContour,
+  loopLimitContour,
+  mergeContour,
+  multiDocumentContour,
+  offPageContour,
+  punchedTapeContour,
+  sequentialAccessContour,
+  storedDataContour,
   capsuleContour,
   chevronContour,
   cloudContour,
@@ -229,6 +242,7 @@ export function shapeOutline(
     // -- Round ------------------------------------------------------------
     case 'ellipse':
     case 'summing_junction':
+    case 'or_junction':
       return { kind: 'ellipse', cx, cy, rx: cx, ry: cy };
     case 'squircle':
       return curve(squircleContour(w, h), false);
@@ -331,6 +345,40 @@ export function shapeOutline(
       return curve(gearContour(w, h, param(g, 'teeth')), false);
     case 'user':
       return curve(userContour(w, h), false);
+
+    // -- Flowchart, completed ---------------------------------------------
+    case 'multi_document':
+      return curve(multiDocumentContour(w, h, param(g, 'waveHeight')), false);
+    case 'off_page':
+      return poly(pointsOf(offPageContour(w, h, param(g, 'indent'))));
+    case 'card':
+      return poly(pointsOf(cardContour(w, h, param(g, 'indent'))));
+    case 'loop_limit':
+      return poly(pointsOf(loopLimitContour(w, h, param(g, 'indent'))));
+    case 'punched_tape':
+      return curve(punchedTapeContour(w, h, param(g, 'waveHeight')), false);
+    case 'collate':
+      return poly(pointsOf(collateContour(w, h)));
+    case 'sort':
+      return poly(pointsOf(diamondContour(w, h)));
+    case 'merge':
+      return poly(pointsOf(mergeContour(w, h)));
+    case 'stored_data':
+      return curve(storedDataContour(w, h, param(g, 'indent')), false);
+    case 'sequential_access':
+      return curve(sequentialAccessContour(w, h), false);
+    case 'direct_access_storage':
+      return curve(directAccessContour(w, h, param(g, 'rimRatio')), false);
+    case 'display':
+      return curve(displayContour(w, h, param(g, 'indent')), false);
+
+    // -- Advanced ---------------------------------------------------------
+    case 'chat':
+      return curve(chatContour(w, h), false);
+    case 'lock':
+      return curve(lockContour(w, h), false);
+    case 'sliders':
+      return box(short * 0.12);
 
     // -- Open runs ---------------------------------------------------------
     case 'line':

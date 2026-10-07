@@ -58,128 +58,90 @@ function siteMeta(siteUrl: string): Plugin {
  * Kept in step with the source by `src/engine/export/exportChunking.test.ts`.
  */
 const EXPORT_SHARED =
-  /\/engine\/export\/(chrome|DocumentImport|restoreDocument|pendingRestore|exportScope|renderScope|isolate)\./;
+  /\/engine\/export\/(chrome|DocumentImport|restoreDocument|pendingRestore|exportScope|renderScope|isolate|ExportTypes|filenames)\./;
+
+/** Module ids with Windows separators folded to `/`, so one pattern serves both. */
+const posixId = (id: string) => id.replace(/\\/g, '/');
+const inPackage = (...names: string[]) => {
+  const pattern = new RegExp(`/node_modules/(${names.join('|')})/`);
+  return (id: string) => pattern.test(posixId(id));
+};
+const inSource = (pattern: RegExp) => (id: string) => pattern.test(posixId(id));
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => ({
   plugins: [react(), siteMeta(loadEnv(mode, process.cwd(), 'VITE_').VITE_SITE_URL || DEFAULT_SITE_URL)],
   build: {
     /**
-     * The Konva vendor chunk sits at ~490 kB gzipped and cannot be split
-     * further (it is a single library). The default 500 kB limit triggers a
-     * warning on every build for something that is not actionable — raising
-     * slightly silences it without hiding real regressions.
+     * The largest chunk is `vendor-sentry` (~475 kB raw, ~156 kB gzipped),
+     * reached only through the dynamic `import()` in `utils/observability.ts`.
+     * It is a single library and off the critical path, so the limit sits just
+     * above it rather than warning on every build.
      */
-    chunkSizeWarningLimit: 550,
-    modulePreload: {
-      resolveDependencies(_filename, deps, { hostType }) {
-        /**
-         * Filter out heavy canvas/editor chunks from the eager HTML preload set.
-         *
-         * Vite's default behaviour emits modulepreload links in index.html for all
-         * dependency chunks reachable from any dynamic route in App.tsx. This caused
-         * ~919kB of canvas chunks (vendor-konva, app-export, vendor-fontkit, etc.) to be
-         * eagerly downloaded on first visit to the dashboard (`/`).
-         *
-         * Stripping them from index.html ensures the dashboard loads with minimal bytes;
-         * when the user opens `/room/:id`, the browser fetches the canvas chunks on demand.
-         */
-        if (hostType === 'html') {
-          return deps.filter(
-            (dep) =>
-              !dep.includes('vendor-konva') &&
-              !dep.includes('app-export') &&
-              !dep.includes('vendor-fontkit') &&
-              !dep.includes('vendor-motion') &&
-              !dep.includes('vendor-sentry') &&
-              // The dagre/mermaid diagram engine, 63 kB, reachable only from
-              // a board. It survived the first pass of this filter and was
-              // the largest thing still being preloaded for a dashboard that
-              // cannot draw a diagram.
-              !dep.includes('app-diagram') &&
-              !dep.includes('app-physics') &&
-              !dep.includes('app-pathEdit') &&
-              !dep.includes('app-toolbar') &&
-              !dep.includes('app-layers') &&
-              !dep.includes('app-properties') &&
-              !dep.includes('app-learn') &&
-              !dep.includes('app-table') &&
-              !dep.includes('app-templates') &&
-              !dep.includes('Room')
-          );
-        }
-        return deps;
-      },
-    },
-    rollupOptions: {
+    chunkSizeWarningLimit: 500,
+    rolldownOptions: {
       output: {
-        manualChunks(id) {
-          if (id.includes('node_modules')) {
-            // --- Vendor splits (heaviest first) ---
-            if (id.includes('konva') || id.includes('react-konva')) return 'vendor-konva';
-            if (id.includes('yjs') || id.includes('@hocuspocus') || id.includes('lib0')) return 'vendor-yjs';
-            if (id.includes('framer-motion')) return 'vendor-motion';
-            if (id.includes('lucide-react')) return 'vendor-icons';
-            // Named so it is legible in the bundle report -- rolldown was
-            // calling it `esm-<hash>.js`, which is 463 kB of unattributed
-            // mystery. It is reached only by the dynamic `import()` in
-            // `utils/observability.ts`, so it stays off the critical path.
-            if (id.includes('@sentry')) return 'vendor-sentry';
-            if (id.includes('matter-js')) return 'vendor-physics';
-            if (id.includes('perfect-freehand') || id.includes('polygon-clipping')) return 'vendor-drawing';
-            if (id.includes('lodash')) return 'vendor-lodash';
-            if (id.includes('rbush')) return 'vendor-spatial';
+        /**
+         * Named chunks, by priority.
+         *
+         * Each group also captures its modules' dependencies, so the order
+         * matters: a module goes to the highest-priority group that wants it.
+         * React, the store and the CRDT come first because the entry needs
+         * them; left to a lower group they were captured by the export chunk,
+         * and the dashboard had to import the exporter and Konva to render.
+         *
+         * `scripts/check-bundle.mjs` asserts the result: no `app-*` chunk and
+         * no Konva is statically reachable from the entry.
+         */
+        codeSplitting: {
+          groups: [
+            { name: 'vendor-react', priority: 100, test: inPackage('react', 'react-dom', 'scheduler', 'zustand', 'use-sync-external-store') },
+            { name: 'vendor-yjs', priority: 90, test: inPackage('yjs', '@hocuspocus/provider', '@hocuspocus/common', 'lib0', 'y-indexeddb', 'y-protocols') },
+            { name: 'vendor-konva', priority: 80, test: inPackage('konva', 'react-konva', 'react-konva-utils', 'react-reconciler', 'its-fine') },
+            { name: 'vendor-motion', priority: 80, test: inPackage('framer-motion', 'motion-dom', 'motion-utils') },
+            { name: 'vendor-icons', priority: 80, test: inPackage('lucide-react') },
+            // Reached only by the dynamic `import()` in `utils/observability.ts`.
+            { name: 'vendor-sentry', priority: 80, test: inPackage('@sentry', '@sentry-internal') },
+            { name: 'vendor-physics', priority: 80, test: inPackage('matter-js') },
+            { name: 'vendor-drawing', priority: 80, test: inPackage('perfect-freehand', 'polygon-clipping') },
+            { name: 'vendor-lodash', priority: 80, test: inPackage('lodash') },
+            { name: 'vendor-spatial', priority: 80, test: inPackage('rbush', 'quickselect') },
+            // The font parser and the Brotli decompressor it needs for `.woff2`;
+            // only "Convert to path" on a text object loads it.
+            { name: 'vendor-fontkit', priority: 80, test: inPackage('fontkit', 'brotli', 'unicode-trie', 'unicode-properties', 'restructure', 'dfa', 'tiny-inflate', 'clone', 'fast-deep-equal') },
             /**
-             * The font parser, and the Brotli decompressor it carries to read
-             * a `.woff2`. Only "Convert to path" on a text object ever needs
-             * it, so it is imported dynamically and named here — otherwise it
-             * shows up in the build as `browser-module`, which says nothing
-             * about what it is or why the bundle grew by 150 kB.
+             * Application code the entry needs to render at all: the store,
+             * the document layer, the app shell. Captured here, above the
+             * engine groups, so an engine chunk that shares one of these
+             * modules cannot claim it and drag itself onto the entry path.
              */
-            if (id.includes('fontkit') || id.includes('brotli') || id.includes('unicode-trie') || id.includes('unicode-properties') || id.includes('restructure') || id.includes('/dfa/')) return 'vendor-fontkit';
-          }
-
-          // --- Application-level splits for subsystems that are lazily
-          //     reachable or heavy enough to justify their own chunk ---
-          /**
-           * The export engine, minus the parts the live canvas shares with it.
-           *
-           * This rule used to be `includes('/engine/export/')` with no
-           * exceptions, and it quietly put the whole 440kB chunk on the
-           * critical path of every board *and* the dashboard. The cause was
-           * `chrome.ts`: 47 lines holding the name Konva tags interface nodes
-           * with, imported by twelve canvas components, and swept into the
-           * lazy chunk along with the PDF writer. One constant was enough to
-           * make the entire exporter a dependency of the first frame.
-           *
-           * These seven modules are shared with the canvas by nature rather
-           * than by accident -- they describe what is document and what is
-           * chrome, what a selection covers, how a restore lands. They are
-           * pure, they total under 900 lines, and none of them reaches an
-           * exporter. They belong wherever they are used.
-           *
-           * `exportChunking.test.ts` holds this: it fails if anything outside
-           * `engine/export/` starts importing a module that is not on this
-           * list, which is exactly how the regression happened the first time.
-           */
-          if (id.includes('/engine/export/') && !EXPORT_SHARED.test(id)) return 'app-export';
-          if (id.includes('/engine/diagram/')) return 'app-diagram';
-          if (id.includes('/engine/physics/')) return 'app-physics';
-          if (
-            id.includes('/engine/model/pathGeometry') ||
-            id.includes('/engine/model/pathBoolean') ||
-            id.includes('/engine/model/pathEditing')
-          ) return 'app-pathEdit';
-          if (
-            id.includes('/engine/model/rough.ts') ||
-            id.includes('/engine/model/roughShape')
-          ) return 'app-rough';
-          if (id.includes('/components/ObjectContextToolbar') || id.includes('/components/toolbar/')) return 'app-toolbar';
-          if (id.includes('/components/LayersPanel')) return 'app-layers';
-          if (id.includes('/components/PropertiesPanel')) return 'app-properties';
-          if (id.includes('/components/learn/')) return 'app-learn';
-          if (id.includes('/components/table/')) return 'app-table';
-          if (id.includes('/engine/templates/')) return 'app-templates';
+            { name: 'shell', priority: 50, tags: ['$initial'] },
+            /**
+             * The export engine, minus the modules the live canvas shares with
+             * it (`EXPORT_SHARED`). One shared constant left in the export
+             * chunk is enough to make the whole exporter a dependency of the
+             * first frame; `exportChunking.test.ts` holds the list in step with
+             * the source.
+             */
+            {
+              name: 'app-export',
+              priority: 10,
+              test: (id: string) => inSource(/\/engine\/export\//)(id) && !EXPORT_SHARED.test(posixId(id)),
+            },
+            { name: 'app-diagram', priority: 10, test: inSource(/\/engine\/diagram\//) },
+            { name: 'app-physics', priority: 10, test: inSource(/\/engine\/physics\//) },
+            { name: 'app-pathEdit', priority: 10, test: inSource(/\/engine\/model\/(pathGeometry|pathBoolean|pathEditing)/) },
+            { name: 'app-rough', priority: 10, test: inSource(/\/engine\/model\/(rough\.ts|roughShape)/) },
+            { name: 'app-templates', priority: 10, test: inSource(/\/engine\/templates\//) },
+            // Board panels, so the board route downloads as several parallel
+            // pieces instead of one 800 kB chunk. Safe now that `shell` holds
+            // everything the entry needs above them.
+            { name: 'app-toolbar', priority: 10, test: inSource(/\/components\/(ObjectContextToolbar|toolbar\/)/) },
+            { name: 'app-layers', priority: 10, test: inSource(/\/components\/LayersPanel/) },
+            { name: 'app-properties', priority: 10, test: inSource(/\/components\/(PropertiesPanel|panel\/)/) },
+            { name: 'app-learn', priority: 10, test: inSource(/\/components\/learn\//) },
+            { name: 'app-table', priority: 10, test: inSource(/\/components\/table\//) },
+          ],
         },
       },
     },

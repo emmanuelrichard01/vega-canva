@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useEffect, useRef, useState } from 'react';
+import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { provider } from '../engine/document';
 import { engineEvents } from '../engine/EventBus';
 import { nanoid } from 'nanoid';
@@ -14,8 +14,40 @@ interface Gesture {
   userId: number;
 }
 
+/**
+ * How one gesture tumbles, from its id.
+ *
+ * Fixed per gesture rather than drawn at render: the overlay re-renders on
+ * every camera change, and `Math.random()` in `animate` gave each in-flight
+ * emoji a new target scale and rotation on every frame of a pan. Derived from
+ * the id, so every viewer sees the same flourish.
+ */
+function flourish(id: string): { tilt: number; spin: number; grow: number } {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+  const unit = (shift: number) => ((h >>> shift) & 0xff) / 255;
+  return { tilt: unit(0) * 20 - 10, spin: unit(8) * 40 - 20, grow: 1.5 + unit(16) };
+}
+
+const GESTURE_KEYS: Record<string, string> = {
+  '1': '👏',
+  '2': '👍',
+  '3': '👀',
+  '4': '❤️',
+  '5': '🔥',
+};
+
+/** Whether a key press belongs to a field or a control rather than the board. */
+function isTypingTarget(el: Element | null): boolean {
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (el as HTMLElement).isContentEditable;
+}
+
 export const GestureOverlay: React.FC = () => {
   const [gestures, setGestures] = useState<Gesture[]>([]);
+  /** This overlay sits exactly on the stage's origin, rulers included. */
+  const layerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleAwarenessUpdate = () => {
@@ -69,32 +101,26 @@ export const GestureOverlay: React.FC = () => {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
-      
-      const gesturesMap: Record<string, string> = {
-        '1': '👏',
-        '2': '👍',
-        '3': '👀',
-        '4': '❤️',
-        '5': '🔥'
-      };
-
-      if (gesturesMap[e.key]) {
-        setActiveGesture(gesturesMap[e.key]);
-      }
+      // Ctrl/Cmd+digit are zoom shortcuts, and Alt/Shift+digit type characters.
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      if (isTypingTarget(document.activeElement)) return;
+      const emoji = GESTURE_KEYS[e.key];
+      if (emoji) setActiveGesture(emoji);
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (['1', '2', '3', '4', '5'].includes(e.key)) {
-        setActiveGesture(null);
-      }
+      if (GESTURE_KEYS[e.key]) setActiveGesture(null);
     };
+    // A key released while the window is in the background never sends keyup.
+    const handleBlur = () => setActiveGesture(null);
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
     };
   }, []);
 
@@ -102,9 +128,11 @@ export const GestureOverlay: React.FC = () => {
     if (!activeGesture) return;
 
     const handlePointerDown = (e: MouseEvent) => {
-      // Calculate world coordinates
-      const x = (e.clientX - cameraSystem.x) / cameraSystem.zoom;
-      const y = (e.clientY - cameraSystem.y) / cameraSystem.zoom;
+      // World coordinates, measured from the stage's origin rather than the
+      // window's: the rulers and the page chrome sit between the two.
+      const origin = layerRef.current?.getBoundingClientRect();
+      const x = (e.clientX - (origin?.left ?? 0) - cameraSystem.x) / cameraSystem.zoom;
+      const y = (e.clientY - (origin?.top ?? 0) - cameraSystem.y) / cameraSystem.zoom;
 
       const newGesture = {
         id: nanoid(),
@@ -133,20 +161,22 @@ export const GestureOverlay: React.FC = () => {
   }, []);
 
   return (
-    <>
+    <MotionConfig reducedMotion="user">
       <div
+        ref={layerRef}
         style={{ pointerEvents: 'none', position: 'absolute', inset: 0, zIndex: 50, overflow: 'hidden' }}
       >
         <AnimatePresence>
           {gestures.map(g => {
             const screenX = (g.x * cameraSystem.zoom) + cameraSystem.x;
             const screenY = (g.y * cameraSystem.zoom) + cameraSystem.y;
+            const { tilt, spin, grow } = flourish(g.id);
 
             return (
               <motion.div
                 key={g.id}
-                initial={{ opacity: 0, y: 20, scale: 0.5, rotate: Math.random() * 20 - 10 }}
-                animate={{ opacity: 1, y: -40, scale: 1.5 + Math.random(), rotate: Math.random() * 40 - 20 }}
+                initial={{ opacity: 0, y: 20, scale: 0.5, rotate: tilt }}
+                animate={{ opacity: 1, y: -40, scale: grow, rotate: spin }}
                 exit={{ opacity: 0, y: -100, scale: 0.8 }}
                 transition={{ duration: 1.5, ease: 'easeOut' }}
                 style={{
@@ -173,9 +203,9 @@ export const GestureOverlay: React.FC = () => {
             exit={{ opacity: 0, y: 10 }}
             style={{
               position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
-              background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)', color: '#FFFFFF',
-              padding: '12px 24px', borderRadius: 999, fontSize: 13, fontWeight: 500, zIndex: 50,
-              boxShadow: '0 20px 40px rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', gap: 12,
+              background: 'var(--surface-inverse)', color: 'var(--text-inverse)',
+              padding: '12px 24px', borderRadius: 'var(--radius-pill)', fontSize: 13, fontWeight: 500, zIndex: 50,
+              boxShadow: 'var(--shadow-overlay)', display: 'flex', alignItems: 'center', gap: 12,
             }}
           >
             <span style={{ fontSize: 24 }}>{activeGesture}</span>
@@ -183,6 +213,6 @@ export const GestureOverlay: React.FC = () => {
           </motion.div>
         )}
       </AnimatePresence>
-    </>
+    </MotionConfig>
   );
 };

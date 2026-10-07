@@ -7,6 +7,11 @@ export interface NodeChangeSet {
   changed: Set<string>;
   /** Ids removed from the document. */
   removed: Set<string>;
+  /**
+   * Whether this client made the change: its own edit, an undo or a local
+   * migration. False for updates from the server or another tab.
+   */
+  local: boolean;
 }
 
 /**
@@ -60,14 +65,15 @@ export function observeNodes(handler: (changes: NodeChangeSet) => void): () => v
           }
         });
       } else {
-        const rootId = resolveRootId(event.target);
+        const rootId = rootIdOf(event);
         // A node deleted in the same transaction that touched its internals
         // must not be resurrected into `changed`.
         if (rootId && objectsMap.has(rootId)) changed.add(rootId);
       }
     });
 
-    if (changed.size > 0 || removed.size > 0) handler({ changed, removed });
+    const local = events[0]?.transaction.local ?? true;
+    if (changed.size > 0 || removed.size > 0) handler({ changed, removed, local });
   };
 
   objectsMap.observeDeep(listener);
@@ -86,4 +92,17 @@ export function observeGroups(handler: (groups: Record<string, GroupRecord>) => 
   const listener = () => handler(Object.fromEntries(groupsMap.entries()));
   groupsMap.observe(listener);
   return () => groupsMap.unobserve(listener);
+}/**
+ * The id of the node that owns a nested change.
+ *
+ * Inside an `observeDeep` callback an event's `path` runs from the observed
+ * type, so its first step is the key in `objectsMap`: O(1), however large the
+ * board. A change to `node.appearance.stroke.width` reports the nested map as
+ * its target, and this is how it is credited to the node.
+ */
+function rootIdOf(event: Y.YEvent<any>): string | null {
+  const first = event.path[0];
+  return typeof first === 'string' ? first : null;
 }
+
+

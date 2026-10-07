@@ -3,17 +3,15 @@ import { updateNode, applyNodePatches, applyGroupPlan, renameGroup, provider } f
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { useStore } from '../hooks/useStore';
 import { editor } from '../engine/api/EditorAPI';
-import { Type, Square, Image as ImageIcon, StickyNote, Mic, LayoutTemplate, MessageSquare, PenTool, Lock, Unlock, Copy, Trash2, Eye, EyeOff, Layers, Folder, FolderOpen, Ungroup, Frame as FrameIcon, ChevronRight, ChevronDown, Search, X, PanelLeftClose, Spline, LayoutGrid } from 'lucide-react';
+import { Type, Square, Image as ImageIcon, StickyNote, Mic, LayoutTemplate, MessageSquare, PenTool, Lock, Unlock, Copy, Trash2, Eye, EyeOff, Folder, FolderOpen, Ungroup, Frame as FrameIcon, ChevronRight, ChevronDown, Search, X, PanelLeftClose, Spline, LayoutGrid, ListFilter, BarChart3, Table2, Code2, Link2 } from 'lucide-react';
 import { GRID_LABELS } from '../engine/grid/gridLayout';
 import { nanoid } from 'nanoid';
 import { type AnyNode, type NodeType } from '../engine/model/schema';
 import { nodeLabel } from '../engine/model/nodeLabel';
-import { paintColor } from '../engine/model/paint';
 import { readableOn } from '../engine/model/color';
 import { getColorForUser } from '../engine/presence/ColorPalette';
 import { dropZone, planLayerDrop, type DropRow, type DropWhere } from '../engine/model/layerDrop';
 import { childGroups, nodesInGroup, planUngroup } from '../engine/model/groupTree';
-import { THEMES } from '../engine/model/stickyThemes';
 import { tagFilter } from '../engine/model/tagFilter';
 import { tagCounts } from '../engine/model/tags';
 import {
@@ -26,10 +24,21 @@ import {
 import { useVirtualRows } from '../hooks/useVirtualRows';
 // Shared, and typed so a new node type cannot go chip-less again.
 import { TYPE_LABEL, TYPE_ORDER } from '../engine/model/nodeLabel';
+import { compareStacking } from '../engine/model/stacking';
+import { FeatureBoundary } from './ui/FeatureBoundary';
+import { Menu } from './menu/Menu';
+import type { MenuEntry } from './menu/menuModel';
+import { SegmentedControl } from './ui/SegmentedControl';
+import { layerHover } from '../engine/interaction/layerHover';
+import { FramesOutline, useFrameStepping } from './layers/FramesOutline';
+import { storageGet, storageSet } from '../utils/safeStorage';
+import './layers/layers.css';
 
-/** Row pitch, in px. Uniform by design so the list can be windowed. */
+/**
+ * Row pitch, in px: a 32px row and a 4px gap, set in layers.css. Uniform by
+ * design so the list can be windowed; change both together.
+ */
 const ROW_HEIGHT = 36;
-const ROW_GAP = 4;
 
 /**
  * One glyph size for this panel's chrome.
@@ -40,6 +49,38 @@ const ROW_GAP = 4;
  */
 const PANEL_ICON = 14;
 
+type PeerEditor = { name: string; color: string };
+
+/**
+ * Who else has what selected, as a string that changes only when that does.
+ *
+ * Awareness changes at cursor rate; a string snapshot lets
+ * `useSyncExternalStore` re-render this panel only when a peer's selection,
+ * name or colour actually changed. Peers publish their selection as
+ * `selection`, an array.
+ */
+function subscribeAwareness(onChange: () => void): () => void {
+  const awareness = provider.awareness;
+  if (!awareness) return () => {};
+  awareness.on('change', onChange);
+  return () => awareness.off('change', onChange);
+}
+
+function readPeerSelections(): string {
+  const awareness = provider.awareness;
+  if (!awareness) return '[]';
+  const mine = awareness.clientID;
+  const out: [string, string, string[]][] = [];
+  awareness.getStates().forEach((state: any, clientId: number) => {
+    if (clientId === mine || !state.user || !Array.isArray(state.selection) || state.selection.length === 0) return;
+    // A peer whose colour has not arrived yet gets the colour every other
+    // surface will show for them a moment later.
+    const color = state.user.color || getColorForUser(String(clientId));
+    out.push([state.user.name || 'Peer', color, state.selection]);
+  });
+  return JSON.stringify(out);
+}
+
 interface LayersPanelProps {
   selectedIds: string[];
   overrideObjects?: Record<string, any> | null;
@@ -49,7 +90,7 @@ interface LayersPanelProps {
   onCollapse?: () => void;
 }
 
-export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideObjects, setSelectedId, setSelectedIds, onCollapse }) => {
+const LayersPanelInner: React.FC<LayersPanelProps> = ({ selectedIds, overrideObjects, setSelectedId, setSelectedIds, onCollapse }) => {
   // Was its own independent Yjs subscription (useCanvasObjects), parallel to
   // and redundant with the store every other panel reads from — same data,
   // maintained twice. Nothing kept the two in sync on purpose; they only ever
@@ -98,6 +139,21 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   const [dropHint, setDropHint] = useState<{ id: string; where: DropWhere } | null>(null);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [titleInput, setTitleInput] = useState('');
+  const [filterOpen, setFilterOpen] = useState(false);
+  const filterButtonRef = useRef<HTMLButtonElement>(null);
+  /** Layers is the whole tree; Frames is a jump list of the board's frames. */
+  const [mode, setModeState] = useState<'layers' | 'frames'>(() =>
+    storageGet('vega.layers.mode') === 'frames' ? 'frames' : 'layers'
+  );
+  const setMode = (next: 'layers' | 'frames') => {
+    setModeState(next);
+    storageSet('vega.layers.mode', next);
+  };
+  // The hover outline belongs to this panel's rows; it must not outlive them.
+  useEffect(() => () => layerHover.clearPanel(), []);
+  useFrameStepping(objects, selectedIds, mode === 'frames');
+  const hover = useSyncExternalStore(layerHover.subscribe, layerHover.getSnapshot, layerHover.getSnapshot);
+  const canvasHovered = hover?.source === 'canvas' ? hover.ids[0] : null;
   // Which frames are folded shut. A way of looking, not a fact about the
   // document — collapsing a frame to get it out of your way must not fold it
   // for everyone else in the room, so this never goes near the CRDT.
@@ -105,65 +161,30 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   // Shift-range-select anchor — the last item clicked without a modifier key.
   const lastClickedRef = useRef<string | null>(null);
 
-  // Filter out non-document objects and sort by zIndex descending
-  const sortedObjects = Object.values(objects)
-    .filter((obj: any) => obj.type !== 'eraser_tool' && obj.type !== 'selection_box')
-    .sort((a: any, b: any) => (b.zIndex || 0) - (a.zIndex || 0));
+  // Document objects, top of the stack first. Memoised on the map so every
+  // memo below that depends on it can actually hit (a drag over the list
+  // re-renders on each `setDropHint`).
+  const sortedObjects = useMemo(
+    () =>
+      Object.values(objects)
+        .filter((obj: any) => obj.type !== 'eraser_tool' && obj.type !== 'selection_box')
+        .sort((a: any, b: any) => compareStacking(b, a)),
+    [objects]
+  );
 
-  // Determine active collaborators editing objects
-  const awarenessStates = provider.awareness?.getStates();
-  const myClientId = provider.awareness?.clientID;
-  const activeEditorsMap = new Map<string, { name: string; color: string }>();
-
-  (awarenessStates || new Map()).forEach((state: any, clientId: number) => {
-    // Canvas.tsx broadcasts the local selection as `selection` (an array —
-    // peers can multi-select too), never a singular `selectedId`. Reading
-    // that field name meant this map was always empty and the "so-and-so is
-    // editing this" badge below never rendered for anyone.
-    if (clientId !== myClientId && state.user && Array.isArray(state.selection)) {
-      state.selection.forEach((id: string) => {
-        activeEditorsMap.set(id, {
-          name: state.user.name || 'Peer',
-          // Derived from the peer's own id rather than a literal pink, so a
-          // peer whose colour has not arrived yet still gets the colour every
-          // other surface will show for them a moment later.
-          color: state.user.color || getColorForUser(String(clientId)),
-        });
-      });
+  // Who else is editing what, for the "so-and-so is editing this" badge.
+  const peerSelections = useSyncExternalStore(subscribeAwareness, readPeerSelections, readPeerSelections);
+  const activeEditorsMap = useMemo(() => {
+    const map = new Map<string, PeerEditor>();
+    for (const [name, color, selection] of JSON.parse(peerSelections) as [string, string, string[]][]) {
+      for (const id of selection) map.set(id, { name, color });
     }
-  });
-
-  /**
-   * The colour that stands for an object in the list.
-   *
-   * Its own fill wherever it has one, so a panel of default-named objects —
-   * six rows all reading "Shape" — is scannable by the thing that actually
-   * distinguishes them on the board. Falls back to a neutral for the types
-   * that have no colour of their own rather than inventing one.
-   */
-  const layerTint = (node: any): string => {
-    const raw = (() => {
-      if (node.type === 'sticky') return THEMES[node.theme as keyof typeof THEMES]?.bg ?? '#FDE047';
-      const paint = node.appearance;
-      const fill = paint?.fill?.[0];
-      if (fill) return paintColor(fill, '');
-      if (paint?.stroke?.color) return paint.stroke.color;
-      if (node.type === 'text') return node.typography?.color ?? '';
-      return '';
-    })();
-    // No colour of its own: inherit the row's, rather than inventing one.
-    if (!raw || !raw.startsWith('#')) return 'var(--text-secondary)';
-    // A near-black object on a dark panel produced an icon that was correct
-    // and invisible. Lifted until it clears a minimum contrast, in HSV so the
-    // hue survives — a dark blue stays blue instead of becoming grey.
-    return readableOn(raw, darkTheme);
-  };
+    return map;
+  }, [peerSelections]);
 
   const getIcon = (type: string) => {
-    // `currentColor`, so the glyph takes the tint its wrapper carries — which
-    // is the object's own fill. This used to take a colour argument chosen
-    // from whether the row was selected, back when selection was a solid
-    // amber slab that the icon had to stay legible against.
+    // `currentColor`: glyphs are one ink, set by the row, so the list stays
+    // monochrome and the board is the only coloured thing on screen.
     const c = 'currentColor';
     switch (type) {
       case 'text': return <Type size={14} color={c} />;
@@ -177,6 +198,10 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       case 'comment': return <MessageSquare size={14} color={c} />;
       case 'connector': return <Spline size={14} color={c} />;
       case 'grid': return <LayoutGrid size={14} color={c} />;
+      case 'chart': return <BarChart3 size={14} color={c} />;
+      case 'table': return <Table2 size={14} color={c} />;
+      case 'code': return <Code2 size={14} color={c} />;
+      case 'link': return <Link2 size={14} color={c} />;
       default: return <Square size={14} color={c} />;
     }
   };
@@ -184,6 +209,20 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   // Naming lives in engine/model/nodeLabel so the session timeline describes
   // objects with exactly the words this panel uses.
   const getName = nodeLabel;
+
+  /** Open a row's name for editing, seeded with what the row shows. */
+  const startRename = (id: string) => {
+    const group = groups[id];
+    setTitleInput(group ? group.name ?? '' : objects[id] ? getName(objects[id]) : '');
+    setEditingTitleId(id);
+  };
+
+  /** Write a new name, or nothing when it is empty or unchanged. */
+  const commitRename = (obj: AnyNode) => {
+    const next = titleInput.trim();
+    if (next && next !== getName(obj)) updateNode(obj.id, { title: next });
+    setEditingTitleId(null);
+  };
 
   /**
    * Dragging rows: reorder, and move between groups.
@@ -782,8 +821,47 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     return TYPE_ORDER.filter((t) => seen.has(t));
   }, [sortedObjects]);
 
+  const filterCount = (typeFilter === 'all' ? 0 : 1) + activeTags.size;
+  const filterLabels = [
+    ...(typeFilter === 'all' ? [] : [TYPE_LABEL[typeFilter as NodeType] ?? typeFilter]),
+    ...[...activeTags].map((t) => `#${t}`),
+  ];
+  const filterEntries: MenuEntry[] = [];
+  if (presentTypes.length > 1) {
+    filterEntries.push(
+      { kind: 'heading', id: 'h-type', label: 'Type' },
+      { kind: 'item', id: 't-all', label: 'All types', checked: typeFilter === 'all', keepOpen: true, onSelect: () => setTypeFilter('all') },
+      ...presentTypes.map((t): MenuEntry => ({
+        kind: 'item',
+        id: `t-${t}`,
+        label: TYPE_LABEL[t] ?? t,
+        checked: typeFilter === t,
+        keepOpen: true,
+        onSelect: () => setTypeFilter(typeFilter === t ? 'all' : t),
+      }))
+    );
+  }
+  if (allTags.length > 0) {
+    if (filterEntries.length > 0) filterEntries.push({ kind: 'separator', id: 's-tags' });
+    filterEntries.push(
+      { kind: 'heading', id: 'h-tags', label: 'Tags' },
+      ...allTags.map(({ tag, count }): MenuEntry => ({
+        kind: 'item',
+        id: `tag-${tag}`,
+        label: `#${tag}`,
+        detail: String(count),
+        checked: activeTags.has(tag),
+        keepOpen: true,
+        onSelect: () => tagFilter.toggle(tag),
+      }))
+    );
+  }
+
   const { containerRef, window: vwindow } = useVirtualRows(flatRows.length, ROW_HEIGHT);
   const visibleRows = flatRows.slice(vwindow.start, vwindow.end);
+  const cursorRendered = Boolean(
+    lastClickedRef.current ?? selectedIds[selectedIds.length - 1]
+  ) && visibleRows.some((r) => r.kind !== 'group' && r.obj.id === (lastClickedRef.current ?? selectedIds[selectedIds.length - 1]));
 
   /**
    * Driving the panel from the keyboard.
@@ -841,6 +919,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       lastClickedRef.current = id;
     }
     revealRow(id);
+    layerHover.set(id);
   };
 
   /** Restack the selection one place, without collapsing it into one slot. */
@@ -901,6 +980,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   };
 
   const handleTreeKeyDown = (e: React.KeyboardEvent) => {
+    // Alt+arrows step through frames; the tree leaves them to that.
+    if (e.altKey) return;
     // While a row is being renamed the keyboard belongs to that input — ↑ and
     // ↓ move the caret, and Escape cancels the rename rather than the
     // selection.
@@ -971,10 +1052,11 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
         }
         return;
       case 'Enter':
+      case 'F2':
         if (cursorId) {
           e.preventDefault();
-        e.stopPropagation();
-          setEditingTitleId(cursorId);
+          e.stopPropagation();
+          startRename(cursorId);
         }
         return;
       case ' ':
@@ -1012,6 +1094,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
           lastClickedRef.current = id;
         }
         revealRow(id);
+        layerHover.set(id);
         return;
       }
       case 'a':
@@ -1080,16 +1163,16 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
         onDrop={handleDrop}
         onDragEnd={handleDragEnd}
         onClick={(e) => handleRowClick(e, obj.id)}
-        className={`layer-row${isSelected ? ' is-selected' : ''}${obj.id === cursorId ? ' is-cursor' : ''}`}
-        style={{
-          padding: '0 12px 0 ' + (12 + indent) + 'px',
-          // Fixed height is what makes virtualization possible — see the
-          // flattening above and useVirtualRows.
-          height: ROW_HEIGHT - ROW_GAP,
-          marginBottom: ROW_GAP,
-          color: obj.locked ? 'var(--text-secondary)' : 'var(--text-primary)',
-          opacity: obj.hidden ? 0.45 : (draggedId === obj.id ? 0.4 : 1),
-        }}
+        onMouseEnter={() => layerHover.set(obj.id)}
+        onMouseLeave={() => layerHover.clearPanel()}
+        role="treeitem"
+        aria-selected={isSelected}
+        className={`layer-row${isSelected ? ' is-selected' : ''}${obj.id === cursorId ? ' is-cursor' : ''}${obj.locked ? ' is-locked' : ''}${canvasHovered === obj.id ? ' is-hovered' : ''}`}
+        data-hidden={obj.hidden || undefined}
+        data-dragging={draggedId === obj.id || undefined}
+        // The indent is data: one custom property, read by the row's padding
+        // and by its drop line. Height and gap are fixed in CSS for the windowing.
+        style={{ '--indent': `${12 + indent}px` } as React.CSSProperties}
       >
         {/**
           * Where the row would land, drawn in the gap rather than on the row.
@@ -1108,21 +1191,13 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
           * dropping into as clearly as its vertical position says where.
           */}
         {rowEdge && (
-          <span
-            className="layer-drop-line"
-            data-edge={rowEdge}
-            style={{ left: 12 + indent }}
-            aria-hidden
-          />
+          <span className="layer-drop-line" data-edge={rowEdge} aria-hidden />
         )}
         {/* Every row reserves the twisty slot, whether or not it has one, so a
             frame's icon sits on the same vertical line as its siblings' rather
             than shunted right by the width of a chevron. */}
         {disclosure ?? <span aria-hidden />}
-        <span
-          className="layer-row__icon"
-          style={{ color: layerTint(obj), background: `color-mix(in srgb, ${layerTint(obj)} 16%, transparent)` }}
-        >
+        <span className="layer-row__icon">
           {getIcon(obj.type)}
         </span>
 
@@ -1131,42 +1206,31 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
             type="text"
             value={titleInput}
             onChange={(e) => setTitleInput(e.target.value)}
-            onBlur={() => {
-              if (titleInput.trim()) updateNode(obj.id, { title: titleInput.trim() });
-              setEditingTitleId(null);
-            }}
+            onBlur={() => commitRename(obj)}
+            onClick={(e) => e.stopPropagation()}
+            onFocus={(e) => e.currentTarget.select()}
             onKeyDown={(e) => {
+              e.stopPropagation();
               if (e.key === 'Enter') {
-                if (titleInput.trim()) updateNode(obj.id, { title: titleInput.trim() });
+                e.preventDefault();
+                commitRename(obj);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
                 setEditingTitleId(null);
               }
             }}
+            aria-label={`Rename ${getName(obj)}`}
             autoFocus
             className="layer-rename"
           />
         ) : (
-          <span
-            onDoubleClick={() => {
-              setEditingTitleId(obj.id);
-              setTitleInput(getName(obj));
-            }}
-            className="layer-row__name"
-            style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textDecoration: obj.locked ? 'line-through' : 'none' }}
-            data-tooltip="Double click to rename"
-          >
+          <span onDoubleClick={() => startRename(obj.id)} className="layer-row__name">
             {/* The matched characters are marked, which is what makes a
                 subsequence match legible: `sbm` finding "Submit Button" reads
                 as a bug until you can see which letters it matched. */}
             {highlightRuns(getName(obj), matches?.get(obj.id)?.positions ?? []).map((run, i) =>
               run.hit ? (
-                <mark
-                  key={i}
-                  style={{
-                    background: 'transparent',
-                    color: 'var(--brand-orange)',
-                    fontWeight: 700,
-                  }}
-                >
+                <mark key={i} className="layer-match">
                   {run.text}
                 </mark>
               ) : (
@@ -1235,12 +1299,19 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', userSelect: 'none', background: 'transparent' }}>
-      {/* HEADER */}
+    <div className="layers-panel">
       <div className="panel-head">
-        <Layers size={PANEL_ICON} className="panel-head__mark" aria-hidden />
-        <span className="panel-head__title">Layers</span>
-        {onCollapse && selectedIds.length <= 1 && (
+        <SegmentedControl
+          ariaLabel="Show"
+          value={mode}
+          onChange={(v) => setMode(v as 'layers' | 'frames')}
+          segments={[
+            { value: 'layers', label: 'Layers' },
+            { value: 'frames', label: 'Frames' },
+          ]}
+        />
+        <span className="panel-head__spacer" />
+        {onCollapse && (
           <button
             className="btn-icon btn-icon--sm"
             onClick={onCollapse}
@@ -1250,119 +1321,107 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
             <PanelLeftClose size={PANEL_ICON} />
           </button>
         )}
-        {selectedIds.length > 1 && (
-          <div className="panel-head__actions">
-            <span className="panel-head__count">{selectedIds.length} selected</span>
-            <button className="btn-icon btn-icon--sm" onClick={handleBulkDuplicate} data-tooltip="Duplicate selected (Cmd+D)" aria-label="Duplicate selected">
-              <Copy size={PANEL_ICON} />
-            </button>
-            <button className="btn-icon btn-icon--sm" style={{ color: 'var(--status-danger)' }} onClick={handleBulkDelete} data-tooltip="Delete selected (Del)" aria-label="Delete selected">
-              <Trash2 size={PANEL_ICON} />
-            </button>
-          </div>
-        )}
       </div>
 
-      {/* Search.
-          Subsequence matching, so `sbm` finds "Submit Button" — the behaviour
-          every command palette has and the one people arrive expecting. The
-          type chips beside it answer the other half of the question the brief
-          asks: "show me only the text layers". */}
-      <div className="layer-search">
-        <Search size={PANEL_ICON} className="layer-search__icon" aria-hidden />
-        <input
-          ref={searchRef}
-          type="search"
-          className="layer-search__input"
-          placeholder="Search layers"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            // Escape clears before it blurs: the first press should undo the
-            // filter, which is what you want when you cannot find the thing
-            // you were looking for.
-            if (e.key === 'Escape') {
-              if (query) {
-                e.stopPropagation();
-                setQuery('');
-              } else {
-                e.currentTarget.blur();
-              }
-            }
-            // Enter selects everything the search found, which turns a search
-            // into a selection in one keystroke.
-            if (e.key === 'Enter' && matches && matches.size > 0 && setSelectedIds) {
-              e.preventDefault();
-              setSelectedIds(Array.from(matches.keys()));
-            }
-            // The canvas listens for plain keys as tool shortcuts. Without
-            // this, typing "r" into the box also picks the rectangle tool.
-            e.stopPropagation();
-          }}
-          aria-label="Search layers by name"
+      {mode === 'frames' ? (
+        <FramesOutline
+          objects={objects}
+          selectedIds={selectedIds}
+          onSelect={(id) => (setSelectedIds ? setSelectedIds([id]) : setSelectedId(id))}
         />
-        {isFiltering(query, typeFilter) && (
-          <button
-            type="button"
-            className="layer-search__clear"
-            onClick={() => {
-              setQuery('');
-              setTypeFilter('all');
+      ) : (
+      <>
+      {/* Search, with one Filter control for type and tags beside it. Subsequence
+          matching, so "sbm" finds "Submit Button". */}
+      <div className="layer-search-row">
+        <div className="layer-search">
+          <Search size={PANEL_ICON} className="layer-search__icon" aria-hidden />
+          <input
+            ref={searchRef}
+            type="search"
+            className="layer-search__input"
+            placeholder="Search layers"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              // Escape clears before it blurs, so the first press undoes the search.
+              if (e.key === 'Escape') {
+                if (query) {
+                  e.stopPropagation();
+                  setQuery('');
+                } else {
+                  e.currentTarget.blur();
+                }
+              }
+              // Enter selects everything the search found.
+              if (e.key === 'Enter' && matches && matches.size > 0 && setSelectedIds) {
+                e.preventDefault();
+                setSelectedIds(Array.from(matches.keys()));
+              }
+              // Plain keys are tool shortcuts on the canvas; typing here must not pick a tool.
+              e.stopPropagation();
             }}
-            aria-label="Clear search and type filter"
+            aria-label="Search layers by name"
+          />
+          {query && (
+            <button type="button" className="layer-search__clear" onClick={() => setQuery('')} aria-label="Clear search">
+              <X size={12} />
+            </button>
+          )}
+        </div>
+        {(presentTypes.length > 1 || allTags.length > 0) && (
+          <button
+            ref={filterButtonRef}
+            type="button"
+            className="btn-icon btn-icon--sm layer-filter-btn"
+            aria-haspopup="menu"
+            aria-expanded={filterOpen}
+            aria-label={filterCount > 0 ? `Filter, ${filterCount} active` : 'Filter by type or tag'}
+            data-tooltip="Filter"
+            data-active={filterCount > 0 || undefined}
+            onClick={() => setFilterOpen((v) => !v)}
           >
-            <X size={12} />
+            <ListFilter size={PANEL_ICON} />
+            {filterCount > 0 && <span className="layer-filter-btn__count">{filterCount}</span>}
           </button>
         )}
       </div>
 
-      {/* Only the types actually present. A chip for a node type nobody has
-          used is a filter guaranteed to return nothing. */}
-      {presentTypes.length > 1 && (
-        <div className="layer-type-filter">
-          {(['all', ...presentTypes] as LayerTypeFilter[]).map((t) => (
-            <button
-              key={t}
-              type="button"
-              className="layer-type-chip"
-              data-active={typeFilter === t || undefined}
-              aria-pressed={typeFilter === t}
-              onClick={() => setTypeFilter(t)}
-            >
-              {t === 'all' ? 'All' : TYPE_LABEL[t] ?? t}
-            </button>
-          ))}
+      {selectedIds.length > 1 && (
+        <div className="layer-bulk" role="group" aria-label="Selected layers">
+          <span className="layer-bulk__count">{selectedIds.length} selected</span>
+          <button className="btn-icon btn-icon--sm" onClick={handleBulkDuplicate} data-tooltip="Duplicate selected (Cmd+D)" aria-label="Duplicate selected">
+            <Copy size={PANEL_ICON} />
+          </button>
+          <button className="btn-icon btn-icon--sm layer-bulk-delete" onClick={handleBulkDelete} data-tooltip="Delete selected (Del)" aria-label="Delete selected">
+            <Trash2 size={PANEL_ICON} />
+          </button>
         </div>
       )}
 
-      {/* Tag filter.
-          Tags were on the schema for the project's whole life with nothing to
-          act on them, which made them decoration. This is the thing that makes
-          them worth typing: pick tags and the board dims everything else, so
-          you can see the matches *in place* rather than as a list somewhere. */}
-      {allTags.length > 0 && (
-        <div className="tag-filter">
-          <div className="tag-filter-row">
-            {allTags.map(({ tag, count }) => (
-              <button
-                key={tag}
-                type="button"
-                className="tag-filter-chip"
-                data-active={activeTags.has(tag) || undefined}
-                aria-pressed={activeTags.has(tag)}
-                onClick={() => tagFilter.toggle(tag)}
-              >
-                {tag}
-                <span className="tag-filter-count">{count}</span>
-              </button>
-            ))}
-          </div>
-          {activeTags.size > 0 && (
-            <button type="button" className="tag-filter-clear" onClick={() => tagFilter.clear()}>
-              Clear filter
-            </button>
-          )}
+      {filterCount > 0 && (
+        <div className="layer-filter-strip" role="status">
+          <span className="layer-filter-strip__text">Filtered: {filterLabels.join(', ')}</span>
+          <button
+            type="button"
+            className="layer-filter-strip__clear"
+            onClick={() => {
+              setTypeFilter('all');
+              tagFilter.clear();
+            }}
+          >
+            Clear
+          </button>
         </div>
+      )}
+
+      {filterOpen && filterButtonRef.current && (
+        <Menu
+          entries={filterEntries}
+          label="Filter layers"
+          anchor={{ kind: 'rect', rect: filterButtonRef.current.getBoundingClientRect(), align: 'end' }}
+          onClose={() => setFilterOpen(false)}
+        />
       )}
 
       <div
@@ -1373,8 +1432,13 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
         // the tree could be clicked but never driven: keyboard focus skipped
         // straight from the search box to the first row's eye toggle.
         tabIndex={0}
-        aria-activedescendant={cursorId ? `layer-row-${cursorId}` : undefined}
+        // Only a row that is actually rendered: the list is windowed.
+        aria-activedescendant={cursorRendered ? `layer-row-${cursorId}` : undefined}
         onKeyDown={handleTreeKeyDown}
+        onScroll={() => layerHover.clearPanel()}
+        onBlur={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) layerHover.clearPanel();
+        }}
         /**
          * The empty space below the last row is a drop target too.
          *
@@ -1397,13 +1461,10 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
         }}
         onDrop={handleDrop}
         onDragEnd={handleDragEnd}
-        style={{ padding: 'var(--space-1)', overflowY: 'auto', overflowX: 'hidden', flex: 1 }}
         className="custom-scrollbar layers-tree"
       >
         {sortedObjects.length === 0 ? (
-          <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '40px', fontSize: 'var(--text-sm)' }}>
-            Canvas is empty
-          </div>
+          <div className="layer-search-empty">The board is empty. Anything you add appears here.</div>
         ) : flatRows.length === 0 ? (
           /* A filter that matched nothing is a different screen from an empty
              canvas, and saying so is the difference between "there is nothing
@@ -1435,12 +1496,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                       disabled={item.childCount === 0}
                       aria-expanded={item.childCount === 0 ? undefined : !collapsed}
                       aria-label={collapsed ? `Expand ${getName(item.obj)}` : `Collapse ${getName(item.obj)}`}
-                      style={{
-                        background: 'transparent', border: 'none', padding: 0, display: 'flex',
-                        color: 'inherit', width: 14, flexShrink: 0,
-                        cursor: item.childCount === 0 ? 'default' : 'pointer',
-                        visibility: item.childCount === 0 ? 'hidden' : 'visible',
-                      }}
+                      className="layer-twisty"
+                      data-empty={item.childCount === 0 || undefined}
                     >
                       {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                     </button>
@@ -1489,16 +1546,13 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                     onDrop={handleDrop}
                     onDragEnd={handleDragEnd}
                     onClick={(e) => handleGroupClick(e, memberIds)}
+                    onMouseEnter={() => layerHover.set(memberIds)}
+                    onMouseLeave={() => layerHover.clearPanel()}
                     className={`layer-row layer-row--group${groupSelected ? ' is-selected' : ''}${
                       hint === 'inside' ? ' is-drop-into' : ''
                     }`}
-                    style={{
-                      padding: '0 8px 0 ' + (12 + item.indent) + 'px',
-                      height: ROW_HEIGHT - ROW_GAP,
-                      marginBottom: ROW_GAP,
-                      fontWeight: 'var(--weight-semibold)',
-                      opacity: memberIds.includes(draggedId ?? '') ? 0.4 : 1,
-                    }}
+                    data-dragging={memberIds.includes(draggedId ?? '') || undefined}
+                    style={{ '--indent': `${12 + item.indent}px` } as React.CSSProperties}
                   >
                     {/* The folder's top edge is how something leaves the group:
                         above the folder is not in the folder. Its bottom edge
@@ -1508,39 +1562,27 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                       <span
                         className="layer-drop-line"
                         data-edge={groupEdge}
-                        // Its bottom edge indents to the members' level when
-                        // the folder is open, because that is where the drop
-                        // would land — inside, at the top.
-                        style={{
-                          left:
-                            12 + item.indent +
-                            (groupEdge === 'after' && !collapsedFrames.has(item.groupId) ? 20 : 0),
-                        }}
+                        // Below an open folder, the drop lands inside it, so the
+                        // line indents to the members' level.
+                        data-into={(groupEdge === 'after' && !collapsedFrames.has(item.groupId)) || undefined}
                         aria-hidden
                       />
                     )}
                     <button
                       onClick={(e) => { e.stopPropagation(); toggleFrameCollapsed(item.groupId); }}
-                      className="layer-row__btn"
+                      className="layer-row__btn layer-row__btn--twisty"
                       aria-label={collapsedFrames.has(item.groupId) ? 'Expand group' : 'Collapse group'}
                       aria-expanded={!collapsedFrames.has(item.groupId)}
-                      style={{ padding: 0 }}
                     >
                       <ChevronRight
                         size={12}
-                        style={{
-                          transform: collapsedFrames.has(item.groupId) ? 'none' : 'rotate(90deg)',
-                          transition: 'transform var(--motion-hover)',
-                        }}
+                        className="layer-chevron"
+                        data-open={!collapsedFrames.has(item.groupId) || undefined}
                       />
                     </button>
-                    <span
-                      className="layer-row__icon"
-                      // Grids take the accent the grid tool uses, because a
-                      // generated composition is a different kind of thing from
-                      // a folder somebody made by selecting and pressing Group.
-                      style={grid ? { color: 'var(--brand-orange)' } : undefined}
-                    >
+                    {/* A grid shows its own glyph rather than a folder: a generated
+                        composition is a different kind of thing from a group. */}
+                    <span className="layer-row__icon">
                       {grid
                         ? <LayoutGrid size={14} />
                         : collapsedFrames.has(item.groupId) ? <Folder size={14} /> : <FolderOpen size={14} />}
@@ -1565,10 +1607,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                         className="layer-row__name"
                         onDoubleClick={(e) => {
                           e.stopPropagation();
-                          setEditingTitleId(item.groupId);
-                          setTitleInput(item.name ?? '');
+                          startRename(item.groupId);
                         }}
-                        data-tooltip="Double click to rename"
                       >
                         {/* A named folder beats a counted one the moment there
                             are two of them. The count stays as a subtitle
@@ -1577,7 +1617,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                         {item.name || (grid ? GRID_LABELS[grid.spec.kind] : 'Group')}
                         {/* The system, then the count. "Bento 12" says what it
                             is and how big; "Group (12)" says neither. */}
-                        <span style={{ marginLeft: 6, opacity: 0.6, fontWeight: 'var(--weight-medium)' }}>
+                        <span className="layer-row__count">
                           {grid && !item.name ? 'grid' : ''} {item.members.length}
                         </span>
                       </span>
@@ -1608,6 +1648,17 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
           </div>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 };
+
+/** The panel, contained: a crash here leaves the board running. */
+export const LayersPanel = React.memo(function LayersPanel(props: LayersPanelProps) {
+  return (
+    <FeatureBoundary name="layers panel" variant="panel">
+      <LayersPanelInner {...props} />
+    </FeatureBoundary>
+  );
+});

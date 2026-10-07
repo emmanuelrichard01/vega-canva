@@ -19,6 +19,7 @@ import {
   type FalloffId,
   type ForceId,
 } from '../engine/physics/forces';
+import { storageGet, storageSet } from '../utils/safeStorage';
 
 interface ForcesBarProps {
   activeForce: ForceId;
@@ -208,19 +209,19 @@ export const ForcesBar: React.FC<ForcesBarProps> = ({
    * Remembered, because someone who works this way works this way every time.
    */
   const [collapsed, setCollapsed] = React.useState(
-    () => window.localStorage.getItem('vega_forces_collapsed') === '1'
+    () => storageGet('vega_forces_collapsed') === '1'
   );
   const setCollapsedPref = (val: boolean) => {
-    window.localStorage.setItem('vega_forces_collapsed', val ? '1' : '0');
+    storageSet('vega_forces_collapsed', val ? '1' : '0');
     setCollapsed(val);
   };
 
   const [tuning, setTuning] = React.useState(
-    () => window.localStorage.getItem('vega_forces_tuning') === '1'
+    () => storageGet('vega_forces_tuning') === '1'
   );
   const toggleTuning = () => {
     setTuning((open) => {
-      window.localStorage.setItem('vega_forces_tuning', open ? '0' : '1');
+      storageSet('vega_forces_tuning', open ? '0' : '1');
       return !open;
     });
   };

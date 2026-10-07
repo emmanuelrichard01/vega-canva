@@ -566,25 +566,40 @@ export interface SlotAssignment {
  * way: skip it and take the next.
  */
 export function assignSlots(
-  cellCount: number,
+  cells: number | readonly number[],
   imageIds: readonly string[],
   unavailable: ReadonlySet<number> = new Set()
 ): SlotAssignment {
+  const order = moduleOrder(cells);
   const placed: { imageId: string; cell: number }[] = [];
   const overflow: string[] = [];
 
-  let cell = 0;
+  let at = 0;
   for (const imageId of imageIds) {
-    while (cell < cellCount && unavailable.has(cell)) cell += 1;
-    if (cell >= cellCount) {
+    while (at < order.length && unavailable.has(order[at])) at += 1;
+    if (at >= order.length) {
       overflow.push(imageId);
       continue;
     }
-    placed.push({ imageId, cell });
-    cell += 1;
+    placed.push({ imageId, cell: order[at] });
+    at += 1;
   }
 
   return { placed, overflow };
+}
+
+/**
+ * The modules of a grid, as identities in reading order.
+ *
+ * A count stands for `0..n-1`; a list is taken as given. The regular kinds
+ * skip the identities a span covers, so after a merge the list has gaps, and
+ * every fill walks the list rather than counting up from zero.
+ */
+function moduleOrder(cells: number | readonly number[]): readonly number[] {
+  if (typeof cells === 'number') {
+    return Array.from({ length: Math.max(0, Math.floor(cells)) }, (_, i) => i);
+  }
+  return cells;
 }
 
 /**
@@ -597,15 +612,18 @@ export function assignSlots(
  * while free modules sat visible above the drop.
  */
 export function freeCellsFrom(
-  cellCount: number,
+  cells: number | readonly number[],
   unavailable: ReadonlySet<number>,
   start: number
 ): number[] {
+  const order = moduleOrder(cells);
   const out: number[] = [];
-  if (cellCount <= 0) return out;
-  const from = Math.min(Math.max(0, Math.floor(start)), cellCount - 1);
-  for (let step = 0; step < cellCount; step += 1) {
-    const cell = (from + step) % cellCount;
+  if (order.length === 0) return out;
+  // The first module at or after the one aimed at; past the end means the last.
+  let from = order.findIndex((cell) => cell >= Math.floor(start));
+  if (from === -1) from = order.length - 1;
+  for (let step = 0; step < order.length; step += 1) {
+    const cell = order[(from + step) % order.length];
     if (!unavailable.has(cell)) out.push(cell);
   }
   return out;

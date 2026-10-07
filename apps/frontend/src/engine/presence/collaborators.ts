@@ -143,6 +143,56 @@ export interface Collaborator {
    * them want to reach through a wrapper to find out.
    */
   spotlightAt: number | null;
+  /**
+   * What they are listening to, when they chose to share it ("Listening to
+   * Lo-fi"), or `null`. Set by the music player; shown quietly in the roster
+   * and under an idle name tag.
+   */
+  listening: string | null;
+  /**
+   * Their cursor chat: a short line typed after pressing `/`, shown beside
+   * their pointer. Awareness only, never the document.
+   */
+  chat: CursorChat | null;
+}
+
+/** A cursor chat line. `open` is true while they are still typing it. */
+export interface CursorChat {
+  text: string;
+  open: boolean;
+  at: number;
+}
+
+/** The longest cursor chat line kept, in characters. */
+export const CHAT_MAX_CHARS = 80;
+/** The longest listening line kept, in characters. */
+const LISTENING_MAX_CHARS = 60;
+
+function readListening(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const text = raw.trim();
+  return text ? text.slice(0, LISTENING_MAX_CHARS) : null;
+}
+
+/**
+ * A peer's cursor chat, or `null`.
+ *
+ * Read defensively because awareness is whatever another client chose to send:
+ * the text is cut to length and control characters are dropped, so a peer
+ * cannot push a wall of text or invisible characters onto everyone's board.
+ */
+export function readChat(raw: unknown): CursorChat | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const value = raw as { text?: unknown; open?: unknown; at?: unknown };
+  if (typeof value.text !== 'string') return null;
+  let text = '';
+  for (const ch of value.text.slice(0, CHAT_MAX_CHARS)) {
+    const code = ch.charCodeAt(0);
+    text += code < 32 || code === 127 ? ' ' : ch;
+  }
+  const open = value.open === true;
+  if (!text.trim() && !open) return null;
+  return { text, open, at: Number.isFinite(value.at) ? (value.at as number) : 0 };
 }
 
 const FALLBACK_COLOR = '#6B7280';
@@ -243,6 +293,8 @@ export function readCollaborators(
       reaction: state.reaction && typeof state.reaction.emoji === 'string' ? state.reaction : null,
       following: Number.isFinite(state.following) ? (state.following as number) : null,
       spotlightAt: Number.isFinite(state.spotlight?.at) ? (state.spotlight.at as number) : null,
+      listening: readListening(state.listening),
+      chat: readChat(state.chat),
     });
   });
 
@@ -281,7 +333,9 @@ export function rosterSignature(list: Collaborator[]): string {
           c.away ? 1 : 0
         }:${c.cursor ? 1 : 0}:${c.reaction?.emoji ?? ''}:${c.following ?? ''}:${
           c.spotlightAt ?? ''
-        }:${c.selection.join(',')}`
+        }:${c.selection.join(',')}:${c.listening ?? ''}:${
+          c.chat ? `${c.chat.open ? 1 : 0}${c.chat.text}` : ''
+        }`
     )
     .join('|');
 }

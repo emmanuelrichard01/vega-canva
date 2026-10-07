@@ -1,11 +1,22 @@
 import { normalizeRecipe } from '../grid/gridNode';
-import { isChartKind, type ChartKind, type ChartSeries, type ChartSpec } from '../chart/chartTypes';
+import {
+  isChartKind,
+  type ChartKind,
+  type ChartSeries,
+  type ChartSpec,
+  type ChartStash,
+  type ChartTableLink,
+  type PlotPayload,
+  type PlotShape,
+} from '../chart/chartTypes';
+import type { PlotCurve } from '../chart/chartPlot';
 import { normalizeTableSpec } from '../table/tableTypes';
 import { normalizeCodeSpec } from '../code/codeTypes';
 import { normalizeLinkSpec } from '../link/linkTypes';
-import { LIST_STYLES } from '../model/schema';
+import { LIST_STYLES, MAX_ALT_LENGTH } from '../model/schema';
 import { CALLOUT_TAILS, clampParam, shapeParams } from '../model/shapeParams';
 import { CYCLE_UNITS } from '../text/colorCycle';
+import { isCssColor, cssColorOr } from '../text/cssColor';
 import { LINE_PROFILES, MAX_AMPLITUDE_SCALE, MAX_WAVES, MIN_AMPLITUDE_SCALE, MIN_WAVES } from '../model/linePath';
 import {
   BLEND_MODES,
@@ -60,7 +71,12 @@ function isMaterialId(value: unknown): value is MaterialId {
   return typeof value === 'string' && (MATERIAL_IDS as readonly string[]).includes(value);
 }
 import { packAdjustments, readAdjustments } from '../model/imageAdjustments';
-import { normalizeSlot } from '../grid/gridSlot';
+import { normalizeSlot, type GridSlot } from '../grid/gridSlot';
+import { SLOTTABLE_TYPES } from '../grid/slottable';
+
+function optionalSlot(slot: GridSlot | undefined): { gridSlot?: GridSlot } {
+  return slot ? { gridSlot: slot } : {};
+}
 
 /**
  * Legacy -> canonical mapping.
@@ -95,6 +111,15 @@ const clamp = (value: number, min: number, max: number): number =>
 
 const str = (value: unknown, fallback: string): string =>
   typeof value === 'string' ? value : fallback;
+
+/**
+ * A colour, or the fallback. Every colour in the document goes through this or
+ * `isCssColor`: colours are written into SVG attributes and injected markup,
+ * so a field that accepted any string would be a field that accepted markup.
+ */
+const color = (value: unknown, fallback: string): string => cssColorOr(value, fallback);
+
+const SVG_PATH_DATA = /^[MmLlHhVvCcSsQqTtAaZz0-9eE.,+\-\s]*$/;
 
 const bool = (value: unknown, fallback: boolean): boolean =>
   typeof value === 'boolean' ? value : fallback;
@@ -135,15 +160,22 @@ function normalizeSafeArea(raw: unknown): FrameNode['safeArea'] {
  * The upper bounds are the panel's, so a document written by hand cannot
  * produce a measure the controls could not have made and could not undo.
  */
-function normalizeLayoutAxis(raw: unknown): { count: number; gutter: number; margin: number } | undefined {
+const GUIDE_ALIGNS = new Set(['start', 'center', 'end']);
+
+function normalizeLayoutAxis(raw: unknown): NonNullable<FrameNode['layoutGuide']>['columns'] {
   if (!raw || typeof raw !== 'object') return undefined;
   const source = raw as Record<string, unknown>;
   const count = Math.round(num(source.count, 0));
   if (count < 1) return undefined;
+  // Alignment only means something with a track size to align; without one
+  // the axis stretches, which is what absent says.
+  const size = num(source.size, 0);
+  const aligned = GUIDE_ALIGNS.has(source.align as string) && size > 0;
   return {
-    count: Math.min(48, count),
+    count: Math.min(200, count),
     gutter: Math.min(200, Math.max(0, num(source.gutter, 0))),
     margin: Math.min(400, Math.max(0, num(source.margin, 0))),
+    ...(aligned ? { align: source.align as 'start' | 'center' | 'end', size: Math.min(10_000, size) } : null),
   };
 }
 
@@ -326,6 +358,43 @@ export const SHAPE_KIND_ALIASES: Record<string, { kind: ShapeKind; sides?: numbe
   wallet: { kind: 'wallet' },
   purse: { kind: 'wallet' },
   cardholder: { kind: 'wallet' },
+  multi_document: { kind: 'multi_document' },
+  documents: { kind: 'multi_document' },
+  multiple_documents: { kind: 'multi_document' },
+  off_page: { kind: 'off_page' },
+  off_page_connector: { kind: 'off_page' },
+  offpage: { kind: 'off_page' },
+  card: { kind: 'card' },
+  punched_card: { kind: 'card' },
+  loop_limit: { kind: 'loop_limit' },
+  loop: { kind: 'loop_limit' },
+  punched_tape: { kind: 'punched_tape' },
+  tape: { kind: 'punched_tape' },
+  collate: { kind: 'collate' },
+  sort: { kind: 'sort' },
+  merge: { kind: 'merge' },
+  extract: { kind: 'polygon', sides: 3 },
+  stored_data: { kind: 'stored_data' },
+  data_storage: { kind: 'stored_data' },
+  sequential_access: { kind: 'sequential_access' },
+  sequential_access_storage: { kind: 'sequential_access' },
+  magnetic_tape: { kind: 'sequential_access' },
+  direct_access_storage: { kind: 'direct_access_storage' },
+  direct_access: { kind: 'direct_access_storage' },
+  drum: { kind: 'direct_access_storage' },
+  queue: { kind: 'direct_access_storage' },
+  display: { kind: 'display' },
+  or_junction: { kind: 'or_junction' },
+  flowchart_or_junction: { kind: 'or_junction' },
+  chat: { kind: 'chat' },
+  chat_bubble: { kind: 'chat' },
+  comment_bubble: { kind: 'chat' },
+  lock: { kind: 'lock' },
+  padlock: { kind: 'lock' },
+  authentication: { kind: 'lock' },
+  sliders: { kind: 'sliders' },
+  controls: { kind: 'sliders' },
+  preferences: { kind: 'sliders' },
 };
 
 /** A unit-space point, defaulted, for gradient geometry. */
@@ -350,10 +419,10 @@ function toStops(value: unknown): GradientStop[] | undefined {
     .map((entry): GradientStop | null => {
       if (!entry || typeof entry !== 'object') return null;
       const e = entry as Record<string, unknown>;
-      if (typeof e.color !== 'string' || !e.color) return null;
+      if (!isCssColor(e.color)) return null;
       return {
         offset: clamp(num(e.offset, 0), 0, 1),
-        color: e.color,
+        color: e.color.trim(),
         opacity: typeof e.opacity === 'number' ? clamp(e.opacity, 0, 1) : undefined,
       };
     })
@@ -371,7 +440,7 @@ function toStops(value: unknown): GradientStop[] | undefined {
  * same board at the same time.
  */
 function toPaint(entry: unknown): Paint | null {
-  if (typeof entry === 'string') return entry ? { type: 'solid', color: entry } : null;
+  if (typeof entry === 'string') return isCssColor(entry) ? { type: 'solid', color: entry.trim() } : null;
   if (!entry || typeof entry !== 'object') return null;
 
   const e = entry as Record<string, any>;
@@ -417,7 +486,7 @@ function toPaint(entry: unknown): Paint | null {
     return { type: 'solid', color: stops[0].color, opacity };
   }
 
-  if (typeof e.color === 'string') return { type: 'solid', color: e.color, opacity };
+  if (isCssColor(e.color)) return { type: 'solid', color: e.color.trim(), opacity };
   return null;
 }
 
@@ -427,8 +496,8 @@ function toPaintArray(value: unknown, legacyColor: unknown): Paint[] | undefined
     if (paints.length) return paints;
   }
   // Pre-v2 shapes stored a bare hex string in `content.fill`.
-  if (typeof legacyColor === 'string' && legacyColor) {
-    return [{ type: 'solid', color: legacyColor }];
+  if (isCssColor(legacyColor)) {
+    return [{ type: 'solid', color: legacyColor.trim() }];
   }
   return undefined;
 }
@@ -452,7 +521,7 @@ function toShadow(raw: unknown): Shadow | undefined {
     // this is the *read* fallback for a stored shadow that has no colour at
     // all, which predates `Shadow.opacity` existing. Swapping it for the
     // opaque default would darken every legacy shadow that relied on it.
-    color: str(s.color, LEGACY_SHADOW_COLOR),
+    color: color(s.color, LEGACY_SHADOW_COLOR),
     // A negative blur or spread is not a smaller shadow; a canvas reads the
     // first as a very large positive one and the second inverts the stroke
     // that draws it.
@@ -489,8 +558,8 @@ function toDash(value: unknown): number[] | undefined {
 function toStroke(value: unknown, legacyColor: unknown, legacyWidth: unknown): Stroke | undefined {
   if (value && typeof value === 'object') {
     const s = value as any;
-    if (typeof s.color === 'string') {
-      const stroke: Stroke = { color: s.color, width: num(s.width, 2) };
+    if (isCssColor(s.color)) {
+      const stroke: Stroke = { color: s.color.trim(), width: num(s.width, 2) };
       // Assigned only when present, never set to `undefined`. A literal
       // `undefined` inside a nested plain value survives `toJSON()` and
       // defeats the `?? fallback` reads downstream.
@@ -514,8 +583,8 @@ function toStroke(value: unknown, legacyColor: unknown, legacyWidth: unknown): S
       return stroke;
     }
   }
-  if (typeof legacyColor === 'string' && legacyColor && legacyColor !== 'transparent') {
-    return { color: legacyColor, width: num(legacyWidth, 2) };
+  if (isCssColor(legacyColor) && legacyColor.trim() !== 'transparent') {
+    return { color: legacyColor.trim(), width: num(legacyWidth, 2) };
   }
   return undefined;
 }
@@ -686,7 +755,7 @@ function normalizeTypography(raw: any, overrides: Partial<Typography> = {}): Typ
       ? {
           colorCycle: {
             unit: t.colorCycle.unit,
-            colors: t.colorCycle.colors.filter((c: unknown) => typeof c === 'string').slice(0, 12),
+            colors: t.colorCycle.colors.filter(isCssColor).slice(0, 12),
           },
         }
       : null),
@@ -694,7 +763,7 @@ function normalizeTypography(raw: any, overrides: Partial<Typography> = {}): Typ
       t.letterSpacing ?? c.letterSpacing,
       overrides.letterSpacing ?? DEFAULT_TYPOGRAPHY.letterSpacing
     ),
-    color: str(t.color ?? c.color, overrides.color ?? DEFAULT_TYPOGRAPHY.color),
+    color: color(t.color ?? c.color, overrides.color ?? DEFAULT_TYPOGRAPHY.color),
     // The four block-level fields below are all *absent by default*, and stay
     // absent rather than being written as a zero or an empty object. Every
     // existing document has none of them, and a stored `paragraphSpacing: 0`
@@ -711,10 +780,10 @@ function normalizeTypography(raw: any, overrides: Partial<Typography> = {}): Typ
 
 /** The rounded ribbon behind the words. Absent unless it has a colour to draw. */
 function normalizeTextHighlight(raw: any): { highlight?: TextHighlight } {
-  if (!raw || typeof raw.color !== 'string') return {};
+  if (!raw || !isCssColor(raw.color)) return {};
   return {
     highlight: {
-      color: raw.color,
+      color: raw.color.trim(),
       radius: Math.max(0, num(raw.radius, 8)),
       paddingX: Math.max(0, num(raw.paddingX, 10)),
       paddingY: Math.max(0, num(raw.paddingY, 4)),
@@ -728,18 +797,18 @@ function normalizeTextHighlight(raw: any): { highlight?: TextHighlight } {
 
 /** A stroke on the letterforms. A zero weight is no outline, not an outline of nothing. */
 function normalizeTextOutline(raw: any): { outline?: TextOutline } {
-  if (!raw || typeof raw.color !== 'string') return {};
+  if (!raw || !isCssColor(raw.color)) return {};
   const width = num(raw.width, 0);
   if (!(width > 0)) return {};
-  return { outline: { color: raw.color, width } };
+  return { outline: { color: raw.color.trim(), width } };
 }
 
 /** A halo behind the letterforms. Same rule: no radius is no glow. */
 function normalizeTextGlow(raw: any): { glow?: TextGlow } {
-  if (!raw || typeof raw.color !== 'string') return {};
+  if (!raw || !isCssColor(raw.color)) return {};
   const blur = num(raw.blur, 0);
   if (!(blur > 0)) return {};
-  return { glow: { color: raw.color, blur } };
+  return { glow: { color: raw.color.trim(), blur } };
 }
 
 function normalizeAuthor(raw: any): Author {
@@ -751,7 +820,7 @@ function normalizeAuthor(raw: any): Author {
     // Through the palette that already answers "what colour is this person",
     // rather than a literal repeated here. A second opinion about identity
     // colour is how one author ends up two colours in two surfaces.
-    color: str(
+    color: color(
       author.color ?? meta.authorColor ?? raw?.createdByColor,
       getColorForUser(str(author.id ?? meta.authorId ?? raw?.createdBy, ''))
     ),
@@ -951,7 +1020,10 @@ function normalizePathGeometry(raw: any): PathGeometry {
   const bezier = toBezier(raw?.geometry?.segments ?? raw?.segments, raw?.geometry?.closed ?? raw?.closed);
   if (bezier) return bezier;
 
-  const svgPath = str(raw?.geometry?.svgPath ?? raw?.content?.svgPath, '');
+  // Path data only: commands, numbers, separators. Anything else is not a
+  // path, and this string is written into an SVG attribute on export.
+  const rawPath = str(raw?.geometry?.svgPath ?? raw?.content?.svgPath, '');
+  const svgPath = SVG_PATH_DATA.test(rawPath) ? rawPath : '';
   const rawPoints = raw?.geometry?.points ?? raw?.content?.points;
   const points: Point[] = Array.isArray(rawPoints)
     ? rawPoints
@@ -975,6 +1047,9 @@ function normalizePathGeometry(raw: any): PathGeometry {
      * every reader.
      */
     ...(raw?.geometry?.closed === true && points.length > 2 ? { closed: true } : null),
+    ...(raw?.geometry?.brush === 'marker' || raw?.geometry?.brush === 'highlighter'
+      ? { brush: raw.geometry.brush }
+      : null),
   };
 }
 
@@ -1099,8 +1174,11 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
     material: isMaterialId(raw?.material) ? raw.material : undefined,
     createdBy: str(raw?.createdBy, 'unknown'),
     createdByName: typeof raw?.createdByName === 'string' ? raw.createdByName : raw?.metadata?.authorName,
-    createdByColor:
-      typeof raw?.createdByColor === 'string' ? raw.createdByColor : raw?.metadata?.authorColor,
+    createdByColor: isCssColor(raw?.createdByColor)
+      ? raw.createdByColor.trim()
+      : isCssColor(raw?.metadata?.authorColor)
+        ? raw.metadata.authorColor.trim()
+        : undefined,
     createdAt: num(raw?.createdAt, now),
     updatedAt: num(raw?.updatedAt, num(raw?.createdAt, now)),
     /**
@@ -1114,6 +1192,13 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
      */
     updatedBy: typeof raw?.updatedBy === 'string' ? raw.updatedBy : undefined,
     updatedByName: typeof raw?.updatedByName === 'string' ? raw.updatedByName : undefined,
+    /**
+     * The grid module this node sits in. Kept for every slottable type, and a
+     * slot naming a grid that no longer exists is kept too: this boundary cannot
+     * tell a deleted grid from one that has not loaded yet, so `gridReflow` is
+     * what releases it.
+     */
+    ...(SLOTTABLE_TYPES.has(type) && raw?.gridSlot ? optionalSlot(normalizeSlot(raw.gridSlot)) : null),
   };
 
   switch (type) {
@@ -1185,12 +1270,10 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         // throw, it turns every channel it touches into transparent black —
         // so a bad value would present as "the image failed to load".
         filters: packAdjustments(readAdjustments(raw?.filters)),
-        // A slot naming a grid that no longer exists is *kept* here and
-        // released by `gridReflow`. This boundary cannot see the document, so
-        // it cannot tell a deleted grid from one that has not loaded yet — and
-        // dropping the binding on the second would silently orphan every
-        // picture in every grid for as long as the document was still arriving.
-        gridSlot: normalizeSlot(raw?.gridSlot),
+        // Plain text, trimmed and capped. Absent when empty.
+        ...(typeof raw?.alt === 'string' && raw.alt.trim()
+          ? { alt: Array.from(raw.alt as string, (c) => (c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127 ? ' ' : c)).join('').trim().slice(0, MAX_ALT_LENGTH) }
+          : {}),
       };
 
     case 'audio':
@@ -1248,14 +1331,16 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
           ? { endScale: clamp(num(raw.endScale, 1), MIN_END_SCALE, MAX_END_SCALE) }
           : null),
         label: typeof raw?.label === 'string' ? raw.label : undefined,
-        /**
-         * Absent when square, so a connector that has never been rounded
-         * carries no key — and the panel's "is this rounded" question is "did
-         * anyone set it" rather than "is it zero".
-         */
-        ...(num(raw?.cornerRadius, 0) > 0
-          ? { cornerRadius: Math.min(200, num(raw.cornerRadius, 0)) }
+        // `label` is the single-word form generators and older documents
+        // write; `labels` is what draws, so a lone label becomes the first one.
+        ...connectorLabels(raw),
+        // Absent draws the default elbow; an explicit 0 is square.
+        ...(Number.isFinite(raw?.cornerRadius) && raw.cornerRadius >= 0
+          ? { cornerRadius: Math.min(200, raw.cornerRadius) }
           : null),
+        ...(raw?.avoid === true ? { avoid: true } : null),
+        ...(raw?.jumps === 'none' || raw?.jumps === 'arc' || raw?.jumps === 'gap' ? { jumps: raw.jumps } : null),
+        ...connectorNudges(raw?.nudges),
       };
 
     /**
@@ -1360,27 +1445,108 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
  * category back does not discover the values were thrown away on the last
  * save. This is about *shape and type*, never about length.
  */
+/**
+ * The largest magnitude a chart number may have.
+ *
+ * Every value is finite before it gets here, but a finite value near
+ * `Number.MAX_VALUE` still breaks the layout: the span between two of them
+ * overflows to Infinity, and a tick loop stepping across an infinite span
+ * never ends. 1e300 leaves headroom for every sum and difference the layout
+ * takes, and no real dataset comes near it.
+ */
+const CHART_LIMIT = 1e300;
+
+/** A chart number, clamped into the range the layout can do arithmetic on. */
+const chartNumber = (v: number): number => Math.max(-CHART_LIMIT, Math.min(CHART_LIMIT, v));
+
+function normalizeChartCategories(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.map((c: unknown) => (typeof c === 'string' ? c : String(c ?? ''))) : [];
+}
+
+function normalizeChartSeries(raw: unknown): ChartSeries[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((s: any, i: number) => ({
+    name: typeof s?.name === 'string' ? s.name : `Series ${i + 1}`,
+    // A hole stays a hole. Coercing it to zero is the one transformation this
+    // function must not make: it turns a missing reading into a measured one,
+    // and no later reader can tell the difference.
+    values: Array.isArray(s?.values)
+      ? s.values.map((v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? chartNumber(v) : null))
+      : [],
+    ...(isCssColor(s?.color) ? { color: s.color.trim() } : {}),
+    ...(s?.hidden === true ? { hidden: true } : {}),
+    ...(s?.mark === 'bar' || s?.mark === 'line' || s?.mark === 'area' ? { mark: s.mark } : {}),
+    ...(s?.axis === 'right' ? { axis: 'right' as const } : {}),
+  }));
+}
+
+function normalizeChartCurves(raw: unknown): PlotCurve[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((f: any) => typeof f?.source === 'string')
+    .map((f: any) => ({
+      source: f.source,
+      ...(isCssColor(f.color) ? { color: f.color.trim() } : {}),
+      ...(f.hidden === true ? { hidden: true } : {}),
+      ...(typeof f.width === 'number' && Number.isFinite(f.width) ? { width: f.width } : {}),
+      ...(f.style === 'solid' || f.style === 'dashed' || f.style === 'dotted' ? { style: f.style } : {}),
+    }));
+}
+
+const PLOT_SHAPES: readonly PlotShape[] = ['curve', 'parametric', 'polar', 'field', 'vector'];
+
+/** What a kind switch set aside, held to the same rules as the live fields. */
+function normalizeChartStash(raw: any): ChartStash | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const out: ChartStash = {};
+  if (raw.data && typeof raw.data === 'object') {
+    const series = normalizeChartSeries(raw.data.series);
+    const categories = normalizeChartCategories(raw.data.categories);
+    if (series.length || categories.length) out.data = { categories, series };
+  }
+  if (raw.plot && typeof raw.plot === 'object') {
+    const plot: Partial<Record<PlotShape, PlotPayload>> = {};
+    for (const shape of PLOT_SHAPES) {
+      const p = raw.plot[shape];
+      if (!p || typeof p !== 'object') continue;
+      const functions = normalizeChartCurves(p.functions);
+      if (!functions.length) continue;
+      const payload: PlotPayload = { functions };
+      for (const key of ['xMin', 'xMax', 'yPlotMin', 'yPlotMax'] as const) {
+        if (typeof p[key] === 'number' && Number.isFinite(p[key])) payload[key] = chartNumber(p[key]);
+      }
+      plot[shape] = payload;
+    }
+    if (Object.keys(plot).length) out.plot = plot;
+  }
+  return out.data || out.plot ? out : undefined;
+}
+
+/** A table range a chart reads from: whole, ordered indices, or no link at all. */
+function normalizeChartLink(raw: any): ChartTableLink | undefined {
+  if (!raw || typeof raw !== 'object' || typeof raw.tableId !== 'string' || !raw.tableId) return undefined;
+  const idx = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 100_000 ? v : null);
+  const r0 = idx(raw.r0);
+  const c0 = idx(raw.c0);
+  const r1 = idx(raw.r1);
+  const c1 = idx(raw.c1);
+  if (r0 === null || c0 === null || r1 === null || c1 === null || r1 < r0 || c1 < c0) return undefined;
+  return {
+    tableId: raw.tableId,
+    r0,
+    c0,
+    r1,
+    c1,
+    ...(raw.seriesIn === 'rows' ? { seriesIn: 'rows' as const } : {}),
+  };
+}
+
 function normalizeChartSpec(raw: any): ChartSpec {
   const kind: ChartKind = isChartKind(raw?.kind) ? raw.kind : 'bar';
 
-  const categories: string[] = Array.isArray(raw?.categories)
-    ? raw.categories.map((c: unknown) => (typeof c === 'string' ? c : String(c ?? '')))
-    : [];
+  const categories = normalizeChartCategories(raw?.categories);
 
-  const series: ChartSeries[] = Array.isArray(raw?.series)
-    ? raw.series.map((s: any, i: number) => ({
-        name: typeof s?.name === 'string' ? s.name : `Series ${i + 1}`,
-        // A hole stays a hole. Coercing it to zero is the one transformation
-        // this function must not make: it turns a missing reading into a
-        // measured one, and no later reader can tell the difference.
-        values: Array.isArray(s?.values)
-          ? s.values.map((v: unknown) =>
-              typeof v === 'number' && Number.isFinite(v) ? v : null
-            )
-          : [],
-        ...(typeof s?.color === 'string' ? { color: s.color } : {}),
-      }))
-    : [];
+  const series = normalizeChartSeries(raw?.series);
 
   const spec: ChartSpec = { kind, categories, series };
 
@@ -1392,7 +1558,7 @@ function normalizeChartSpec(raw: any): ChartSpec {
   };
   const num = (key: keyof ChartSpec) => {
     if (typeof raw?.[key] === 'number' && Number.isFinite(raw[key])) {
-      (spec as any)[key] = raw[key];
+      (spec as any)[key] = chartNumber(raw[key]);
     }
   };
 
@@ -1471,9 +1637,9 @@ function normalizeChartSpec(raw: any): ChartSpec {
     const value = raw.reference.value;
     if (typeof value === 'number' && Number.isFinite(value)) {
       spec.reference = {
-        value,
+        value: chartNumber(value),
         ...(typeof raw.reference.label === 'string' ? { label: raw.reference.label } : {}),
-        ...(typeof raw.reference.color === 'string' ? { color: raw.reference.color } : {}),
+        ...(isCssColor(raw.reference.color) ? { color: raw.reference.color.trim() } : {}),
         ...(raw.reference.style === 'solid' || raw.reference.style === 'dashed'
           ? { style: raw.reference.style }
           : {}),
@@ -1486,10 +1652,10 @@ function normalizeChartSpec(raw: any): ChartSpec {
     const max = raw.toleranceBand.max;
     if (typeof min === 'number' && Number.isFinite(min) && typeof max === 'number' && Number.isFinite(max)) {
       spec.toleranceBand = {
-        min,
-        max,
+        min: chartNumber(min),
+        max: chartNumber(max),
         ...(typeof raw.toleranceBand.label === 'string' ? { label: raw.toleranceBand.label } : {}),
-        ...(typeof raw.toleranceBand.color === 'string' ? { color: raw.toleranceBand.color } : {}),
+        ...(isCssColor(raw.toleranceBand.color) ? { color: raw.toleranceBand.color.trim() } : {}),
       };
     }
   }
@@ -1502,18 +1668,8 @@ function normalizeChartSpec(raw: any): ChartSpec {
    * formula: an empty row in the editor is a row somebody has to delete, and a
    * formula that cannot compile is already reported by the panel.
    */
-  if (Array.isArray(raw?.functions)) {
-    const curves = raw.functions
-      .filter((f: any) => typeof f?.source === 'string')
-      .map((f: any) => ({
-        source: f.source,
-        ...(typeof f.color === 'string' ? { color: f.color } : {}),
-        ...(f.hidden === true ? { hidden: true } : {}),
-        ...(typeof f.width === 'number' && Number.isFinite(f.width) ? { width: f.width } : {}),
-        ...(f.style === 'solid' || f.style === 'dashed' || f.style === 'dotted' ? { style: f.style } : {}),
-      }));
-    if (curves.length) spec.functions = curves;
-  }
+  const curves = normalizeChartCurves(raw?.functions);
+  if (curves.length) spec.functions = curves;
 
   str('variable');
   num('xMin');
@@ -1533,7 +1689,7 @@ function normalizeChartSpec(raw: any): ChartSpec {
     const a = raw.integralBounds.a;
     const b = raw.integralBounds.b;
     if (typeof a === 'number' && Number.isFinite(a) && typeof b === 'number' && Number.isFinite(b)) {
-      spec.integralBounds = { a, b };
+      spec.integralBounds = { a: chartNumber(a), b: chartNumber(b) };
     }
   }
 
@@ -1589,7 +1745,7 @@ function normalizeChartSpec(raw: any): ChartSpec {
   if (Array.isArray(raw?.seedPoints)) {
     const validSeeds = raw.seedPoints
       .filter((p: any) => p && typeof p === 'object' && Number.isFinite(p.x) && Number.isFinite(p.y))
-      .map((p: any) => ({ x: Number(p.x), y: Number(p.y) }));
+      .map((p: any) => ({ x: chartNumber(Number(p.x)), y: chartNumber(Number(p.y)) }));
     if (validSeeds.length > 0) {
       spec.seedPoints = validSeeds;
     }
@@ -1618,6 +1774,23 @@ function normalizeChartSpec(raw: any): ChartSpec {
     if (Object.keys(source).length > 0) spec.dataSource = source;
   }
 
+  // --- table link, kind-switch stash, category axis ------------------------
+  const link = normalizeChartLink(raw?.link);
+  if (link) spec.link = link;
+  const stash = normalizeChartStash(raw?.stash);
+  if (stash) spec.stash = stash;
+  if (raw?.labelAngle === 0 || raw?.labelAngle === 45 || raw?.labelAngle === 90) spec.labelAngle = raw.labelAngle;
+  if (
+    typeof raw?.labelEvery === 'number' &&
+    Number.isInteger(raw.labelEvery) &&
+    raw.labelEvery >= 1 &&
+    raw.labelEvery <= 1000
+  ) {
+    spec.labelEvery = raw.labelEvery;
+  }
+  bool('reverseCategories');
+  if (raw?.textSize === 's' || raw?.textSize === 'm' || raw?.textSize === 'l') spec.textSize = raw.textSize;
+
   return spec;
 }
 
@@ -1632,6 +1805,44 @@ function normalizeChartSpec(raw: any): ChartSpec {
 /** A stored end style, or the arrow/none the old boolean implied. */
 function endCap(raw: any, legacyOn: boolean): EndCapKind {
   return (END_CAP_KINDS as string[]).includes(raw) ? (raw as EndCapKind) : legacyOn ? 'arrow' : 'none';
+}
+
+/** At most this many words ride one connector, each at most this long. */
+const MAX_CONNECTOR_LABELS = 12;
+const MAX_CONNECTOR_LABEL_LENGTH = 200;
+
+function connectorLabels(raw: any): { labels?: Array<{ id: string; text: string; t?: number; dn?: number }> } {
+  const out: Array<{ id: string; text: string; t?: number; dn?: number }> = [];
+  const seen = new Set<string>();
+  if (Array.isArray(raw?.labels)) {
+    for (const entry of raw.labels.slice(0, MAX_CONNECTOR_LABELS)) {
+      if (typeof entry?.text !== 'string' || !entry.text.trim()) continue;
+      let id = typeof entry.id === 'string' && entry.id ? entry.id.slice(0, 64) : `l${out.length}`;
+      while (seen.has(id)) id = `${id}_`;
+      seen.add(id);
+      out.push({
+        id,
+        text: entry.text.slice(0, MAX_CONNECTOR_LABEL_LENGTH),
+        ...(Number.isFinite(entry.t) ? { t: clamp(entry.t, 0, 1) } : null),
+        ...(Number.isFinite(entry.dn) && entry.dn !== 0 ? { dn: clamp(entry.dn, -400, 400) } : null),
+      });
+    }
+  }
+  if (out.length === 0 && typeof raw?.label === 'string' && raw.label.trim()) {
+    out.push({ id: 'l0', text: raw.label.slice(0, MAX_CONNECTOR_LABEL_LENGTH) });
+  }
+  return out.length > 0 ? { labels: out } : {};
+}
+
+function connectorNudges(raw: any): { nudges?: Array<{ seg: number; offset: number; of: number }> } {
+  if (!Array.isArray(raw)) return {};
+  const out: Array<{ seg: number; offset: number; of: number }> = [];
+  for (const n of raw.slice(0, 64)) {
+    if (!Number.isInteger(n?.seg) || !Number.isInteger(n?.of) || !Number.isFinite(n?.offset)) continue;
+    if (n.seg < 0 || n.of < 1 || n.seg >= n.of || n.offset === 0) continue;
+    out.push({ seg: n.seg, of: n.of, offset: clamp(n.offset, -5000, 5000) });
+  }
+  return out.length > 0 ? { nudges: out } : {};
 }
 
 function normalizeConnectorEnd(raw: any): {

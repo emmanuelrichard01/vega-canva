@@ -111,6 +111,9 @@ export function roughShape(
    * function. See `nibScale`.
    */
   const width = node.appearance.stroke?.width;
+  // A dashed stroke is drawn in one lap: two laps with independent dash phases
+  // fill each other's gaps and the dash disappears.
+  const passes = (node.appearance.stroke?.dash?.length ?? 0) > 0 ? 1 : undefined;
   const outline = shapeOutline(node);
 
   // The silhouette the shading is clipped against. Always a polygon, even for
@@ -125,14 +128,17 @@ export function roughShape(
    */
   let rings: Point[][] | null = null;
   let sketched: string;
+  // Whether the ring is a flattened curve, for the fill boundary.
+  let curved = false;
 
   switch (outline.kind) {
     case 'ellipse':
       // A curve has no corners to overshoot, so it is one continuous wandering
       // loop rather than a run of bowed chords. Drawing it the other way is
       // what made a circle come out as a broken, spiky ring.
-      sketched = roughEllipse(outline.cx, outline.cy, outline.rx, outline.ry, { seed, level, width });
+      sketched = roughEllipse(outline.cx, outline.cy, outline.rx, outline.ry, { seed, level, width, passes });
       ring = ellipseRing(outline.cx, outline.cy, outline.rx, outline.ry);
+      curved = true;
       break;
 
     case 'rect':
@@ -154,16 +160,17 @@ export function roughShape(
        */
       if (outline.radius > 0) {
         ring = flattenPath(shapeToPath(node));
-        sketched = roughLoop(ring, { seed, level, width });
+        sketched = roughLoop(ring, { seed, level, width, passes });
+        curved = true;
       } else {
         ring = rectRing(outline.width, outline.height);
-        sketched = roughPolyline(ring, { seed, level, width });
+        sketched = roughPolyline(ring, { seed, level, width, passes });
       }
       break;
 
     case 'polygon':
       ring = outline.points;
-      sketched = roughPolyline(ring, { seed, level, width });
+      sketched = roughPolyline(ring, { seed, level, width, passes });
       break;
 
     case 'bezier': {
@@ -186,7 +193,8 @@ export function roughShape(
        */
       rings = subpathsOf(outline.geometry).map((sub) => flattenPath(sub));
       ring = rings.flat();
-      sketched = rings.map((r) => roughLoop(r, { seed, level, width })).join(' ');
+      sketched = rings.map((r) => roughLoop(r, { seed, level, width, passes })).join(' ');
+      curved = true;
       break;
     }
 
@@ -236,8 +244,8 @@ export function roughShape(
         || node.geometry.smooth === true
         || SAMPLED_PROFILES.has(node.geometry.lineProfile ?? 'straight');
       sketched = curvy
-        ? roughLoop(ring, { seed, level, width, closed: false })
-        : roughPolyline(ring, { seed, closed: false, level, width });
+        ? roughLoop(ring, { seed, level, width, closed: false, passes })
+        : roughPolyline(ring, { seed, closed: false, level, width, passes });
       return { outline: sketched, fill: '', silhouette: '', features: '' };
   }
 
@@ -256,7 +264,7 @@ export function roughShape(
       const points = flattenPath(geo);
       if (points.length < 2) return '';
       const curvy = geo.segments.some((seg) => seg.cp1x !== undefined || seg.cp2x !== undefined);
-      const options = { seed, level, width, closed: geo.closed };
+      const options = { seed, level, width, closed: geo.closed, passes };
       return curvy ? roughLoop(points, options) : roughPolyline(points, options);
     })
     .filter(Boolean)
@@ -281,6 +289,6 @@ export function roughShape(
     // as a filled one does — it simply does not paint it. See the field's own
     // note: the caller decides whether this gets painted, and `fillsInterior`
     // is the question it asks.
-    silhouette: wantsFill ? roughSilhouette(rings ?? ring, { seed, level, width }) : '',
+    silhouette: wantsFill ? roughSilhouette(rings ?? ring, { seed, level, width, curved }) : '',
   };
 }

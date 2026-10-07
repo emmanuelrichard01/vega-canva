@@ -36,6 +36,7 @@ export const TOOL_NAMES: Record<string, string> = {
   frame: 'Frame',
   grid: 'Grid: lay out a composition',
   chart: 'Chart: bars, lines, pies',
+  table: 'Table: rows, columns and formulas',
   connector: 'Connector',
   sticky: 'Sticky note',
   comment: 'Comment',

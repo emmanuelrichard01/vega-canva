@@ -93,31 +93,6 @@ export const renderScope = {
 };
 
 /**
- * The ids the canvas should have mounted.
- *
- * Pure, and the reason this is a function rather than three lines inside a
- * `useMemo`: what an export contains is decided here, and it is assertable
- * without mounting React or Konva.
- *
- * An empty `visible` means the culler has not reported yet — at which point
- * everything renders, which is `Canvas`'s existing behaviour and the safe way
- * round: showing too much for one frame costs a frame, showing too little
- * costs an export.
- */
-export function mountedSet(
-  all: readonly string[],
-  visible: readonly string[],
-  selected: readonly string[],
-  scope: ReadonlySet<string> | null
-): ReadonlySet<string> | null {
-  if (visible.length === 0) return null;
-  const set = new Set(visible);
-  for (const id of selected) set.add(id);
-  if (scope) for (const id of all) if (scope.has(id)) set.add(id);
-  return set;
-}
-
-/**
  * Wait for React to commit and Konva to lay out what was just required.
  *
  * Two frames, not one. The first `requestAnimationFrame` fires *before* the

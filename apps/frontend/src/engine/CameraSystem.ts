@@ -1,4 +1,6 @@
 import { engineEvents } from './EventBus';
+import { clampZoom, prefersReducedMotion, rubberZoom } from './cameraMotion';
+import { fitPose, type FitBounds, type FitOptions } from './cameraFit';
 
 export class CameraSystem {
   x: number = 0;
@@ -219,7 +221,7 @@ export class CameraSystem {
     const pointerWorldX = (screenX - this.x) / oldZoom;
     const pointerWorldY = (screenY - this.y) / oldZoom;
 
-    const newZoom = Math.max(this.minZoom, Math.min(oldZoom * factor, this.maxZoom));
+    const newZoom = rubberZoom(oldZoom, oldZoom * factor, this.minZoom, this.maxZoom);
     this.zoom = newZoom;
 
     // Re-anchor so that world point stays exactly under the same screen point.
@@ -227,6 +229,70 @@ export class CameraSystem {
     this.y = screenY - pointerWorldY * this.zoom;
 
     this.emitChange();
+    this.scheduleSettle(screenX, screenY);
+  }
+
+  private settleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Ease back inside the zoom range once a gesture that stretched past it stops.
+   *
+   * `zoomBy` lets a pinch or wheel run a little past the limits with
+   * resistance (`rubberZoom`); this returns it, keeping the point under the
+   * gesture pinned. Immediate under reduced motion.
+   */
+  private scheduleSettle(screenX: number, screenY: number) {
+    if (this.settleTimer !== null) clearTimeout(this.settleTimer);
+    if (this.zoom >= this.minZoom && this.zoom <= this.maxZoom) {
+      this.settleTimer = null;
+      return;
+    }
+    this.settleTimer = setTimeout(() => {
+      this.settleTimer = null;
+      const target = clampZoom(this.zoom, this.minZoom, this.maxZoom);
+      if (target === this.zoom) return;
+      const worldX = (screenX - this.x) / this.zoom;
+      const worldY = (screenY - this.y) / this.zoom;
+      const x = screenX - worldX * target;
+      const y = screenY - worldY * target;
+      if (prefersReducedMotion()) this.setPose(x, y, target);
+      else this.animateTo(x, y, target, { duration: 220 });
+    }, 160);
+  }
+
+  /** The camera pose that frames `bounds`, or `null` for an empty box. */
+  poseFor(bounds: FitBounds, options: FitOptions = {}) {
+    return fitPose(bounds, this.width, this.height, { ...this.zoomLimits, ...options });
+  }
+
+  /**
+   * Fly to a world box: the shared implementation behind Fit all, Zoom to
+   * selection and jump-to-frame. Instant under reduced motion.
+   */
+  flyToBounds(
+    bounds: FitBounds,
+    options: FitOptions & { duration?: number; onComplete?: () => void } = {}
+  ): boolean {
+    const { duration, onComplete, ...fit } = options;
+    const pose = this.poseFor(bounds, fit);
+    if (!pose) return false;
+    const ms = prefersReducedMotion() ? 0 : duration ?? 420;
+    this.animateTo(pose.x, pose.y, pose.zoom, { duration: ms, onComplete });
+    return true;
+  }
+
+  /**
+   * Zoom to an exact level about a screen point (the viewport centre by
+   * default): 50%, 100%, 200% in the zoom menu. Animated unless reduced motion.
+   */
+  zoomToLevel(level: number, screenX = this.width / 2, screenY = this.height / 2, duration = 260) {
+    if (!Number.isFinite(level) || level <= 0) return;
+    const target = clampZoom(level, this.minZoom, this.maxZoom);
+    const worldX = (screenX - this.x) / this.zoom;
+    const worldY = (screenY - this.y) / this.zoom;
+    const x = screenX - worldX * target;
+    const y = screenY - worldY * target;
+    this.animateTo(x, y, target, { duration: prefersReducedMotion() ? 0 : duration });
   }
 
   /**

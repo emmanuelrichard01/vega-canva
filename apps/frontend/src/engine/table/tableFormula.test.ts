@@ -3,7 +3,7 @@ import { evaluateCell, referencesIn, rewriteRefs } from './tableFormula';
 import { deleteRows, formatCell, insertCols, insertRows, moveCols, viewRows } from './tableModel';
 import { defaultTableSpec, type TableSpec } from './tableTypes';
 
-/** A table with a header row, so B1 is the first row of data. */
+/** A table with a header row, counted as a spreadsheet counts: the header is row 1, data starts at row 2. */
 const table = (cells: string[][], over: Partial<TableSpec> = {}): TableSpec => ({
   ...defaultTableSpec(cells.length, cells[0].length),
   cells,
@@ -44,7 +44,7 @@ describe('references', () => {
     ['Item', 'Price', 'Share'],
     ['Tea', '$4.50', '25%'],
     ['Cake', '$6.00', '75%'],
-    ['Total', '=SUM(B1:B2)', '=C1+C2'],
+    ['Total', '=SUM(B2:B3)', '=C2+C3'],
   ]);
 
   it('reads currency and percentages as a spreadsheet would', () => {
@@ -58,12 +58,12 @@ describe('references', () => {
   });
 
   it('catches a cycle instead of hanging', () => {
-    const s = table([['A', 'B'], ['=B1', '=A1']]);
+    const s = table([['A', 'B'], ['=B2', '=A2']]);
     expect(evaluateCell(s, 1, 0)).toEqual({ err: '#CYCLE!' });
   });
 
   it('evaluates only the IF branch it takes', () => {
-    const s = table([['A', 'B'], ['0', '=IF(A1=0, 0, 1/A1)']]);
+    const s = table([['A', 'B'], ['0', '=IF(A2=0, 0, 1/A2)']]);
     expect(evaluateCell(s, 1, 1)).toBe(0);
   });
 
@@ -73,14 +73,14 @@ describe('references', () => {
       ['Done', '5'],
       ['Open', '3'],
       ['Done', '8'],
-      ['=COUNTIF(A1:A3,"done")', '=SUMIF(A1:A3,"Done",B1:B3)'],
+      ['=COUNTIF(A2:A4,"done")', '=SUMIF(A2:A4,"Done",B2:B4)'],
     ]);
     expect(evaluateCell(s, 4, 0)).toBe(2);
     expect(evaluateCell(s, 4, 1)).toBe(13);
   });
 
   it('sorts a formula column by its results', () => {
-    const s = table([['N', 'Double'], ['3', '=A1*2'], ['1', '=A2*2'], ['2', '=A3*2']], { sort: { col: 1, dir: 'asc' } });
+    const s = table([['N', 'Double'], ['3', '=A2*2'], ['1', '=A3*2'], ['2', '=A4*2']], { sort: { col: 1, dir: 'asc' } });
     const typed = { ...s, columns: [{ width: 1, type: 'number' as const }, { width: 1, type: 'number' as const }] };
     expect(viewRows(typed)).toEqual([0, 2, 3, 1]);
   });
@@ -92,16 +92,16 @@ describe('references follow their cells', () => {
   });
 
   it('shifts past an inserted row and shrinks past a deleted one', () => {
-    const s = table([['A'], ['1'], ['2'], ['3'], ['=SUM(A1:A3)']]);
-    expect(insertRows(s, 1, 1).cells[5][0]).toBe('=SUM(A2:A4)');
-    expect(deleteRows(s, 3, 1).cells[3][0]).toBe('=SUM(A1:A2)');
-    expect(deleteRows(table([['A'], ['1'], ['=A1']]), 1, 1).cells[1][0]).toBe('=#REF!');
+    const s = table([['A'], ['1'], ['2'], ['3'], ['=SUM(A2:A4)']]);
+    expect(insertRows(s, 1, 1).cells[5][0]).toBe('=SUM(A3:A5)');
+    expect(deleteRows(s, 3, 1).cells[3][0]).toBe('=SUM(A2:A3)');
+    expect(deleteRows(table([['A'], ['1'], ['=A2']]), 1, 1).cells[1][0]).toBe('=#REF!');
   });
 
   it('follows a column across an insert and a move', () => {
-    const s = table([['A', 'B'], ['2', '=A1*10']]);
-    expect(insertCols(s, 0, 1).cells[1][2]).toBe('=B1*10');
-    expect(moveCols(s, 0, 0, 2).cells[1][0]).toBe('=B1*10');
+    const s = table([['A', 'B'], ['2', '=A2*10']]);
+    expect(insertCols(s, 0, 1).cells[1][2]).toBe('=B2*10');
+    expect(moveCols(s, 0, 0, 2).cells[1][0]).toBe('=B2*10');
   });
 
   it('leaves text in quotes alone', () => {

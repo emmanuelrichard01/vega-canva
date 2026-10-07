@@ -1,45 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { parseMermaid, SHAPE_SPECS, type MermaidShape } from './mermaid';
 import { looksLikeSequence, parseSequence } from './sequence';
 import { looksLikePie, parsePie } from './pie';
+import { MERMAID_TEMPLATES } from './mermaidTemplates';
 
 /**
  * The templates are the first Mermaid most people here will ever read, and a
- * broken one is a worse first impression than no template at all -- it says
+ * broken one is a worse first impression than no template at all: it says
  * the feature does not work, using the feature's own words.
- *
- * Read out of the component source rather than imported, because they live
- * beside the dialog that offers them and exporting them only for a test would
- * be moving code to suit the test.
  */
-const MODAL = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '..', '..', 'components', 'MermaidModal.tsx'
-);
-
-interface Template {
-  name: string;
-  kind: 'flow' | 'sequence' | 'pie';
-  source: string;
-}
-
-function templates(): Template[] {
-  const src = readFileSync(MODAL, 'utf8');
-  const start = src.indexOf('const TEMPLATES');
-  const block = src.slice(start, src.indexOf('\n];', start));
-  const re = /name: '([^']+)',\s*kind: '(flow|sequence|pie)',\s*source: `([\s\S]*?)`,/g;
-  const out: Template[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(block))) {
-    out.push({ name: m[1], kind: m[2] as Template['kind'], source: m[3] });
-  }
-  return out;
-}
-
-const ALL = templates();
+const ALL = MERMAID_TEMPLATES;
 /**
  * The two engines are asserted separately because they are separate: a
  * sequence diagram has no `nodes` or `edges` to count and a flowchart has no

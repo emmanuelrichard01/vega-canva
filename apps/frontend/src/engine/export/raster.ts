@@ -7,6 +7,7 @@ import { expectedImages, waitForImages } from './imagesReady';
 import { resolveBackground, type ExportOptions, type FormatSpec } from './ExportTypes';
 import { exportIds, exportIdSet } from './exportScope';
 import { fitScale } from './rasterLimits';
+import { ensureFamiliesLoaded, familiesInNodes } from '../text/fontEmbed';
 
 // Re-exported so importers keep one name for the cap, while the arithmetic
 // itself lives in a module Node can load.
@@ -189,6 +190,8 @@ export async function mountForCapture(options: ExportOptions): Promise<() => voi
   const release = renderScope.require(ids);
   try {
     await nextCommit();
+    // Uploaded and local faces, so the capture is not drawn in the fallback.
+    await ensureFamiliesLoaded(familiesInNodes(ids.map((id) => objects[id]).filter(Boolean)));
     /**
      * And then for the pictures.
      *

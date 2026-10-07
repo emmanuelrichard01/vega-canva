@@ -1,7 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import {
   angleDelta,
   angleOf,
@@ -196,53 +193,8 @@ describe('the rotate cursor points the right way', () => {
   });
 });
 
-describe('the box the zones are placed from', () => {
-  const src = readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), '../../components/canvas/RotateZones.tsx'),
-    'utf8'
-  );
-
-  /**
-   * The bug this pins, because the arithmetic above could not see it.
-   *
-   * `rotateZones` was always right. The component fed it the wrong box: it
-   * read `proxy.x()` and treated it as a top-left, and `fitProxy` positions the
-   * proxy **by its centre** with an offset so Konva turns it about its middle.
-   * Every zone therefore landed half a box down and to the right of the corner
-   * it belonged to — off the shape entirely for anything bigger than the zone.
-   * Nothing could be hovered and nothing could be rotated, and the pure tests
-   * all passed.
-   *
-   * A structural check, in the manner of `sketchHitArea.test.ts` beside it and
-   * for the same reason: the failure is in what a component *reads*, and no
-   * assertion about the function it calls can reach that.
-   */
-  it('comes from the parent, not from the proxy', () => {
-    expect(src, 'the box must be a prop').toMatch(/box:\s*Box/);
-    expect(
-      src.replace(/\/\*[\s\S]*?\*\//g, ''),
-      'reading the proxy for geometry is the bug: it is positioned by its centre'
-    ).not.toMatch(/proxy\.(x|y|width|height)\(\)/);
-  });
-
-  it('takes its starting angle from the document, not the proxy', () => {
-    /**
-     * The proxy is a scratch node the transformer drives, and `handleTransformEnd`
-     * used to leave it at zero until the next `fitProxy`. Reading a start angle
-     * off it therefore returned 0 for an object that was plainly turned — so a
-     * second rotation threw the object back to square before turning it, which
-     * is the "jumps, rotates a bit, then snaps back" report.
-     *
-     * `rotation` is the same value `fitProxy` fits the proxy *to*, one step
-     * earlier, so it cannot be behind it.
-     */
-    expect(src).toContain('startRotation: rotation');
-    expect(
-      src.replace(/\/\*[\s\S]*?\*\//g, ''),
-      'the start angle must not come from the scratch proxy'
-    ).not.toMatch(/startRotation:\s*proxy\.rotation\(\)/);
-  });
-});
+// What `RotateZones` reads (the box and start angle, never the proxy) is
+// asserted by rendering it, in rotateZones.component.test.ts.
 
 describe('shear', () => {
   /**

@@ -1,27 +1,24 @@
 import React from 'react';
 import {
+  AlignCenterVertical,
+  AlignEndVertical,
+  AlignHorizontalSpaceAround,
+  AlignStartVertical,
   ArrowRight,
   ArrowRightToLine,
   Columns3,
-  Frame,
-  Rows3,
+  Hexagon,
   RectangleHorizontal,
   RectangleVertical,
+  Rows3,
   Shrink,
-  UnfoldHorizontal,
-  Hexagon,
-  Minus,
-  MoveRight,
   Star,
+  UnfoldHorizontal,
 } from 'lucide-react';
-import { Accordion, Row, SubGroup } from '../panelPrimitives';
-import { NumberStepper } from '../../ui/NumberStepper';
-import { Switch } from '../../ui/Switch';
-import { SegmentedControl } from '../../ui/SegmentedControl';
-import { ShapeIcon } from '../../workspace/shapeIcons';
+import { SubGroup } from '../panelPrimitives';
+import { NumberField, Note, PairRow, Row, Section, SegmentedControl, Select, Switch } from '../grammar';
 import {
   CALLOUT_TAILS,
-  CALLOUT_TAIL_CELLS,
   displayBounds,
   fromDisplay,
   paramSuffix,
@@ -80,10 +77,10 @@ import {
 import type { AffordanceId } from '../../../engine/selection/affordances';
 
 const SAFE_EDGES = [
-  { key: 'top', label: 'T' },
-  { key: 'right', label: 'R' },
-  { key: 'bottom', label: 'B' },
-  { key: 'left', label: 'L' },
+  { key: 'top', label: 'T', name: 'Top' },
+  { key: 'right', label: 'R', name: 'Right' },
+  { key: 'bottom', label: 'B', name: 'Bottom' },
+  { key: 'left', label: 'L', name: 'Left' },
 ] as const;
 
 interface ShapeGeometrySectionProps {
@@ -94,25 +91,13 @@ interface ShapeGeometrySectionProps {
   shared: <T>(read: (n: AnyNode) => T) => Shared<T>;
   setGeometry: (patch: Record<string, unknown>) => void;
   setSafeArea: (edge: 'top' | 'right' | 'bottom' | 'left', value: number) => void;
-  /** Resize this frame to a named size, keeping its top-left corner. */
   applyFramePreset: (preset: FramePreset) => void;
-  /** Swap the frame's width and height, transposing its safe area with them. */
   turnFrame: () => void;
-  /** Shrink the frame to the union of what it contains. */
   fitFrameToContents: () => void;
-  /** How many objects this frame owns, so the fit control can explain itself. */
   frameChildCount: number;
-  /** Set or clear the frame's column measure. */
   setLayoutGuide: (guide: LayoutGuide | undefined) => void;
 }
 
-/**
- * The two axes of a measure, so the panel writes one block rather than two.
- *
- * They are the same shape by design — see `LayoutGuide` — and rendering them
- * from a list is what keeps them the same in the panel too. Two hand-written
- * blocks is where "columns has a margin field and rows does not" comes from.
- */
 const AXES: {
   key: 'columns' | 'rows';
   label: string;
@@ -120,13 +105,7 @@ const AXES: {
   fallback: LayoutAxis;
   glyph: React.ReactNode;
 }[] = [
-  {
-    key: 'columns',
-    label: 'Columns',
-    hint: 'Vertical tracks, dividing the width.',
-    fallback: DEFAULT_COLUMNS,
-    glyph: <Columns3 size={13} />,
-  },
+  { key: 'columns', label: 'Columns', hint: 'Vertical tracks, dividing the width.', fallback: DEFAULT_COLUMNS, glyph: <Columns3 size={13} /> },
   {
     key: 'rows',
     label: 'Rows',
@@ -136,19 +115,16 @@ const AXES: {
   },
 ];
 
-/**
- * Whether a guide is exactly a preset.
- *
- * Field by field on both axes, because a preset that sets only columns is not
- * matched by a guide that also has rows — it is that preset *plus* something,
- * and lighting the chip would claim the rows came from it.
- */
 function sameGuide(a: LayoutGuide | undefined, b: LayoutGuide): boolean {
   const axis = (x: LayoutAxis | undefined, y: LayoutAxis | undefined) =>
     (!x && !y) || Boolean(x && y && x.count === y.count && x.gutter === y.gutter && x.margin === y.margin);
   return axis(a?.columns, b.columns) && axis(a?.rows, b.rows);
 }
 
+/**
+ * The subject sections of a shape or frame: what makes this kind of object
+ * what it is. Each appears only for the kind it belongs to.
+ */
 export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
   node,
   uniformKind,
@@ -163,258 +139,195 @@ export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
   frameChildCount,
   setLayoutGuide,
 }) => {
-  // Empty for every kind with no dial of its own, which is most of them.
   const params = node.type === 'shape' ? shapeParams(node.geometry.kind) : [];
 
   return (
     <>
-      {uniformKind && node.type === 'shape' && openShape && (
-        <Accordion title="Ends" icon={<MoveRight size={13} />}>
-          <Row stack label="Head" hint="Whether the marker sits inside the line's length or projects past its end.">
-            <SegmentedControl
-              ariaLabel="Arrowhead alignment"
-              mixed={shared((n) => (n.type === 'shape'
-                ? n.geometry.endAlign ?? defaultEndAlign(n.geometry.lineProfile)
-                : null)).mixed}
-              value={node.geometry.endAlign ?? defaultEndAlign(node.geometry.lineProfile)}
-              onChange={(v) => setGeometry({ endAlign: v as EndAlign })}
-              segments={[
-                { value: 'inside', label: 'At the end', hint: 'The tip lands on the last point', icon: <ArrowRightToLine size={14} /> },
-                { value: 'extend', label: 'Past the end', hint: 'The line keeps its full length and the head projects', icon: <ArrowRight size={14} /> },
-              ]}
-            />
-          </Row>
-          <Row label="End size" hint="How big both markers are, relative to the stroke.">
-            {(() => {
-              const scale = shared((n) => (n.type === 'shape' ? n.geometry.endScale ?? 1 : null));
-              return (
-                <NumberStepper
-                  value={Math.round((scale.value ?? 1) * 100)}
-                  mixed={scale.mixed}
-                  onChange={(v) => setGeometry({ endScale: v === 100 ? undefined : v / 100 })}
-                  min={MIN_END_SCALE * 100}
-                  max={MAX_END_SCALE * 100}
-                  step={25}
-                  suffix="%"
-                />
-              );
-            })()}
-          </Row>
-          {(['endStart', 'endEnd'] as const).map((side) => (
-            <Row
-              stack
-              key={side}
-              label={side === 'endStart' ? 'Start' : 'End'}
-              hint={side === 'endStart' ? 'What sits at the first end.' : 'What sits at the second end.'}
-            >
+      {uniformKind && node.type === 'shape' && openShape && (() => {
+        const scale = shared((n) => (n.type === 'shape' ? n.geometry.endScale ?? 1 : null));
+        return (
+          <Section id="ends" title="Ends">
+            <Row label="Head" hint="Whether the marker sits inside the line's length or projects past its end.">
               <SegmentedControl
-                ariaLabel={side === 'endStart' ? 'Start of the line' : 'End of the line'}
-                mixed={shared((n) => (n.type === 'shape' ? n.geometry[side] ?? 'none' : null)).mixed}
-                value={node.geometry[side] ?? 'none'}
-                onChange={(v) => setGeometry({ [side]: v as EndCapKind })}
-                segments={END_CAP_KINDS.map((kind) => ({
-                  value: kind,
-                  label: END_CAP_LABELS[kind],
-                  icon: <EndCapIcon kind={kind} flip={side === 'endStart'} />,
-                }))}
+                ariaLabel="Arrowhead alignment"
+                fill
+                mixed={shared((n) => (n.type === 'shape' ? n.geometry.endAlign ?? defaultEndAlign(n.geometry.lineProfile) : null)).mixed}
+                value={node.geometry.endAlign ?? defaultEndAlign(node.geometry.lineProfile)}
+                onChange={(v) => setGeometry({ endAlign: v as EndAlign })}
+                segments={[
+                  { value: 'inside', label: 'At the end', hint: 'The tip lands on the last point', icon: <ArrowRightToLine size={14} /> },
+                  { value: 'extend', label: 'Past the end', hint: 'The line keeps its full length and the head projects', icon: <ArrowRight size={14} /> },
+                ]}
               />
             </Row>
-          ))}
-        </Accordion>
-      )}
+            <Row label="Size" hint="How big both markers are, relative to the stroke.">
+              <NumberField
+                label="End marker size"
+                glyph="S"
+                unit="%"
+                min={MIN_END_SCALE * 100}
+                max={MAX_END_SCALE * 100}
+                step={25}
+                value={scale.mixed ? 'mixed' : Math.round((scale.value ?? 1) * 100)}
+                onChange={(v) => setGeometry({ endScale: v === 100 ? undefined : v / 100 })}
+              />
+            </Row>
+            {(['endStart', 'endEnd'] as const).map((side) => (
+              <Row
+                stack
+                key={side}
+                label={side === 'endStart' ? 'Start' : 'End'}
+                hint={side === 'endStart' ? 'What sits at the first end.' : 'What sits at the second end.'}
+              >
+                <SegmentedControl
+                  ariaLabel={side === 'endStart' ? 'Start of the line' : 'End of the line'}
+                  mixed={shared((n) => (n.type === 'shape' ? n.geometry[side] ?? 'none' : null)).mixed}
+                  value={node.geometry[side] ?? 'none'}
+                  onChange={(v) => setGeometry({ [side]: v as EndCapKind })}
+                  segments={END_CAP_KINDS.map((kind) => ({
+                    value: kind,
+                    label: END_CAP_LABELS[kind],
+                    icon: <EndCapIcon kind={kind} flip={side === 'endStart'} />,
+                  }))}
+                />
+              </Row>
+            ))}
+          </Section>
+        );
+      })()}
 
       {uniformKind && node.type === 'shape' && openShape && (() => {
-        /** Whether this line's own points describe its shape. See `polyline.ts`. */
-        const multiPoint =
-          isMultiPoint(node.geometry.vertices) ||
-          hasBend(node.geometry.bends) ||
-          node.geometry.smooth === true;
+        const multiPoint = isMultiPoint(node.geometry.vertices) || hasBend(node.geometry.bends) || node.geometry.smooth === true;
+        const profile = node.geometry.lineProfile ?? 'straight';
+        const waves = shared((n) => {
+          if (n.type !== 'shape') return null;
+          if (typeof n.geometry.lineWaves === 'number') return n.geometry.lineWaves;
+          if (n.geometry.a && n.geometry.b) {
+            const dx = n.geometry.b.x - n.geometry.a.x;
+            const dy = n.geometry.b.y - n.geometry.a.y;
+            return dynamicWaves(Math.hypot(dx, dy), n.geometry.lineProfile);
+          }
+          return 6;
+        });
+        const amp = shared((n) => (n.type === 'shape' ? n.geometry.lineAmplitude ?? 1.0 : null));
         return (
-        <Accordion title="Line" icon={<Minus size={13} />}>
-          {/*
-            A run of corners takes its shape from its own points, so the profile
-            has nothing to apply to and the renderer ignores it. Withdrawn here
-            rather than left inert: this panel is driven by a capability
-            registry precisely so a control cannot outlive what honours it, and
-            the toolbar's copy of this decision was already gated.
-
-            Said out loud rather than left as a gap, because an option that
-            disappears with no explanation reads as a bug.
-          */}
-          {multiPoint ? (
-            <Row stack label="Style">
-              <p className="panel-note">
-                This line takes its shape from its points. Round its corners from
-                the floating toolbar, or open the point editor to bend one segment.
-              </p>
-            </Row>
-          ) : (
-          <>
-          <Row stack label="Style" hint="The shape the run makes on its way across. Every style takes the same ends, weight and dash.">
-            <SegmentedControl
-              ariaLabel="Line style"
-              mixed={shared((n) => (n.type === 'shape' ? n.geometry.lineProfile ?? 'straight' : null)).mixed}
-              value={node.geometry.lineProfile ?? 'straight'}
-              onChange={(v) => setGeometry({ lineProfile: v === 'straight' ? undefined : (v as LineProfile) })}
-              segments={LINE_PROFILES.map((profile) => ({
-                value: profile,
-                label: LINE_PROFILE_LABELS[profile],
-                hint: LINE_PROFILE_LABELS[profile],
-                icon: <LineProfileIcon profile={profile} />,
-              }))}
-            />
-          </Row>
-          {(node.geometry.lineProfile ?? 'straight') !== 'straight'
-            && node.geometry.lineProfile !== 'curved' && (
-            <Row
-              label={node.geometry.lineProfile === 'coil' ? 'Loops' : 'Repeats'}
-              hint="How many times the shape repeats along the run. More makes them tighter, not smaller."
-            >
-              {(() => {
-                const waves = shared((n) => {
-                  if (n.type !== 'shape') return null;
-                  if (typeof n.geometry.lineWaves === 'number') return n.geometry.lineWaves;
-                  if (n.geometry.a && n.geometry.b) {
-                    const dx = n.geometry.b.x - n.geometry.a.x;
-                    const dy = n.geometry.b.y - n.geometry.a.y;
-                    return dynamicWaves(Math.hypot(dx, dy), n.geometry.lineProfile);
-                  }
-                  return 6;
-                });
-                return (
-                  <NumberStepper
-                    value={waves.value ?? 6}
-                    mixed={waves.mixed}
-                    onChange={(v) => setGeometry({ lineWaves: v })}
-                    min={MIN_WAVES}
-                    max={MAX_WAVES}
+          <Section id="line" title="Line">
+            {multiPoint ? (
+              <Note>
+                This line takes its shape from its points. Round its corners from the floating toolbar, or open the
+                point editor to bend one segment.
+              </Note>
+            ) : (
+              <>
+                <Row stack label="Style" hint="The shape the run makes on its way across. Every style takes the same ends, weight and dash.">
+                  <SegmentedControl
+                    ariaLabel="Line style"
+                    mixed={shared((n) => (n.type === 'shape' ? n.geometry.lineProfile ?? 'straight' : null)).mixed}
+                    value={profile}
+                    onChange={(v) => setGeometry({ lineProfile: v === 'straight' ? undefined : (v as LineProfile) })}
+                    segments={LINE_PROFILES.map((p) => ({
+                      value: p,
+                      label: LINE_PROFILE_LABELS[p],
+                      hint: LINE_PROFILE_LABELS[p],
+                      icon: <LineProfileIcon profile={p} />,
+                    }))}
                   />
-                );
-              })()}
-            </Row>
-          )}
-          {(node.geometry.lineProfile ?? 'straight') !== 'straight' && (
-            <Row
-              label={
-                node.geometry.lineProfile === 'coil'
-                  ? 'Loop size'
-                  : node.geometry.lineProfile === 'curved'
-                    ? 'Bow depth'
-                    : 'Wave height'
-              }
-              hint={
-                node.geometry.lineProfile === 'coil'
-                  ? 'How large the loops are, relative to the baseline.'
-                  : 'Height / amplitude of the profile curve.'
-              }
-            >
-              {(() => {
-                const amp = shared((n) => (n.type === 'shape' ? n.geometry.lineAmplitude ?? 1.0 : null));
-                return (
-                  <NumberStepper
-                    value={Math.round((amp.value ?? 1.0) * 100)}
-                    mixed={amp.mixed}
-                    onChange={(v) => setGeometry({ lineAmplitude: v === 100 ? undefined : v / 100 })}
-                    min={MIN_AMPLITUDE_SCALE * 100}
-                    max={MAX_AMPLITUDE_SCALE * 100}
-                    step={10}
-                    suffix="%"
-                  />
-                );
-              })()}
-            </Row>
-          )}
-          </>
-          )}
-        </Accordion>
+                </Row>
+                {profile !== 'straight' && (
+                  <PairRow>
+                    {profile !== 'curved' ? (
+                      <NumberField
+                        label={profile === 'coil' ? 'Loops' : 'Repeats'}
+                        glyph="N"
+                        min={MIN_WAVES}
+                        max={MAX_WAVES}
+                        value={waves.mixed ? 'mixed' : waves.value ?? 6}
+                        onChange={(v) => setGeometry({ lineWaves: v })}
+                      />
+                    ) : (
+                      <span aria-hidden />
+                    )}
+                    <NumberField
+                      label={profile === 'coil' ? 'Loop size' : profile === 'curved' ? 'Bow depth' : 'Wave height'}
+                      glyph="A"
+                      unit="%"
+                      min={MIN_AMPLITUDE_SCALE * 100}
+                      max={MAX_AMPLITUDE_SCALE * 100}
+                      step={10}
+                      value={amp.mixed ? 'mixed' : Math.round((amp.value ?? 1.0) * 100)}
+                      onChange={(v) => setGeometry({ lineAmplitude: v === 100 ? undefined : v / 100 })}
+                    />
+                  </PairRow>
+                )}
+              </>
+            )}
+          </Section>
         );
       })()}
 
       {uniformKind && node.type === 'shape' && node.geometry.kind === 'star' && (
-        <Accordion title="Star" icon={<Star size={13} />}>
-          <Row label="Points">
-            <NumberStepper
-              value={node.geometry.points ?? 5}
-              onChange={(points) => setGeometry({ points })}
+        <Section id="star" title="Star">
+          <PairRow>
+            <NumberField
+              label="Points"
+              glyph={<Star size={12} />}
               min={MIN_STAR_POINTS}
               max={MAX_STAR_POINTS}
+              value={node.geometry.points ?? 5}
+              onChange={(points) => setGeometry({ points })}
             />
-          </Row>
-          <Row label="Depth">
-            <NumberStepper
-              value={Math.round((1 - (node.geometry.innerRatio ?? 0.5)) * 100)}
-              onChange={(depth) => setGeometry({ innerRatio: 1 - depth / 100 })}
+            <NumberField
+              label="Depth"
+              glyph="D"
+              unit="%"
+              step={5}
               min={Math.round((1 - MAX_STAR_RATIO) * 100)}
               max={Math.round((1 - MIN_STAR_RATIO) * 100)}
-              step={5}
+              value={Math.round((1 - (node.geometry.innerRatio ?? 0.5)) * 100)}
+              onChange={(depth) => setGeometry({ innerRatio: 1 - depth / 100 })}
             />
-          </Row>
-        </Accordion>
+          </PairRow>
+        </Section>
       )}
 
       {uniformKind && node.type === 'shape' && node.geometry.kind === 'polygon' && (
-        <Accordion title="Polygon" icon={<Hexagon size={13} />}>
+        <Section id="polygon" title="Polygon">
           <Row label="Sides">
-            <NumberStepper
-              value={node.geometry.points ?? 3}
-              onChange={(points) => setGeometry({ points })}
+            <NumberField
+              label="Sides"
+              glyph={<Hexagon size={12} />}
               min={MIN_POLYGON_SIDES}
               max={MAX_POLYGON_SIDES}
+              value={node.geometry.points ?? 3}
+              onChange={(points) => setGeometry({ points })}
             />
           </Row>
-        </Accordion>
+        </Section>
       )}
 
-      {/**
-        * Every parametric shape's dials, from `SHAPE_PARAMS`.
-        *
-        * This was ten hand-written accordions of one or two steppers each,
-        * every one repeating the same four lines with a different field and a
-        * different pair of bounds -- and the bounds had drifted from the ones
-        * the document enforced and the geometry honoured. Reading the table
-        * means a new dial is a row in it, and means a stepper cannot offer a
-        * range the shape will not draw.
-        *
-        * The group is titled with the shape's own name, which is what the ten
-        * accordions were really for.
-        */}
       {uniformKind && node.type === 'shape' && params.length > 0 && (
-        <Accordion
-          title={shapeParamLabel(node.geometry.kind) ?? 'Shape'}
-          icon={<ShapeIcon kind={node.geometry.kind} size={13} />}
-          defaultOpen
-        >
+        <Section id="shape" title={shapeParamLabel(node.geometry.kind) ?? 'Shape'}>
           {params.map((param) => {
             const bounds = displayBounds(param);
             return (
               <Row key={param.field} label={param.label} hint={param.hint}>
-                <NumberStepper
-                  value={toDisplay(param, paramValue(node.geometry, param))}
-                  onChange={(shown) =>
-                    setGeometry({ [param.field]: fromDisplay(param, shown) })
-                  }
+                <NumberField
+                  label={param.label}
+                  glyph={param.label.charAt(0).toUpperCase()}
+                  unit={paramSuffix(param)}
                   min={bounds.min}
                   max={bounds.max}
                   step={bounds.step}
-                  suffix={paramSuffix(param)}
+                  value={toDisplay(param, paramValue(node.geometry, param))}
+                  onChange={(shown) => setGeometry({ [param.field]: fromDisplay(param, shown) })}
                 />
               </Row>
             );
           })}
-
-          {/*
-            The tail, as a pad rather than a row of seven chips.
-            Seven names do not fit a 260px panel -- "Bottom L" was already a
-            truncation of one -- and the thing being chosen is a *direction*,
-            which a picture of the directions says without any names at all.
-            Two of the seven were missing from the old picker entirely, so
-            they were drawable, storable and unreachable.
-          */}
           {node.geometry.kind === 'callout' && (
             <Row stack label="Tail">
               <div className="tailpad" role="radiogroup" aria-label="Where the tail comes out">
                 {CALLOUT_TAILS.map((tail) => {
-                  const cell = CALLOUT_TAIL_CELLS[tail];
                   const active = (node.geometry.tailPosition ?? 'bottom-left') === tail;
                   return (
                     <button
@@ -424,8 +337,8 @@ export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
                       aria-checked={active}
                       aria-label={tail.replace('-', ' ')}
                       className="tailpad__cell"
+                      data-tail={tail}
                       data-active={active || undefined}
-                      style={{ gridRow: cell.row, gridColumn: cell.col }}
                       onClick={() => setGeometry({ tailPosition: tail })}
                     >
                       <span className="tailpad__dot" />
@@ -436,78 +349,37 @@ export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
               </div>
             </Row>
           )}
-        </Accordion>
+        </Section>
       )}
 
       {affords('frame-preset') && node.type === 'frame' && (
-        <Accordion
-          title="Frame"
-          icon={<Frame size={13} />}
-          defaultOpen
-          badge={presetMatching(node.width, node.height)?.label}
-        >
-          {/*
-            The size, by name.
-
-            A frame is one of the few things on a board whose dimensions have
-            a *name* — 1440x1024 is "Desktop", 595x842 is "A4" — and until now
-            the only place that name existed was the tool that made it. Resize
-            a frame by dragging and there was no way back to the size it was
-            born at, short of typing four digits into the Transform block from
-            memory.
-
-            The badge on the header says which one it currently is, and says
-            nothing when it is not one — a frame one unit off a preset has been
-            resized deliberately, and calling it Desktop would be worse than
-            calling it nothing.
-          */}
-          <Row stack label="Size" hint="Resize to a standard size. The frame keeps its top-left corner.">
-            <select
-              className="prop-select"
+        <Section id="frame" title="Frame" meta={presetMatching(node.width, node.height)?.label}>
+          <Row label="Size" hint="Resize to a standard size. The frame keeps its top-left corner.">
+            <Select
+              label="Frame size"
               value={presetMatching(node.width, node.height)?.id ?? '__custom'}
-              onChange={(e) => {
-                const preset = framePreset(e.target.value);
+              options={[
+                ...(presetMatching(node.width, node.height) ? [] : [{ value: '__custom', label: 'Custom' }]),
+                ...FRAME_PRESET_GROUPS.flatMap((group) =>
+                  FRAME_PRESETS.filter((p) => p.group === group).map((p) => ({
+                    value: p.id,
+                    label: p.label,
+                    detail: `${p.width} × ${p.height}`,
+                    group,
+                  }))
+                ),
+              ]}
+              onChange={(id) => {
+                const preset = framePreset(id);
                 if (preset) applyFramePreset(preset);
               }}
-            >
-              {!presetMatching(node.width, node.height) && (
-                <option value="__custom">Custom</option>
-              )}
-              {FRAME_PRESET_GROUPS.map((group) => (
-                <optgroup key={group} label={group}>
-                  {FRAME_PRESETS.filter((p) => p.group === group).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.label} · {p.width} × {p.height}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
+            />
           </Row>
-
-          {/*
-            Orientation, which is why the list above is still short.
-
-            Half the sizes anybody wants are a listed size on its side — a
-            landscape phone, a portrait slide, an A4 turned for a certificate.
-            Listing both of every one would double a catalogue that is
-            deliberately kept readable, to buy a single bit of information. One
-            toggle buys the same bit.
-
-            It swaps the frame's own width and height rather than looking a
-            preset up, so it works on a custom size too. A square frame has no
-            orientation to choose, and the control says so rather than offering
-            two buttons that do the same nothing.
-          */}
           <Row label="Orientation" hint="Swap width and height. The safe area is transposed with them.">
             <SegmentedControl
               ariaLabel="Frame orientation"
               fill
-              disabledReason={
-                node.width === node.height
-                  ? 'A square frame is the same either way up.'
-                  : undefined
-              }
+              disabledReason={node.width === node.height ? 'A square frame is the same either way up.' : undefined}
               value={node.height > node.width ? 'portrait' : 'landscape'}
               onChange={(next) => {
                 const isPortrait = node.height > node.width;
@@ -520,55 +392,21 @@ export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
               ]}
             />
           </Row>
+          <button
+            type="button"
+            className="sketch-redraw"
+            onClick={fitFrameToContents}
+            disabled={frameChildCount === 0}
+            data-tooltip={
+              frameChildCount === 0
+                ? 'Nothing in this frame to fit to'
+                : `Fit to the ${frameChildCount} object${frameChildCount === 1 ? '' : 's'} inside`
+            }
+          >
+            <Shrink size={13} aria-hidden="true" />
+            Fit to contents
+          </button>
 
-          {/*
-            Shrink to what is actually in it.
-
-            A frame drawn around existing work is almost never the right size
-            for it, and the alternative is dragging four edges in while
-            watching for the moment something clips. This reads the frame's own
-            members — the containment the frame already maintains — and fits
-            the box to their union plus a margin.
-
-            Disabled when the frame is empty rather than hidden, with the
-            reason: an empty frame fitted to its contents would collapse to
-            nothing, and a control that silently does that is worse than one
-            that explains itself.
-          */}
-          <Row stack label="Contents">
-            <button
-              type="button"
-              className="sketch-redraw"
-              onClick={fitFrameToContents}
-              disabled={frameChildCount === 0}
-              data-tooltip={
-                frameChildCount === 0
-                  ? 'Nothing in this frame to fit to'
-                  : `Fit to the ${frameChildCount} object${frameChildCount === 1 ? '' : 's'} inside`
-              }
-            >
-              <Shrink size={13} aria-hidden="true" />
-              Fit to contents
-            </button>
-          </Row>
-
-          <div className="prop-rule" role="presentation" />
-
-          {/*
-            The column measure — the *other* meaning of "grid".
-
-            `engine/grid/` builds a grid as objects you can select and colour;
-            this draws nothing that exists. It is chrome over the frame, it
-            never exports, and its only job is to give edges for other things
-            to line up against — which is why twelve columns is ordinary here
-            and would be twelve tall slivers there.
-
-            Things snap to it, and that is the one line separating it from the
-            safe area below: a safe area is drawn and deliberately snaps to
-            nothing, because a frame that promised a safe area and then quietly
-            moved things into it would be worse than no guide at all. A measure
-            exists to be moved onto.
-          */}
           <SubGroup
             label="Measure"
             hint="Columns and rows drawn over the frame for placing things against. Never exported, and objects snap to them."
@@ -577,9 +415,6 @@ export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
           >
             {node.layoutGuide && (
               <>
-                {/* The measures worth one click. Twelve is twelve because of
-                    what it factors into: halves, thirds, quarters and sixths
-                    all land on a column boundary. */}
                 <div className="grid-presets" role="group" aria-label="Measure preset">
                   {LAYOUT_GUIDE_PRESETS.map((preset) => (
                     <button
@@ -587,128 +422,133 @@ export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
                       type="button"
                       className="grid-preset"
                       data-active={sameGuide(node.layoutGuide, preset.guide) || undefined}
+                      aria-pressed={sameGuide(node.layoutGuide, preset.guide)}
                       onClick={() => setLayoutGuide(preset.guide)}
                     >
                       {preset.label}
                     </button>
                   ))}
                 </div>
-
-                {/*
-                  Two axes, each with its own switch.
-
-                  A count of zero would be the obvious way to turn one off and
-                  is the wrong one: the normalizer drops an axis with no
-                  tracks, so the field would delete itself and leave a stepper
-                  showing a number that is not stored. An axis is present or it
-                  is not, and the switch says which.
-                */}
                 {AXES.map(({ key, label, hint, fallback, glyph }) => {
                   const axis = node.layoutGuide?.[key];
                   return (
                     <React.Fragment key={key}>
                       <Row label={label} hint={hint}>
                         <Switch
+                          ariaLabel={`${label} measure`}
                           checked={Boolean(axis)}
-                          onChange={(on) =>
-                            setLayoutGuide({
-                              ...node.layoutGuide,
-                              [key]: on ? fallback : undefined,
-                            })
-                          }
+                          onChange={(on) => setLayoutGuide({ ...node.layoutGuide, [key]: on ? fallback : undefined })}
                         />
                       </Row>
                       {axis && (
-                        <>
-                          <div className="prop-grid">
-                            <NumberStepper
-                              aria-label={`${label} count`}
-                              glyph={glyph}
-                              value={axis.count}
-                              onChange={(count) =>
-                                setLayoutGuide({ ...node.layoutGuide, [key]: { ...axis, count } })
-                              }
-                              min={1}
-                              max={48}
-                            />
-                            <NumberStepper
-                              aria-label={`Gutter between ${label.toLowerCase()}`}
-                              glyph={<UnfoldHorizontal size={13} />}
-                              suffix="px"
-                              value={axis.gutter}
-                              onChange={(gutter) =>
-                                setLayoutGuide({ ...node.layoutGuide, [key]: { ...axis, gutter } })
-                              }
-                              min={0}
-                              max={200}
-                            />
-                          </div>
-                          <Row
-                            label="Margin"
-                            hint="Inset from the two edges this axis runs between. The first and last tracks start here."
-                          >
-                            <NumberStepper
-                              aria-label={`${label} margin`}
-                              suffix="px"
-                              value={axis.margin}
-                              onChange={(margin) =>
-                                setLayoutGuide({ ...node.layoutGuide, [key]: { ...axis, margin } })
-                              }
-                              min={0}
-                              max={400}
-                              step={8}
-                            />
-                          </Row>
-                        </>
+                        <PairRow>
+                          <NumberField
+                            label={`${label} count`}
+                            glyph={glyph}
+                            min={1}
+                            max={48}
+                            value={axis.count}
+                            onChange={(count) => setLayoutGuide({ ...node.layoutGuide, [key]: { ...axis, count } })}
+                          />
+                          <NumberField
+                            label={`Gutter between ${label.toLowerCase()}`}
+                            glyph={<UnfoldHorizontal size={13} />}
+                            unit="px"
+                            min={0}
+                            max={200}
+                            value={axis.gutter}
+                            onChange={(gutter) => setLayoutGuide({ ...node.layoutGuide, [key]: { ...axis, gutter } })}
+                          />
+                        </PairRow>
+                      )}
+                      {axis && (
+                        <Row label="Align" hint="Stretch divides the space between the margins. Start, Centre and End give each track a fixed size and place the run.">
+                          <SegmentedControl
+                            ariaLabel={`${label} alignment`}
+                            fill
+                            value={axis.align ?? 'stretch'}
+                            onChange={(v) => {
+                              const align = v as NonNullable<LayoutAxis['align']>;
+                              const size = align === 'stretch' ? axis.size : axis.size ?? 80;
+                              setLayoutGuide({ ...node.layoutGuide, [key]: { ...axis, align: align === 'stretch' ? undefined : align, size } });
+                            }}
+                            segments={[
+                              { value: 'stretch', label: 'Stretch', icon: <AlignHorizontalSpaceAround size={14} /> },
+                              { value: 'start', label: 'Start', icon: <AlignStartVertical size={14} /> },
+                              { value: 'center', label: 'Centre', icon: <AlignCenterVertical size={14} /> },
+                              { value: 'end', label: 'End', icon: <AlignEndVertical size={14} /> },
+                            ]}
+                          />
+                        </Row>
+                      )}
+                      {axis && (axis.align ?? 'stretch') !== 'stretch' && (
+                        <Row label="Size" hint="Each track's width or height while the run is not stretched.">
+                          <NumberField
+                            label={`${label} track size`}
+                            glyph="S"
+                            unit="px"
+                            min={1}
+                            max={2000}
+                            value={axis.size ?? 80}
+                            onChange={(size) => setLayoutGuide({ ...node.layoutGuide, [key]: { ...axis, size } })}
+                          />
+                        </Row>
+                      )}
+                      {axis && (
+                        <Row label="Margin" hint="Inset from the two edges this axis runs between. The first and last tracks start here.">
+                          <NumberField
+                            label={`${label} margin`}
+                            glyph="M"
+                            unit="px"
+                            min={0}
+                            max={400}
+                            step={8}
+                            value={axis.margin}
+                            onChange={(margin) => setLayoutGuide({ ...node.layoutGuide, [key]: { ...axis, margin } })}
+                          />
+                        </Row>
                       )}
                     </React.Fragment>
                   );
                 })}
-
-                {/*
-                  Said when the numbers do not fit, rather than drawing nothing
-                  and leaving you to work out why.
-
-                  Twelve columns at a 100-unit gutter needs 1100 units of gap
-                  before a single column exists, and margins can eat a frame
-                  outright. Both are arithmetic somebody can fix in one edit —
-                  once they know which of the three numbers is the problem.
-                */}
                 {!guideDraws(node, node.layoutGuide) && (
-                  <p className="prop-note">
-                    The gutters and margins come to more than the frame. Lower one of
-                    them, or reduce the count.
-                  </p>
+                  <Note>The gutters and margins come to more than the frame. Lower one of them, or reduce the count.</Note>
                 )}
               </>
             )}
           </SubGroup>
 
-          <div className="prop-rule" role="presentation" />
-
-          {/*
-            The safe area, which used to be this whole section.
-
-            It is a guide rather than a size, so it sits under the rule with the
-            things that describe the frame rather than the things that change
-            its box.
-          */}
-          <Row stack label="Safe area" hint="Where content is guaranteed to survive. A guide only — nothing is clipped or moved, and it never appears in an export.">
-            <div className="prop-grid">
-              {SAFE_EDGES.map(({ key, label }) => (
-                <NumberStepper
+          <Row stack label="Safe area" hint="Where content is guaranteed to survive. A guide only: nothing is clipped or moved, and it never appears in an export.">
+            <PairRow>
+              {SAFE_EDGES.slice(0, 2).map(({ key, label, name }) => (
+                <NumberField
                   key={key}
-                  value={Math.round(node.safeArea?.[key] ?? 0)}
-                  onChange={(v) => setSafeArea(key, v)}
-                  label={label}
-                  suffix="px"
+                  label={`${name} safe area`}
+                  glyph={label}
+                  unit="px"
                   min={0}
                   step={8}
+                  value={Math.round(node.safeArea?.[key] ?? 0)}
+                  onChange={(v) => setSafeArea(key, v)}
                 />
               ))}
-            </div>
+            </PairRow>
+            <PairRow>
+              {SAFE_EDGES.slice(2).map(({ key, label, name }) => (
+                <NumberField
+                  key={key}
+                  label={`${name} safe area`}
+                  glyph={label}
+                  unit="px"
+                  min={0}
+                  step={8}
+                  value={Math.round(node.safeArea?.[key] ?? 0)}
+                  onChange={(v) => setSafeArea(key, v)}
+                />
+              ))}
+            </PairRow>
           </Row>
-        </Accordion>
+        </Section>
       )}
     </>
   );

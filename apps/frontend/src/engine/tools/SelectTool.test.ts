@@ -54,6 +54,7 @@ describe('SelectTool', () => {
       startY: 150,
       currentX: 100,
       currentY: 150,
+      mode: 'replace',
     });
   });
 
@@ -92,10 +93,27 @@ describe('SelectTool', () => {
           minY: 0,
           maxX: 50,
           maxY: 60,
+          mode: 'add',
           additive: true,
         },
       })
     );
+  });
+
+  it('subtracts with Alt and intersects with Shift+Alt', () => {
+    const run = (evt: Record<string, boolean>) => {
+      const tool = new SelectTool();
+      const stage: any = { getPointerPosition: () => ({ x: 0, y: 0 }) };
+      stage.getStage = () => stage;
+      const ctx = { camera: { x: 0, y: 0, zoom: 1 }, setOverlayState: vi.fn() } as any;
+      tool.onPointerDown(ctx, { target: stage, evt });
+      stage.getPointerPosition = () => ({ x: 40, y: 40 });
+      tool.onPointerMove(ctx, { target: stage, evt });
+      tool.onPointerUp(ctx);
+      return dispatchSpy.mock.calls.at(-1)[0].detail.mode;
+    };
+    expect(run({ altKey: true })).toBe('subtract');
+    expect(run({ altKey: true, shiftKey: true })).toBe('intersect');
   });
 
   it('clears selection on bare click in empty space without additive modifier', () => {
@@ -166,10 +184,27 @@ describe('SelectTool', () => {
     });
 
     expect(overlay).not.toBeNull();
-    expect(overlay?.props.x).toBe(10);
-    expect(overlay?.props.y).toBe(20);
-    expect(overlay?.props.width).toBe(100);
-    expect(overlay?.props.height).toBe(100);
-    expect(overlay?.props.strokeWidth).toBe(0.5); // 1 / zoom = 1 / 2 = 0.5
+    // The box is the last child: a contrast halo, when on, is drawn under it.
+    const children = [overlay?.props.children].flat().filter(Boolean) as any[];
+    const box = children[children.length - 1];
+    expect(box.props.x).toBe(10);
+    expect(box.props.y).toBe(20);
+    expect(box.props.width).toBe(100);
+    expect(box.props.height).toBe(100);
+    expect(box.props.strokeWidth).toBe(0.5); // 1 / zoom = 1 / 2 = 0.5
+  });
+
+  it('thickens the marquee and draws a halo under it when contrast is enhanced', async () => {
+    const contrast = await import('../ui/contrast');
+    const spy = vi.spyOn(contrast, 'canvasChromeContrast').mockReturnValue({ strokeScale: 1.75, halo: true });
+    const tool = new SelectTool();
+    const overlay = tool.renderOverlay({ camera: { x: 0, y: 0, zoom: 1 } } as any, {
+      type: 'marquee', startX: 0, startY: 0, currentX: 50, currentY: 50,
+    });
+    const children = [overlay?.props.children].flat().filter(Boolean) as any[];
+    expect(children).toHaveLength(2);
+    expect(children[0].props.strokeWidth).toBeGreaterThan(children[1].props.strokeWidth);
+    expect(children[1].props.strokeWidth).toBe(1.75);
+    spy.mockRestore();
   });
 });

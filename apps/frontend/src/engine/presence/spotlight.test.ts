@@ -17,6 +17,8 @@ const person = (over: Partial<Collaborator> & { clientId: number }): Collaborato
   throws: [],
   following: null,
   spotlightAt: null,
+  listening: null,
+  chat: null,
   ...over,
 });
 

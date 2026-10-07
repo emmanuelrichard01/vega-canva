@@ -1,10 +1,9 @@
-import React from 'react';
-import { Minus, PenLine, Spline, UnfoldHorizontal } from 'lucide-react';
-import { Accordion, Row, StrokeStyleIcon } from '../panelPrimitives';
-import { ColorPickerPopover } from '../../ui/ColorPickerPopover';
+import React, { useContext, useSyncExternalStore } from 'react';
+import { Minus, Spline, UnfoldHorizontal } from 'lucide-react';
+import { StrokeStyleIcon } from '../panelPrimitives';
+import { ColorChip, NumberField, Note, PairRow, PanelSubjectContext, Row, Section, SegmentedControl } from '../grammar';
+import { isSectionOpen, setSectionOpen, subscribeSections } from '../grammar/sectionState';
 import { EyedropperButton } from '../../ui/EyedropperButton';
-import { NumberStepper } from '../../ui/NumberStepper';
-import { SegmentedControl } from '../../ui/SegmentedControl';
 import {
   DEFAULT_MITER_LIMIT,
   MAX_MITER_LIMIT,
@@ -27,6 +26,10 @@ import {
 } from '../../../engine/model/strokeStyle';
 import type { Shared } from '../../../engine/model/selection';
 
+/**
+ * Where the line sits against the edge, drawn as a band around the outline.
+ * The faint rectangle is the shape's own edge.
+ */
 const ALIGN_BAND: Record<'inside' | 'center' | 'outside', { x: number; y: number; w: number; h: number }> = {
   inside: { x: 4, y: 3, w: 12, h: 6 },
   center: { x: 3, y: 2, w: 14, h: 8 },
@@ -38,15 +41,7 @@ export const StrokeAlignIcon: React.FC<{ align: 'inside' | 'center' | 'outside' 
   return (
     <svg width="20" height="12" viewBox="0 0 20 12" aria-hidden="true" focusable="false">
       <rect x="3" y="2" width="14" height="8" fill="none" stroke="currentColor" strokeOpacity="0.3" />
-      <rect
-        x={band.x}
-        y={band.y}
-        width={band.w}
-        height={band.h}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      />
+      <rect x={band.x} y={band.y} width={band.w} height={band.h} fill="none" stroke="currentColor" strokeWidth="2" />
     </svg>
   );
 };
@@ -72,6 +67,8 @@ export const StrokeJoinIcon: React.FC<{ join: LineJoin }> = ({ join }) => (
   </svg>
 );
 
+const DEFAULT_STROKE_COLOR = '#1F2937';
+
 interface StrokeSectionProps {
   capabilities: {
     supportsStroke?: boolean;
@@ -86,8 +83,18 @@ interface StrokeSectionProps {
   setStroke: (patch: Partial<Pick<Stroke, 'color' | 'width' | 'align' | 'join' | 'miterLimit' | 'cap'>>) => void;
   setStrokeStyle: (style: StrokeStyleId) => void;
   setDashRatio: (ratio: DashRatio) => void;
+  setAppearance: (patch: Partial<Appearance>) => void;
 }
 
+/**
+ * Stroke: the outline, as a list of one.
+ *
+ * With no stroke the section is its header and `+`. With one: colour, then
+ * weight beside pattern (the dash is a multiple of the weight, so they are
+ * read together), then alignment. Cap, join and miter limit are behind the
+ * section's ⋯, and appear on their own once any of them is set. A line-like object always has a
+ * stroke, because the stroke is the object; it never offers to remove it.
+ */
 export const StrokeSection: React.FC<StrokeSectionProps> = ({
   capabilities,
   appearance,
@@ -98,70 +105,93 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
   setStroke,
   setStrokeStyle,
   setDashRatio,
+  setAppearance,
 }) => {
+  const subject = useContext(PanelSubjectContext);
+  const readDetails = () => isSectionOpen(subject, 'stroke-details', false);
+  const detailsWanted = useSyncExternalStore(subscribeSections, readDetails, readDetails);
+
   if (!capabilities.supportsStroke || !appearance) return null;
 
+  const removable = Boolean(capabilities.supportsFill);
+  const widthShared = sharedPaint((a) => a.stroke?.width ?? 0);
+  const empty = removable && !widthShared.mixed && !(appearance.stroke && appearance.stroke.width > 0);
+
   const style = styleOf(appearance.stroke);
-  // The weight the pattern is measured against. Matches `patternWeight` in
-  // `strokeStyle`, because a field showing a length derived from a clamped
-  // weight has to clamp the same way or the number it shows is not the number
-  // that was drawn.
   const weight = Math.max(1, appearance.stroke?.width ?? 0);
   const ratio: DashRatio = dashRatioOf(appearance.stroke) ?? DASH_PRESET.dashed!;
   const clampRatio = (n: number) => Math.min(MAX_DASH_RATIO, Math.max(0, n));
+  const colour = sharedPaint((a) => a.stroke?.color ?? 'transparent');
+  const miter = sharedPaint((a) => a.stroke?.miterLimit ?? DEFAULT_MITER_LIMIT);
+  const onLength = sharedPaint((a) => Math.round((dashRatioOf(a.stroke) ?? DASH_PRESET.dashed!).on * Math.max(1, a.stroke?.width ?? 0) * 10) / 10);
+  const offLength = sharedPaint((a) => Math.round((dashRatioOf(a.stroke) ?? DASH_PRESET.dashed!).off * Math.max(1, a.stroke?.width ?? 0) * 10) / 10);
+  const capShared = sharedPaint((a) => a.stroke?.cap ?? 'butt');
+  const joinShared = sharedPaint((a) => a.stroke?.join ?? 'miter');
+  /** Cap, Join and Miter: shown on request, or whenever one is already set. */
+  const customised =
+    capShared.mixed || joinShared.mixed || miter.mixed ||
+    (capShared.value ?? 'butt') !== 'butt' ||
+    (joinShared.value ?? 'miter') !== 'miter' ||
+    (miter.value ?? DEFAULT_MITER_LIMIT) !== DEFAULT_MITER_LIMIT;
+  const showDetails = detailsWanted || customised;
 
   return (
-    <Accordion
+    <Section
+      id="stroke"
       title="Stroke"
-      icon={<PenLine size={13} />}
-      defaultOpen={Boolean(appearance.stroke?.width || appearance.sketch)}
+      empty={empty}
+      onAdd={empty ? () => setStroke({ color: appearance.stroke?.color ?? DEFAULT_STROKE_COLOR, width: 2 }) : undefined}
+      addLabel="Add stroke"
+      menu={[
+        {
+          kind: 'item',
+          id: 'details',
+          label: 'Line ends and corners',
+          checked: showDetails,
+          disabled: customised,
+          disabledReason: customised ? 'Shown while a cap, join or miter limit is set' : undefined,
+          onSelect: () => setSectionOpen(subject, 'stroke-details', !detailsWanted),
+        },
+      ]}
     >
       {capabilities.supportsFill && (
-        <Row label="Color">
-          <div className="prop-inline">
-            <ColorPickerPopover
-              color={appearance.stroke?.color ?? 'transparent'}
-              mixed={sharedPaint((a) => a.stroke?.color ?? 'transparent').mixed}
-              onChange={(color) => setStroke({ color })}
-            />
-            <EyedropperButton
-              label="Pick a stroke colour from the screen"
-              onPick={(color) => setStroke({ color })}
-            />
-          </div>
-        </Row>
+        <div className="pg-list-item">
+          <ColorChip
+            label="Stroke"
+            value={colour.mixed ? 'mixed' : appearance.stroke?.color ?? 'transparent'}
+            allowNone={false}
+            onChange={(color) => setStroke({ color })}
+          />
+          <EyedropperButton label="Pick a stroke colour from the screen" onPick={(color) => setStroke({ color })} />
+          {removable && (
+            <button
+              type="button"
+              className="pg-icon-btn"
+              aria-label="Remove stroke"
+              data-tooltip="Remove stroke"
+              onClick={() => setAppearance({ stroke: undefined })}
+            >
+              <Minus size={14} aria-hidden="true" />
+            </button>
+          )}
+        </div>
       )}
 
-      {/*
-        Weight and pattern, on one line.
-
-        They are not two settings that happen to be adjacent — the dash is
-        *derived from the weight* (`dashFor`), so a three-on two-off pattern is
-        three times whatever this field says. Changing one changes what the
-        other draws, and reading them apart hides the only relationship in the
-        section.
-      */}
-      <div className="prop-grid">
-        {(() => {
-          const strokeWidth = sharedPaint((a) => a.stroke?.width ?? 0);
-          return (
-            <NumberStepper
-              aria-label="Stroke weight"
-              glyph={<Minus size={13} strokeWidth={3} />}
-              suffix="px"
-              value={strokeWidth.value ?? 0}
-              mixed={strokeWidth.mixed}
-              onChange={(width) => setStroke({ width })}
-              min={0}
-              max={100}
-            />
-          );
-        })()}
+      <PairRow>
+        <NumberField
+          label="Stroke weight"
+          glyph={<Minus size={13} strokeWidth={3} />}
+          unit="px"
+          min={0}
+          max={100}
+          value={widthShared.mixed ? 'mixed' : widthShared.value ?? 0}
+          onChange={(width) => setStroke({ width })}
+        />
         <SegmentedControl
           ariaLabel="Stroke style"
           fill
           mixed={sharedPaint((a) => styleOf(a.stroke)).mixed}
-          value={styleOf(appearance.stroke)}
+          value={style}
           onChange={(id) => setStrokeStyle(id as StrokeStyleId)}
           segments={STROKE_STYLE_IDS.map((id) => ({
             value: id,
@@ -169,161 +199,109 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
             icon: <StrokeStyleIcon style={id} />,
           }))}
         />
-      </div>
+      </PairRow>
 
-      {/*
-        The dash, once there is one.
-
-        Three presets are the way in — "4,2,1,2" is a thing you tune after you
-        already know what you want, not a thing you pick from — but they were
-        also the way *out*, and a dashed line whose dashes are the wrong length
-        had nowhere to go.
-
-        Shown in pixels, because that is the length you are setting and what
-        every other field in this section is in. What is *kept* is the
-        proportion to the weight, so the section's own promise — the pattern
-        scales with the weight so it stays legible — stays true for a pattern
-        somebody shaped, which is precisely where an absolute array would have
-        quietly repealed it. Change the weight and these two numbers move with
-        it, which is the promise being visible rather than merely claimed.
-
-        A dot has no length, so a dotted line offers only its gap.
-      */}
       {style !== 'solid' && (
-        <div className="prop-grid">
+        <PairRow>
           {style === 'dashed' ? (
-            <NumberStepper
-              aria-label="Dash length"
+            <NumberField
+              label="Dash length"
               glyph={<StrokeStyleIcon style="dashed" />}
-              suffix="px"
-              value={Math.round(ratio.on * weight * 10) / 10}
-              onChange={(px) => setDashRatio({ ...ratio, on: clampRatio(px / weight) })}
+              unit="px"
               min={0}
               max={Math.round(MAX_DASH_RATIO * weight)}
-              step={1}
+              value={onLength.mixed ? 'mixed' : Math.round(ratio.on * weight * 10) / 10}
+              onChange={(px) => setDashRatio({ ...ratio, on: clampRatio(px / weight) })}
             />
           ) : (
-            <span className="prop-note prop-note--inline">Dots have no length.</span>
+            <Note>Dots have no length.</Note>
           )}
-          <NumberStepper
-            aria-label="Gap between dashes"
+          <NumberField
+            label="Gap between dashes"
             glyph={<UnfoldHorizontal size={13} />}
-            suffix="px"
-            value={Math.round(ratio.off * weight * 10) / 10}
-            onChange={(px) => setDashRatio({ ...ratio, off: clampRatio(px / weight) })}
+            unit="px"
             min={1}
             max={Math.round(MAX_DASH_RATIO * weight)}
-            step={1}
+            value={offLength.mixed ? 'mixed' : Math.round(ratio.off * weight * 10) / 10}
+            onChange={(px) => setDashRatio({ ...ratio, off: clampRatio(px / weight) })}
           />
-        </div>
+        </PairRow>
       )}
 
-      {/*
-        Line detail, out of its disclosure.
+      {capabilities.supportsEdgeEffects && !openShape && (
+        <Row label="Align" hint="Where the line sits relative to the shape's edge.">
+          <SegmentedControl
+            ariaLabel="Stroke alignment"
+            fill
+            mixed={sharedPaint((a) => a.stroke?.align ?? 'center').mixed}
+            value={appearance.stroke?.align ?? 'center'}
+            onChange={(align) => setStroke({ align: align as StrokeAlign })}
+            segments={[
+              { value: 'inside', label: 'Inside', icon: <StrokeAlignIcon align="inside" /> },
+              { value: 'center', label: 'Center', icon: <StrokeAlignIcon align="center" /> },
+              { value: 'outside', label: 'Outside', icon: <StrokeAlignIcon align="outside" /> },
+            ]}
+          />
+        </Row>
+      )}
 
-        It held align, cap, join and the miter limit behind a "Line detail"
-        toggle, which is a reasonable instinct — four rows for settings most
-        boards never touch. It was the wrong call for two reasons. Cap and Join
-        are not obscure: rounding the dashes on a rectangle is one of the
-        commonest things anybody wants here, and it was two clicks and a
-        guessable label away. And a disclosure whose contents are *conditional*
-        can be empty — on a shape with no corners and no ends, opening it
-        showed a greyed-out list, so the affordance promised something it could
-        not deliver.
+      {showDetails && (<>
+      <Row label="Cap" hint="How the two ends of an open line are finished.">
+        <SegmentedControl
+          ariaLabel="Line cap"
+          fill
+          disabledReason={
+            style === 'dotted'
+              ? 'A dotted line is drawn entirely from round caps, which is what makes the dots. Switch to Solid or Dashed to set a cap.'
+              : !hasEnds
+                ? 'A solid closed outline has no ends. Use a line or an open path, or add a dash, since every dash has two ends of its own.'
+                : undefined
+          }
+          mixed={capShared.mixed}
+          value={appearance.stroke?.cap ?? 'butt'}
+          onChange={(cap) => setStroke({ cap: cap as LineCap })}
+          segments={[
+            { value: 'butt', label: 'Flat', icon: <StrokeCapIcon cap="butt" /> },
+            { value: 'round', label: 'Round', icon: <StrokeCapIcon cap="round" /> },
+            { value: 'square', label: 'Square', icon: <StrokeCapIcon cap="square" /> },
+          ]}
+        />
+      </Row>
 
-        Flat, with a rule to say the group has changed subject. The controls
-        that do not apply are still disabled with a reason, which is what makes
-        them safe to show: a greyed control that explains itself teaches the
-        model, and a hidden one teaches nothing.
-      */}
-      <div className="prop-rule" role="presentation" />
-        {capabilities.supportsEdgeEffects && !openShape && (
-          <Row label="Align" hint="Where the line sits relative to the shape's edge.">
-            <SegmentedControl
-              ariaLabel="Stroke alignment"
-              fill
-              mixed={sharedPaint((a) => a.stroke?.align ?? 'center').mixed}
-              value={appearance.stroke?.align ?? 'center'}
-              onChange={(align) => setStroke({ align: align as StrokeAlign })}
-              segments={[
-                { value: 'inside', label: 'Inside', icon: <StrokeAlignIcon align="inside" /> },
-                { value: 'center', label: 'Center', icon: <StrokeAlignIcon align="center" /> },
-                { value: 'outside', label: 'Outside', icon: <StrokeAlignIcon align="outside" /> },
-              ]}
-            />
-          </Row>
-        )}
+      <Row label="Join" hint="How two straight edges meet at a corner.">
+        <SegmentedControl
+          ariaLabel="Line join"
+          fill
+          disabledReason={hasCorners ? undefined : 'This shape has no straight corners, and a rounded or curved edge has no join.'}
+          mixed={joinShared.mixed}
+          value={appearance.stroke?.join ?? 'miter'}
+          onChange={(join) => setStroke({ join: join as LineJoin })}
+          segments={[
+            { value: 'miter', label: 'Miter', icon: <StrokeJoinIcon join="miter" /> },
+            { value: 'round', label: 'Round', icon: <StrokeJoinIcon join="round" /> },
+            { value: 'bevel', label: 'Bevel', icon: <StrokeJoinIcon join="bevel" /> },
+          ]}
+        />
+      </Row>
 
-        {/* Cap and Join sit beside their labels, not under them. Three segments
-            divide the 136px column at 45px each — well past a segment's natural
-            32 — so stacking bought nothing and cost a row of height each. */}
-        {capabilities.supportsStroke && (
-          <Row label="Cap" hint="How the two ends of an open line are finished.">
-            <SegmentedControl
-              ariaLabel="Line cap"
-              fill
-              disabledReason={
-                styleOf(appearance.stroke) === 'dotted'
-                  ? 'A dotted line is drawn entirely from round caps, which is what makes the dots. Switch to Solid or Dashed to set a cap.'
-                  : !hasEnds
-                    ? 'A solid closed outline has no ends. Use a line or an open path, or add a dash, since every dash has two ends of its own.'
-                    : undefined
-              }
-              mixed={sharedPaint((a) => a.stroke?.cap ?? 'butt').mixed}
-              value={appearance.stroke?.cap ?? 'butt'}
-              onChange={(cap) => setStroke({ cap: cap as LineCap })}
-              segments={[
-                { value: 'butt', label: 'Flat', icon: <StrokeCapIcon cap="butt" /> },
-                { value: 'round', label: 'Round', icon: <StrokeCapIcon cap="round" /> },
-                { value: 'square', label: 'Square', icon: <StrokeCapIcon cap="square" /> },
-              ]}
-            />
-          </Row>
-        )}
-
-        {capabilities.supportsStroke && (
-          <Row label="Join" hint="How two straight edges meet at a corner.">
-            <SegmentedControl
-              ariaLabel="Line join"
-              fill
-              disabledReason={hasCorners ? undefined : 'This shape has no straight corners, and a rounded or curved edge has no join.'}
-              mixed={sharedPaint((a) => a.stroke?.join ?? 'miter').mixed}
-              value={appearance.stroke?.join ?? 'miter'}
-              onChange={(join) => setStroke({ join: join as LineJoin })}
-              segments={[
-                { value: 'miter', label: 'Miter', icon: <StrokeJoinIcon join="miter" /> },
-                { value: 'round', label: 'Round', icon: <StrokeJoinIcon join="round" /> },
-                { value: 'bevel', label: 'Bevel', icon: <StrokeJoinIcon join="bevel" /> },
-              ]}
-            />
-          </Row>
-        )}
-
-        {capabilities.supportsStroke && (
-          <Row label="Miter" hint="How far a sharp corner may extend before it is cut flat. Only a miter join has one.">
-            {(() => {
-              const limit = sharedPaint((a) => a.stroke?.miterLimit ?? DEFAULT_MITER_LIMIT);
-              return (
-                <NumberStepper
-                  aria-label="Miter limit"
-                  glyph={<Spline size={13} />}
-                  value={limit.value ?? DEFAULT_MITER_LIMIT}
-                  mixed={limit.mixed}
-                  onChange={(miterLimit) => setStroke({ miterLimit })}
-                  min={MIN_MITER_LIMIT}
-                  max={MAX_MITER_LIMIT}
-                  disabledReason={
-                    !hasCorners
-                      ? 'This shape has no straight corners.'
-                      : (appearance.stroke?.join ?? 'miter') !== 'miter'
-                        ? 'Only a miter join has a limit. Switch Join to Miter to set one.'
-                        : undefined
-                  }
-                />
-              );
-            })()}
-          </Row>
-        )}
-    </Accordion>
+      <Row label="Miter" hint="How far a sharp corner may extend before it is cut flat. Only a miter join has one.">
+        <NumberField
+          label="Miter limit"
+          glyph={<Spline size={13} />}
+          min={MIN_MITER_LIMIT}
+          max={MAX_MITER_LIMIT}
+          value={miter.mixed ? 'mixed' : miter.value ?? DEFAULT_MITER_LIMIT}
+          onChange={(miterLimit) => setStroke({ miterLimit })}
+          disabledReason={
+            !hasCorners
+              ? 'This shape has no straight corners.'
+              : (appearance.stroke?.join ?? 'miter') !== 'miter'
+                ? 'Only a miter join has a limit. Switch Join to Miter to set one.'
+                : undefined
+          }
+        />
+      </Row>
+      </>)}
+    </Section>
   );
 };

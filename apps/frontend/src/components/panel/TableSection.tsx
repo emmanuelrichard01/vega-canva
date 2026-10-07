@@ -1,36 +1,31 @@
 import React from 'react';
-import { ClipboardCopy, Columns3, FileDown, FileUp, Funnel, Paintbrush, Palette, Plus, Rows3, TextCursorInput, X } from 'lucide-react';
+import { ChevronDown, ClipboardCopy, EyeOff, FileDown, FileUp, Funnel, TextCursorInput, Undo2, X } from 'lucide-react';
 import './chartPanel.css';
-import { NumberStepper } from '../ui/NumberStepper';
-import { SegmentedControl } from '../ui/SegmentedControl';
-import { Switch } from '../ui/Switch';
-import { ColorPickerPopover } from '../ui/ColorPickerPopover';
-import { Row } from './panelPrimitives';
-import { AddButton, Group, IconAction, Note, TextField } from './chartPanelParts';
+import '../table/tableTools.css';
+import { Section, Row, PairRow, FullRow, Note, NumberField, Select, ColorChip, SpecimenPicker, IconToggle, SegmentedControl, Switch } from './grammar';
 import { TableExampleButton } from './TableExamples';
 import { useStore } from '../../hooks/useStore';
 import { editor } from '../../engine/api/EditorAPI';
+import { undoManager } from '../../engine/document';
 import type { SketchLevel } from '../../engine/model/rough';
 import type { TableNode } from '../../engine/model/schema';
 import * as M from '../../engine/table/tableModel';
+import { copyTableCsv, exportTableCsv, fitTableColumns, importCsvIntoTable, updateTable } from '../../engine/table/tableApply';
 import {
-  copyTableCsv,
-  exportTableCsv,
-  fitTableColumns,
-  importCsvIntoTable,
-  updateTable,
-} from '../../engine/table/tableApply';
-import {
-  CELL_TYPES,
   CELL_TYPE_LABELS,
   DEFAULT_ACCENT,
+  filterOn,
   TABLE_THEMES,
   TABLE_THEME_LABELS,
-  type CellType,
   type ColourRule,
   type TableSpec,
   type TableTheme,
 } from '../../engine/table/tableTypes';
+import { Menu, type MenuAnchor } from '../menu/Menu';
+import type { MenuEntry } from '../menu/menuModel';
+import { columnLetter } from '../sheet/useSheet';
+import { columnMenuEntries, columnName, TYPE_ICONS } from '../table/columnMenu';
+import { FilterPanel } from '../table/FilterPanel';
 
 /** The paints a rule offers: six tints that each hold their text at AA, and two inks for a quieter mark. */
 const RULE_PAINTS: Array<{ label: string; fill?: string; color: string }> = [
@@ -43,26 +38,37 @@ const RULE_PAINTS: Array<{ label: string; fill?: string; color: string }> = [
   { label: 'Red text', color: '#B91C1C' },
   { label: 'Green text', color: '#15803D' },
 ];
-import { columnLetter } from '../sheet/useSheet';
+
+/** Colour scales, low to high: light enough at both ends that cell text holds. */
+const SCALES: Array<{ id: string; label: string; from: string; mid?: string; to: string }> = [
+  { id: 'green', label: 'White to green', from: '#FFFFFF', to: '#86EFAC' },
+  { id: 'red', label: 'White to red', from: '#FFFFFF', to: '#FCA5A5' },
+  { id: 'rag', label: 'Red, amber, green', from: '#FCA5A5', mid: '#FDE68A', to: '#86EFAC' },
+  { id: 'blue', label: 'White to blue', from: '#FFFFFF', to: '#93C5FD' },
+];
+
+const BAR_COLOURS = ['#2563EB', '#16A34A', '#D97706', '#9333EA'];
 
 /**
- * A table's properties: its look, its shape, its columns and its view.
+ * A table's properties: its look, its shape, its columns, its view and its
+ * colour rules.
  *
- * Laid out in the chart panel's vocabulary — the same groups, fields and
- * chips — because a table and a chart are the two data objects on the board
- * and are often edited one after the other. Cell content is edited on the
- * board itself (`TableEditor`); this is everything about the table *as a
- * whole*.
+ * Cell content is edited on the board itself (`TableEditor`); this is
+ * everything about the table *as a whole*. Each column is a row that opens the
+ * same column menu the editor's letters open, so type, sort, filter and
+ * summary have one place each.
  */
 export const TableSection: React.FC<{ node: TableNode }> = ({ node }) => {
   const spec = node.table;
   const apply = (next: TableSpec) => updateTable(node, next);
   const patch = (p: Partial<TableSpec>) => apply({ ...spec, ...p });
-  const [notice, setNotice] = React.useState<string | null>(null);
-  const say = (m: string) => {
-    setNotice(m);
-    window.setTimeout(() => setNotice(null), 2200);
+  const [notice, setNotice] = React.useState<{ text: string; undo?: boolean } | null>(null);
+  const say = (text: string, undo = false) => {
+    setNotice({ text, undo });
+    window.setTimeout(() => setNotice((n) => (n?.text === text ? null : n)), 4000);
   };
+  const [menu, setMenu] = React.useState<{ col: number; anchor: MenuAnchor } | null>(null);
+  const [filterFor, setFilterFor] = React.useState<{ col: number; anchor: MenuAnchor } | null>(null);
 
   const rows = spec.cells.length;
   const cols = spec.columns.length;
@@ -70,21 +76,29 @@ export const TableSection: React.FC<{ node: TableNode }> = ({ node }) => {
   const setSketch = (level: SketchLevel | undefined) =>
     editor.updateNode(node.id, { appearance: { ...(node.appearance ?? {}), sketch: level } });
 
+  /** Lowering the count past cells with something in them says what went, with a way back. */
   const setRows = (n: number) => {
     const target = Math.max(1, Math.min(2000, Math.round(n)));
     if (target > rows) apply(M.insertRows(spec, rows, target - rows));
-    else if (target < rows) apply(M.deleteRows(spec, target, rows - target));
+    else if (target < rows) {
+      const lost = M.filledRowsFrom(spec, target);
+      apply(M.deleteRows(spec, target, rows - target));
+      if (lost) say(`Removed ${lost} row${lost === 1 ? '' : 's'} with data`, true);
+    }
   };
   const setCols = (n: number) => {
     const target = Math.max(1, Math.min(60, Math.round(n)));
     if (target > cols) apply(M.insertCols(spec, cols, target - cols));
-    else if (target < cols) apply(M.deleteCols(spec, target, cols - target));
+    else if (target < cols) {
+      const lost = M.filledColsFrom(spec, target);
+      apply(M.deleteCols(spec, target, cols - target));
+      if (lost) say(`Removed ${lost} column${lost === 1 ? '' : 's'} with data`, true);
+    }
   };
 
-  const heading = (c: number) => (spec.header ? spec.cells[0]?.[c]?.trim() : '') || `Column ${columnLetter(c)}`;
+  const columnOptions = spec.columns.map((_, c) => ({ value: String(c), label: columnName(spec, c), icon: TYPE_ICONS[spec.columns[c].type] }));
 
-  const setRule = (i: number, p: Partial<ColourRule>) =>
-    patch({ rules: (spec.rules ?? []).map((r, j) => (j === i ? { ...r, ...p } : r)) });
+  const setRule = (i: number, p: Partial<ColourRule>) => patch({ rules: (spec.rules ?? []).map((r, j) => (j === i ? { ...r, ...p } : r)) });
   /**
    * A new rule starts on the column most like a status — the fewest distinct
    * values — and on its most common value, so it colours something the moment
@@ -105,69 +119,106 @@ export const TableSection: React.FC<{ node: TableNode }> = ({ node }) => {
     });
     patch({ rules: [...(spec.rules ?? []), { col: best.col, when: best.when, ...RULE_PAINTS[0] }] });
   };
+  /** The first numeric column without the thing already, for a new scale or bar. */
+  const numericCol = (taken: number[]) => {
+    const c = spec.columns.findIndex((col, i) => !taken.includes(i) && ['number', 'currency', 'percent', 'rating', 'date'].includes(col.type));
+    return c >= 0 ? c : spec.columns.findIndex((_, i) => !taken.includes(i));
+  };
+  const addScale = () => {
+    const col = numericCol((spec.scales ?? []).map((s) => s.col));
+    if (col < 0) return;
+    const s = SCALES[0];
+    patch({ scales: [...(spec.scales ?? []), { col, from: s.from, to: s.to }] });
+  };
+  const addBar = () => {
+    const col = numericCol((spec.bars ?? []).map((b) => b.col));
+    if (col < 0) return;
+    patch({ bars: [...(spec.bars ?? []), { col, color: BAR_COLOURS[0] }] });
+  };
+  const formattingCount = (spec.rules?.length ?? 0) + (spec.scales?.length ?? 0) + (spec.bars?.length ?? 0);
+
+  const filters = spec.filters ?? [];
+  const describeFilter = (c: number) => {
+    const f = filterOn(spec, c);
+    if (!f) return '';
+    if (f.values) return f.values.length === 1 ? `is ${f.values[0] || 'empty'}` : `is one of ${f.values.length}`;
+    return f.query.trim() ? f.query.trim() : 'not set yet';
+  };
+  const shown = M.viewRows(spec).length - (spec.header ? 1 : 0);
+  const frozen = M.frozenOf(spec);
 
   return (
-    <div className="chartp">
-      <div className="chartp-databar" role="toolbar" aria-label="Table">
-        <button type="button" className="chartp-databar__open" onClick={() => useStore.getState().setTableEditNodeId(node.id)}>
-          <TextCursorInput size={14} aria-hidden="true" />
-          <span>Edit cells</span>
-        </button>
-        <span className="chartp-databar__sep" aria-hidden="true" />
-        <IconAction label="Import a CSV file" onClick={() => void importCsvIntoTable(node).then((m) => m && say(m))}>
-          <FileUp size={14} />
-        </IconAction>
-        <IconAction label="Export a CSV file" onClick={() => exportTableCsv(spec)}>
-          <FileDown size={14} />
-        </IconAction>
-        <IconAction label="Copy as CSV" onClick={() => void copyTableCsv(spec).then((ok) => say(ok ? 'Copied as CSV' : 'Clipboard unavailable'))}>
-          <ClipboardCopy size={14} />
-        </IconAction>
-        <span className="chartp-databar__end">
-          <TableExampleButton onPick={apply} />
-        </span>
-      </div>
-      <div className="chartp-datafoot">
-        <span>
-          {rows} rows · {cols} columns
-          {spec.filter ? ` · showing ${M.viewRows(spec).length - (spec.header ? 1 : 0)}` : ''}
-        </span>
-        <span className="chartp-datafoot__notice" role="status" aria-live="polite">
-          {notice}
-        </span>
-      </div>
-
-      <Group label="Style" icon={<Palette size={14} />}>
-        <Row label="Theme" stack>
-          <div className="tblthemes" role="radiogroup" aria-label="Table theme">
-            {TABLE_THEMES.map((t) => (
-              <button
-                key={t}
-                type="button"
-                role="radio"
-                aria-checked={spec.theme === t}
-                className="tbltheme"
-                onClick={() => patch({ theme: t })}
-              >
-                <ThemeSpecimen theme={t} accent={spec.accent ?? DEFAULT_ACCENT} />
-                <span className="tbltheme__name">{TABLE_THEME_LABELS[t]}</span>
-              </button>
-            ))}
+    <>
+      <FullRow label="Table data">
+        <div className="tblpanel-data">
+          <button type="button" className="tblpanel-edit" onClick={() => useStore.getState().setTableEditNodeId(node.id)}>
+            <TextCursorInput size={14} aria-hidden="true" />
+            Edit cells
+          </button>
+          <div className="tblpanel-actions" role="toolbar" aria-label="Table data">
+            <IconToggle label="Import a CSV file" pressed={false} onClick={() => void importCsvIntoTable(node).then((m) => m && say(m))}>
+              <FileUp size={14} />
+            </IconToggle>
+            <IconToggle label="Download as CSV" pressed={false} onClick={() => exportTableCsv(spec)}>
+              <FileDown size={14} />
+            </IconToggle>
+            <IconToggle label="Copy as CSV" pressed={false} onClick={() => void copyTableCsv(spec).then((ok) => say(ok ? 'Copied as CSV' : 'Clipboard unavailable'))}>
+              <ClipboardCopy size={14} />
+            </IconToggle>
+            <span className="tblpanel-actions__end">
+              <TableExampleButton onPick={apply} />
+            </span>
           </div>
-        </Row>
+        </div>
+      </FullRow>
+      <p className="tblpanel-status" role="status" aria-live="polite">
+        <span>
+          {rows} rows · {cols} columns{M.filtersActive(spec) ? ` · showing ${shown}` : ''}
+        </span>
+        {notice && (
+          <span className="tblpanel-status__notice">
+            {notice.text}
+            {notice.undo && (
+              <button
+                type="button"
+                onClick={() => {
+                  undoManager.undo();
+                  setNotice(null);
+                }}
+              >
+                <Undo2 size={12} aria-hidden="true" />
+                Undo
+              </button>
+            )}
+          </span>
+        )}
+      </p>
+
+      <Section id="table-style" title="Style" subject="table">
+        <SpecimenPicker<TableTheme>
+          label="Theme"
+          value={spec.theme}
+          size={48}
+          onChange={(theme) => patch({ theme })}
+          options={TABLE_THEMES.map((t) => ({
+            value: t,
+            label: TABLE_THEME_LABELS[t],
+            render: (size: number) => <ThemeSpecimen theme={t} accent={spec.accent ?? DEFAULT_ACCENT} size={size} />,
+          }))}
+        />
         <Row label="Accent">
-          <ColorPickerPopover color={spec.accent ?? DEFAULT_ACCENT} onChange={(accent) => patch({ accent })} />
+          <ColorChip label="Accent" value={spec.accent ?? DEFAULT_ACCENT} allowNone={false} onChange={(accent) => patch({ accent })} />
         </Row>
         <Row label="Text size">
-          <NumberStepper value={spec.fontSize} min={9} max={32} suffix="px" aria-label="Text size" onChange={(fontSize) => patch({ fontSize })} />
+          <NumberField label="Text size" value={spec.fontSize} min={9} max={32} unit="px" onChange={(fontSize, { commit }) => commit && patch({ fontSize })} />
         </Row>
         <Row label="Header row" hint="The first row names the columns and stays on top when sorted">
-          <Switch checked={spec.header} onChange={(header) => patch({ header })} label="Header row" />
+          <Switch checked={spec.header} onChange={(header) => patch({ header })} />
         </Row>
         <Row label="Row labels" hint="Emphasise the first column">
-          <Switch checked={Boolean(spec.firstColumn)} onChange={(on) => patch({ firstColumn: on || undefined })} label="First column" />
+          <Switch checked={Boolean(spec.firstColumn)} onChange={(on) => patch({ firstColumn: on || undefined })} />
         </Row>
-        <Row label="Drawing">
+        <FullRow label="Drawing">
           <SegmentedControl
             fill
             ariaLabel="Drawing style"
@@ -178,156 +229,137 @@ export const TableSection: React.FC<{ node: TableNode }> = ({ node }) => {
               { value: 'sketch', label: 'Sketch', hint: 'Hand-drawn — every cell kept' },
             ]}
           />
-        </Row>
-      </Group>
+        </FullRow>
+      </Section>
 
-      <Group label="Size" icon={<Rows3 size={14} />}>
-        <Row label="Rows">
-          <NumberStepper value={rows} min={1} max={2000} aria-label="Rows" onChange={setRows} />
+      <Section id="table-size" title="Size" subject="table">
+        <PairRow>
+          <NumberField label="Rows" glyph="R" value={rows} min={1} max={2000} scrub={false} onChange={(n, { commit }) => commit && setRows(n)} />
+          <NumberField label="Columns" glyph="C" value={cols} min={1} max={60} scrub={false} onChange={(n, { commit }) => commit && setCols(n)} />
+        </PairRow>
+        <PairRow>
+          <NumberField
+            label="Frozen rows"
+            glyph="↧"
+            value={frozen.rows}
+            min={0}
+            max={Math.min(rows, 20)}
+            scrub={false}
+            onChange={(n, { commit }) => commit && patch({ frozen: n || frozen.cols ? { rows: n, cols: frozen.cols } : undefined })}
+          />
+          <NumberField
+            label="Frozen columns"
+            glyph="↦"
+            value={frozen.cols}
+            min={0}
+            max={Math.min(cols, 10)}
+            scrub={false}
+            onChange={(n, { commit }) => commit && patch({ frozen: n || frozen.rows ? { rows: frozen.rows, cols: n } : undefined })}
+          />
+        </PairRow>
+        <Row label="Grow to fit" hint="Columns widen and wrapped rows grow to show what you type">
+          <Switch checked={spec.autoFit !== false} onChange={(on) => patch({ autoFit: on ? undefined : false })} />
         </Row>
-        <Row label="Columns">
-          <NumberStepper value={cols} min={1} max={60} aria-label="Columns" onChange={setCols} />
-        </Row>
-        <Row label="Grow to fit" hint="Columns widen to show what you type, up to a limit">
+        <Row label="Summary row" hint="Totals and counts under each column, over the rows on show">
           <Switch
-            checked={spec.autoFit !== false}
-            onChange={(on) => patch({ autoFit: on ? undefined : false })}
-            label="Grow columns to fit"
+            checked={M.hasSummary(spec)}
+            onChange={(on) =>
+              patch({
+                summary: on
+                  ? spec.columns.map((col) => (col.type === 'checkbox' ? 'checked' : M.summaryChoices(col.type).includes('sum') ? 'sum' : null))
+                  : undefined,
+              })
+            }
           />
         </Row>
-        <button
-          type="button"
-          className="chartp-link"
-          onClick={() => {
-            if (!fitTableColumns(node)) say('Every column already fits');
-          }}
-        >
-          Fit every column to its content
-        </button>
-        <Note>In the cells, double-click a column’s edge to fit it, or drag a selected letter or number to move it.</Note>
-      </Group>
+        <FullRow>
+          <button
+            type="button"
+            className="tblpanel-link"
+            onClick={() => {
+              if (!fitTableColumns(node)) say('Every column already fits');
+            }}
+          >
+            Fit every column to its content
+          </button>
+        </FullRow>
+      </Section>
 
-      <Group label="Columns" icon={<Columns3 size={14} />}>
-        <div className="tblcols">
-          {spec.columns.map((col, c) => (
-            <div className="tblcol" key={c}>
-              <span className="tblcol__letter">{columnLetter(c)}</span>
-              <span className="tblcol__name" title={heading(c)}>
-                {heading(c)}
-              </span>
-              <select
-                className="chartp-select"
-                aria-label={`${heading(c)} type`}
-                value={col.type}
-                onChange={(e) => apply(M.setColumn(spec, c, { type: e.target.value as CellType }))}
+      <Section id="table-columns" title="Columns" subject="table" meta={cols}>
+        <div className="tblpanel-cols" role="list">
+          {spec.columns.map((col, c) => {
+            const f = filterOn(spec, c);
+            const on = Boolean(f && (f.values || f.query.trim()));
+            return (
+              <button
+                key={c}
+                type="button"
+                role="listitem"
+                className="tblpanel-col"
+                data-hidden={col.hidden || undefined}
+                aria-label={`${columnName(spec, c)}, ${CELL_TYPE_LABELS[col.type]}. Open the column menu`}
+                onClick={(e) => setMenu({ col: c, anchor: { kind: 'rect', rect: e.currentTarget.getBoundingClientRect(), prefer: 'below', align: 'end' } })}
               >
-                {CELL_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {CELL_TYPE_LABELS[t]}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ))}
+                <span className="tblpanel-col__letter">{columnLetter(c)}</span>
+                <span className="tblpanel-col__icon" aria-hidden="true">
+                  {TYPE_ICONS[col.type]}
+                </span>
+                <span className="tblpanel-col__name">{columnName(spec, c)}</span>
+                {col.hidden && <EyeOff size={13} className="tblpanel-col__flag" aria-label="Hidden" />}
+                {on && <Funnel size={13} className="tblpanel-col__flag" aria-label="Filtered" />}
+                <span className="tblpanel-col__type">{CELL_TYPE_LABELS[col.type]}</span>
+                <ChevronDown size={13} className="tblpanel-col__caret" aria-hidden="true" />
+              </button>
+            );
+          })}
         </div>
-        <Note>Types decide how values are shown, aligned and sorted — the text you typed is kept as it is.</Note>
         {spec.columns.some((c, i) => c.type === 'text' && M.inferType(spec.cells.slice(spec.header ? 1 : 0).map((r) => r[i])) !== 'text') && (
           <button
             type="button"
-            className="chartp-link"
-            onClick={() =>
-              apply({
-                ...spec,
-                columns: spec.columns.map((c, i) => ({
-                  ...c,
-                  type: M.inferType(spec.cells.slice(spec.header ? 1 : 0).map((r) => r[i])),
-                })),
-              })
-            }
+            className="tblpanel-link"
+            onClick={() => {
+              let s = spec;
+              spec.columns.forEach((c, i) => {
+                if (c.type !== 'text') return;
+                const t = M.inferType(spec.cells.slice(spec.header ? 1 : 0).map((r) => r[i]));
+                if (t !== 'text') s = M.setColumnType(s, i, t);
+              });
+              apply(s);
+            }}
           >
             Detect types from the data
           </button>
         )}
         {spec.columns.some((c) => c.type === 'currency') && (
-          <Row label="Currency">
-            <TextField label="Currency symbol" placeholder="$" value={spec.currency} onChange={(currency) => patch({ currency })} />
+          <Row label="Currency" htmlFor={`tbl-currency-${node.id}`}>
+            <input
+              id={`tbl-currency-${node.id}`}
+              className="tblpanel-input"
+              placeholder="$"
+              maxLength={3}
+              value={spec.currency ?? ''}
+              onChange={(e) => patch({ currency: e.target.value || undefined })}
+            />
           </Row>
         )}
-      </Group>
+      </Section>
 
-      <Group label="Colour rules" icon={<Paintbrush size={14} />}>
-        {(spec.rules?.length ?? 0) > 0 && (
-          <div className="tblrules">
-            {(spec.rules ?? []).map((rule, i) => (
-              <div className="tblrule" key={i}>
-                <select
-                  className="chartp-select"
-                  aria-label="Column the rule reads"
-                  value={rule.col}
-                  onChange={(e) => setRule(i, { col: Number(e.target.value) })}
-                >
-                  {spec.columns.map((_, c) => (
-                    <option key={c} value={c}>
-                      {heading(c)}
-                    </option>
-                  ))}
-                </select>
-                <TextField label="When the value is" placeholder="Done, >100, <0" mono value={rule.when} onChange={(v) => setRule(i, { when: v ?? '' })} />
-                <div className="tblrule__foot">
-                  <div className="tblrule__paints" role="radiogroup" aria-label="Colour">
-                    {RULE_PAINTS.map((p) => (
-                      <button
-                        key={p.label}
-                        type="button"
-                        role="radio"
-                        aria-checked={rule.fill === p.fill && rule.color === p.color}
-                        aria-label={p.label}
-                        data-tooltip={p.label}
-                        className="tblrule__paint"
-                        style={{ background: p.fill ?? '#FFFFFF', color: p.color }}
-                        onClick={() => setRule(i, { fill: p.fill, color: p.color })}
-                      >
-                        A
-                      </button>
-                    ))}
-                  </div>
-                  <IconAction label="Remove this rule" onClick={() => patch({ rules: spec.rules?.filter((_, j) => j !== i) })}>
-                    <X size={13} />
-                  </IconAction>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-        <AddButton icon={<Plus size={13} />} onClick={addRule}>
-          Add a colour rule
-        </AddButton>
-        <Note>
-          Colours every cell in a column whose value matches — a word like <b>Done</b>, or a comparison like <b>&gt;100</b> or <b>&lt;0</b>. It
-          follows edits and formula results.
-        </Note>
-      </Group>
-
-      <Group label="View" icon={<Funnel size={14} />}>
+      <Section
+        id="table-view"
+        title="Sort and filter"
+        subject="table"
+        meta={spec.sort || M.filtersActive(spec) ? 'on' : undefined}
+      >
         <Row label="Sort by">
-          <select
-            className="chartp-select"
-            aria-label="Sort by column"
+          <Select
+            label="Sort by column"
             value={spec.sort ? String(spec.sort.col) : ''}
-            onChange={(e) =>
-              patch({ sort: e.target.value === '' ? undefined : { col: Number(e.target.value), dir: spec.sort?.dir ?? 'asc' } })
-            }
-          >
-            <option value="">As entered</option>
-            {spec.columns.map((_, c) => (
-              <option key={c} value={c}>
-                {heading(c)}
-              </option>
-            ))}
-          </select>
+            options={[{ value: '', label: 'As entered' }, ...columnOptions]}
+            onChange={(v) => patch({ sort: v === '' ? undefined : { col: Number(v), dir: spec.sort?.dir ?? 'asc' } })}
+          />
         </Row>
         {spec.sort && (
-          <Row label="Direction">
+          <FullRow label="Sort direction">
             <SegmentedControl
               fill
               ariaLabel="Sort direction"
@@ -338,58 +370,206 @@ export const TableSection: React.FC<{ node: TableNode }> = ({ node }) => {
                 { value: 'desc', label: 'Z → A', hint: 'Largest first' },
               ]}
             />
-          </Row>
+          </FullRow>
         )}
-        <Row label="Filter">
-          <select
-            className="chartp-select"
-            aria-label="Filter column"
-            value={spec.filter ? String(spec.filter.col) : ''}
-            onChange={(e) =>
-              patch({
-                filter: e.target.value === '' ? undefined : { col: Number(e.target.value), query: spec.filter?.query || ' ' },
-              })
-            }
-          >
-            <option value="">No filter</option>
-            {spec.columns.map((_, c) => (
-              <option key={c} value={c}>
-                {heading(c)}
-              </option>
-            ))}
-          </select>
-        </Row>
-        {spec.filter && (
-          <Row label="Matching">
-            <TextField
-              label="Filter text"
-              placeholder={spec.columns[spec.filter.col]?.type === 'text' ? 'Contains…' : '>10, <5, 5..20'}
-              value={spec.filter.query.trim() ? spec.filter.query : undefined}
-              onChange={(q) => patch({ filter: { ...spec.filter!, query: q ?? ' ' } })}
-            />
-          </Row>
-        )}
-        {(spec.sort || spec.filter) && (
-          <div className="chartp-caption" style={{ paddingLeft: 0 }}>
-            <span>A view: the stored rows are untouched.</span>
-            <button type="button" className="chartp-link" onClick={() => apply(M.applyView(spec))}>
-              Make it the order
+        {filters.map((f) => (
+          <div key={f.col} className="tblpanel-filter">
+            <button
+              type="button"
+              className="tblpanel-filter__body"
+              onClick={(e) => setFilterFor({ col: f.col, anchor: { kind: 'rect', rect: e.currentTarget.getBoundingClientRect(), prefer: 'below', align: 'end' } })}
+            >
+              <Funnel size={13} aria-hidden="true" />
+              <span className="tblpanel-filter__col">{columnName(spec, f.col)}</span>
+              <span className="tblpanel-filter__what">{describeFilter(f.col)}</span>
+            </button>
+            <button type="button" className="pg-icon-btn" aria-label={`Remove the filter on ${columnName(spec, f.col)}`} onClick={() => apply(M.setFilter(spec, f.col, null))}>
+              <X size={13} />
             </button>
           </div>
+        ))}
+        <Row label="Filter">
+          <Select
+            label="Add a filter on a column"
+            value=""
+            options={[
+              { value: '', label: filters.length ? 'Add another…' : 'Choose a column…' },
+              ...columnOptions.filter((o) => !filterOn(spec, Number(o.value))),
+            ]}
+            onChange={(v) => {
+              if (v === '') return;
+              // Armed and empty: it shows every row until something is picked or typed.
+              apply(M.setFilter(spec, Number(v), { query: '' }));
+            }}
+          />
+        </Row>
+        {(spec.sort || M.filtersActive(spec)) && (
+          <Note>
+            A view: the stored rows are untouched.{' '}
+            <button type="button" className="tblpanel-link tblpanel-link--inline" onClick={() => apply(M.applyView(spec))}>
+              Keep this order
+            </button>
+          </Note>
         )}
-      </Group>
-    </div>
+      </Section>
+
+      <Section
+        id="table-format"
+        title="Conditional colour"
+        subject="table"
+        empty={formattingCount === 0}
+        meta={formattingCount || undefined}
+        addLabel="Add conditional colour"
+        addMenu={[
+          { kind: 'item', id: 'rule', label: 'Highlight values that match', detail: 'Done, >100, <0 — cells or whole rows', onSelect: addRule },
+          { kind: 'item', id: 'scale', label: 'Colour scale', detail: 'Low to high on a ramp', onSelect: addScale },
+          { kind: 'item', id: 'bar', label: 'Data bars', detail: 'A bar inside each cell, to the largest', onSelect: addBar },
+        ]}
+      >
+        {(spec.rules ?? []).map((rule, i) => (
+          <div className="tblrule" key={`r${i}`}>
+            <div className="tblrule__top">
+              <Select label="Column the rule reads" value={String(rule.col)} options={columnOptions} onChange={(v) => setRule(i, { col: Number(v) })} />
+              <IconToggle label="Remove this rule" pressed={false} onClick={() => patch({ rules: spec.rules?.filter((_, j) => j !== i) })}>
+                <X size={13} />
+              </IconToggle>
+            </div>
+            <input
+              className="tblpanel-input tblpanel-input--mono"
+              aria-label="When the value is"
+              placeholder="Done, >100, <0"
+              value={rule.when}
+              onChange={(e) => setRule(i, { when: e.target.value })}
+            />
+            <div className="tblrule__foot">
+              <div className="tblrule__paints" role="radiogroup" aria-label="Colour">
+                {RULE_PAINTS.map((p) => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    role="radio"
+                    aria-checked={rule.fill === p.fill && rule.color === p.color}
+                    aria-label={p.label}
+                    data-tooltip={p.label}
+                    className="tblrule__paint"
+                    style={{ background: p.fill ?? '#FFFFFF', color: p.color }}
+                    onClick={() => setRule(i, { fill: p.fill, color: p.color })}
+                  >
+                    A
+                  </button>
+                ))}
+              </div>
+            </div>
+            <Row label="Whole row" hint="Paint the whole row the value is on, not only the cell">
+              <Switch checked={Boolean(rule.wholeRow)} onChange={(on) => setRule(i, { wholeRow: on || undefined })} />
+            </Row>
+          </div>
+        ))}
+        {(spec.scales ?? []).map((s, i) => {
+          const preset = SCALES.find((p) => p.from === s.from && p.to === s.to && p.mid === s.mid)?.id ?? 'green';
+          return (
+            <div className="tblrule" key={`s${i}`}>
+              <div className="tblrule__top">
+                <span className="tblrule__kind">Scale</span>
+                <Select
+                  label="Column the scale colours"
+                  value={String(s.col)}
+                  options={columnOptions}
+                  onChange={(v) => patch({ scales: spec.scales!.map((x, j) => (j === i ? { ...x, col: Number(v) } : x)) })}
+                />
+                <IconToggle label="Remove this scale" pressed={false} onClick={() => patch({ scales: spec.scales?.filter((_, j) => j !== i) })}>
+                  <X size={13} />
+                </IconToggle>
+              </div>
+              <SpecimenPicker
+                label="Ramp"
+                value={preset}
+                size={32}
+                onChange={(id) => {
+                  const p = SCALES.find((x) => x.id === id)!;
+                  patch({ scales: spec.scales!.map((x, j) => (j === i ? { col: x.col, from: p.from, to: p.to, ...(p.mid ? { mid: p.mid } : null) } : x)) });
+                }}
+                options={SCALES.map((p) => ({
+                  value: p.id,
+                  label: p.label,
+                  render: () => (
+                    <span
+                      className="tblrule__ramp"
+                      style={{ background: `linear-gradient(90deg, ${p.from}, ${p.mid ? `${p.mid}, ` : ''}${p.to})` }}
+                    />
+                  ),
+                }))}
+              />
+            </div>
+          );
+        })}
+        {(spec.bars ?? []).map((b, i) => (
+          <div className="tblrule" key={`b${i}`}>
+            <div className="tblrule__top">
+              <span className="tblrule__kind">Bars</span>
+              <Select
+                label="Column the bars measure"
+                value={String(b.col)}
+                options={columnOptions}
+                onChange={(v) => patch({ bars: spec.bars!.map((x, j) => (j === i ? { ...x, col: Number(v) } : x)) })}
+              />
+              <IconToggle label="Remove these bars" pressed={false} onClick={() => patch({ bars: spec.bars?.filter((_, j) => j !== i) })}>
+                <X size={13} />
+              </IconToggle>
+            </div>
+            <Row label="Colour">
+              <ColorChip label="Bar colour" value={b.color} allowNone={false} onChange={(color) => patch({ bars: spec.bars!.map((x, j) => (j === i ? { ...x, color } : x)) })} />
+            </Row>
+          </div>
+        ))}
+        {formattingCount > 0 && <Note>Colours follow every edit and formula result. The first matching rule wins.</Note>}
+      </Section>
+
+      {menu && (
+        <Menu
+          entries={columnMenuEntries({
+            spec,
+            col: menu.col,
+            apply,
+            fit: () => fitTableColumns(node, [menu.col]),
+            filterPanel: (close) => <FilterPanel spec={spec} col={menu.col} apply={apply} close={close} />,
+          })}
+          label={`Column ${columnLetter(menu.col)}`}
+          anchor={menu.anchor}
+          onClose={() => setMenu(null)}
+        />
+      )}
+      {filterFor && (
+        <Menu
+          entries={
+            [
+              {
+                kind: 'submenu',
+                id: 'filter',
+                label: `Filter ${columnName(spec, filterFor.col)}`,
+                icon: <Funnel size={15} />,
+                panel: (close: () => void) => <FilterPanel spec={spec} col={filterFor.col} apply={apply} close={close} />,
+              },
+            ] as MenuEntry[]
+          }
+          label="Filter"
+          anchor={filterFor.anchor}
+          focusFirst
+          onClose={() => setFilterFor(null)}
+        />
+      )}
+    </>
   );
 };
 
 /** A tiny table in each theme, so the choice is made by looking. */
-const ThemeSpecimen: React.FC<{ theme: TableTheme; accent: string }> = ({ theme, accent }) => {
+const ThemeSpecimen: React.FC<{ theme: TableTheme; accent: string; size: number }> = ({ theme, accent, size }) => {
   const head =
     theme === 'bold' ? accent : theme === 'striped' ? `${accent}33` : theme === 'minimal' ? 'transparent' : '#EEF2F6';
   const zebra = theme === 'striped' || theme === 'bold' ? (theme === 'bold' ? `${accent}14` : '#F1F5F9') : 'transparent';
   const rule = theme === 'grid' ? '#94A3B8' : '#CBD5E1';
   return (
-    <svg className="tbltheme__svg" viewBox="0 0 60 36" aria-hidden="true">
+    <svg viewBox="0 0 60 36" width={size - 8} height={(size - 8) * 0.6} aria-hidden="true">
       <rect x="0.5" y="0.5" width="59" height="35" rx={theme === 'minimal' ? 0 : 4} fill="#FFFFFF" stroke={theme === 'minimal' ? 'none' : rule} />
       <rect x="1" y="1" width="58" height="9" rx="3" fill={head} />
       <rect x="1" y="19" width="58" height="8" fill={zebra} />

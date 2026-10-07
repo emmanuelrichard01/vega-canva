@@ -6,18 +6,13 @@ import {
   updateNode as writeUpdate,
   type NewNodeInput,
 } from '../document';
-import { historyService } from './HistoryService';
 
 /**
  * The semantic command layer.
  *
- * Commands describe *intent* ("create a node", "move these") and are what the
- * activity feed and Time Travel narrate. They do not implement persistence —
- * every one delegates to `engine/document/mutations`, which is the single
- * write path. Previously each command hand-rolled its own `Y.Map` assembly
- * and `objectsMap.set`, which is how base-field stamping (z-index, updatedAt,
- * authorship) ended up inconsistent between the command layer and the tools
- * that bypassed it.
+ * Commands describe *intent* ("create a node", "move these"). They do not
+ * implement persistence: every one delegates to `engine/document/mutations`,
+ * which stamps z-index, timestamps and authorship.
  *
  * Undo/redo is delegated to Yjs' `UndoManager`, which tracks the document
  * itself and therefore also covers mutations that never went through a
@@ -48,7 +43,6 @@ export class CreateNodeCommand extends BaseCommand {
 
   execute() {
     this.createdId = writeCreate(this.node);
-    historyService.pushCommand(this.name, { nodeId: this.createdId, type: this.node.type });
   }
 }
 
@@ -65,7 +59,6 @@ export class UpdateNodeCommand extends BaseCommand {
 
   execute() {
     writeUpdate(this.nodeId, this.updates);
-    historyService.pushCommand(this.name, { nodeId: this.nodeId, updates: this.updates });
   }
 }
 
@@ -80,7 +73,6 @@ export class DeleteNodeCommand extends BaseCommand {
 
   execute() {
     writeDelete(this.nodeId);
-    historyService.pushCommand(this.name, { nodeId: this.nodeId });
   }
 }
 

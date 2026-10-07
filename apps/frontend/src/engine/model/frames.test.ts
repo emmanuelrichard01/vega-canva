@@ -322,19 +322,17 @@ describe('descendantsOfFrame', () => {
     expect(descendantsOfFrame('outer', nodes).sort()).toEqual(['a', 'b', 'inner']);
   });
 
-  it('terminates on a cycle instead of hanging', () => {
-    // `frameForNode` cannot produce one, but a hand-edited document or a
-    // concurrent merge is not bound by that — and a hang is far worse than a
-    // misplaced rectangle.
+  it('terminates on a cycle and does not follow it', () => {
+    // `frameForNode` cannot produce one, but a concurrent merge can. Following
+    // the cycle would make deleting f1 delete f2 and everything f2 holds.
     const nodes = [
       { id: 'f1', frameId: 'f2' },
       { id: 'f2', frameId: 'f1' },
       { id: 'leaf', frameId: 'f2' },
     ];
-    const found = descendantsOfFrame('f1', nodes);
-    expect(found).toContain('f2');
-    expect(found).toContain('leaf');
-    expect(new Set(found).size).toBe(found.length);
+    expect(descendantsOfFrame('f1', nodes)).toEqual([]);
+    // What a frame in the cycle holds outside the cycle is still its own.
+    expect(descendantsOfFrame('f2', nodes)).toEqual(['leaf']);
   });
 
   it('does not report the frame itself', () => {

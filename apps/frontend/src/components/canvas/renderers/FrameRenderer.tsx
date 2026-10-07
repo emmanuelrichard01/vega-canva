@@ -4,11 +4,12 @@ import { EXPORT_CHROME } from '../../../engine/export/chrome';
 import { safeAreaBox } from '../../../engine/model/frames';
 import { axisBands } from '../../../engine/model/layoutGuide';
 import type { FrameNode } from '../../../engine/model/schema';
+import { useCameraZoom } from '../../../engine/useCameraZoom';
 import { useFillProps } from './useFillProps';
+import { ThemeService } from '../../../engine/ThemeService';
 
 interface Props {
   node: FrameNode;
-  stageScale: number;
 }
 
 /**
@@ -20,7 +21,8 @@ interface Props {
  * three different rules about what exports and what does not, which is more
  * than a switch arm should be carrying.
  */
-export const FrameRenderer: React.FC<Props> = React.memo(({ node, stageScale }) => {
+export const FrameRenderer: React.FC<Props> = React.memo(({ node }) => {
+  const stageScale = useCameraZoom();
   const fill = useFillProps(node.appearance, { x: 0, y: 0, width: node.width, height: node.height }, '#FFFFFF');
 
   // The frame's own box, origin-anchored, so `safeAreaBox` hands back the
@@ -89,26 +91,25 @@ export const FrameRenderer: React.FC<Props> = React.memo(({ node, stageScale }) 
           listening={false}
         />
       ) : (() => {
-        // Damped scale curve: stabilizes legibility when zooming out slightly,
-        // but strictly clamps to max 15px in world space (and stays anchored right above the frame)
-        // so it NEVER inflates into an oversized billboard when zooming far out.
-        const effectiveScale = Math.max(0.75, stageScale);
-        const titleFontSize = Math.min(15, Math.max(9, 11 / effectiveScale));
-        const titleY = -(titleFontSize + 5);
-
+        // The name holds a constant size on screen, as in Figma: 12px at any
+        // zoom, so it is never a billboard zoomed out nor a speck zoomed in.
+        // Below a frame narrow enough that the name would be a few letters, it
+        // steps aside.
+        const zoom = Math.max(0.01, stageScale);
+        if (node.width * zoom < 48) return null;
+        const titleFontSize = 12 / zoom;
         return (
           <Text
             text={node.title ?? 'Frame'}
             name={EXPORT_CHROME}
             x={0}
-            y={titleY}
-            width={Math.max(60, node.width)}
+            y={-titleFontSize * 1.6}
+            width={node.width}
             ellipsis={true}
             wrap="none"
             fontSize={titleFontSize}
             fontStyle="500"
-            letterSpacing={0.2}
-            fill="#9CA3AF"
+            fill={ThemeService.isDarkMode() ? '#A1A1AA' : '#6B7280'}
             fontFamily="Inter, -apple-system, sans-serif"
             perfectDrawEnabled={false}
             listening={false}

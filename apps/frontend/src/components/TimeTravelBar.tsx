@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { Play, Pause, SkipBack, SkipForward, X, History, Loader2, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, AlertTriangle } from 'lucide-react';
-import { roomHistoryUrl } from '../utils/endpoints';
+import { roomHistoryUrl, roomRequestHeaders } from '../utils/endpoints';
 import { cameraSystem } from '../engine/CameraSystem';
 import { fitPose, type FitBounds } from '../engine/cameraFit';
 import {
@@ -177,7 +177,7 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
     let cancelled = false;
     async function fetchHistory() {
       try {
-        const res = await fetch(roomHistoryUrl(roomId));
+        const res = await fetch(roomHistoryUrl(roomId), { headers: roomRequestHeaders() });
         if (!res.ok) throw new Error(`Server responded ${res.status}`);
         const data = await res.json();
         if (cancelled) return;

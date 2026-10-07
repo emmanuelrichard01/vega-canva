@@ -55,6 +55,15 @@ export interface LayoutAxis {
   gutter: number;
   /** Inset from the two edges this axis runs between. */
   margin: number;
+  /**
+   * Where the tracks sit. `stretch` (the default, and what absent means)
+   * divides the space between the margins; the others give each track the
+   * fixed `size` and place the run at the start, centre or end of the frame,
+   * the way Figma's layout grids do. A centred run ignores the margin.
+   */
+  align?: 'stretch' | 'start' | 'center' | 'end';
+  /** Each track's size when `align` is not `stretch`. */
+  size?: number;
 }
 
 export interface LayoutGuide {
@@ -125,14 +134,25 @@ export function axisBands(extent: number, axis: LayoutAxis | undefined): Band[] 
   const margin = Math.max(0, axis.margin);
   const gutter = Math.max(0, axis.gutter);
 
-  const usable = extent - margin * 2;
   const gaps = gutter * (count - 1);
-  const size = (usable - gaps) / count;
+  const align = axis.align ?? 'stretch';
+  const fixed = align !== 'stretch' && typeof axis.size === 'number' && axis.size > 0 ? axis.size : null;
+
+  let size: number;
+  let origin: number;
+  if (fixed === null) {
+    size = (extent - margin * 2 - gaps) / count;
+    origin = margin;
+  } else {
+    size = fixed;
+    const run = size * count + gaps;
+    origin = align === 'start' ? margin : align === 'end' ? extent - margin - run : (extent - run) / 2;
+  }
   if (!(size > 0)) return [];
 
   const bands: Band[] = [];
   for (let i = 0; i < count; i += 1) {
-    bands.push({ start: margin + i * (size + gutter), size });
+    bands.push({ start: origin + i * (size + gutter), size });
   }
   return bands;
 }
@@ -157,7 +177,11 @@ export function guideEdges(
 ): { x: number[]; y: number[] } {
   const edge = (origin: number, bands: Band[]) => {
     const out: number[] = [];
-    for (const band of bands) out.push(origin + band.start, origin + band.start + band.size);
+    // Both edges and the centre: content is centred on a column as often as
+    // it is set against one of its edges.
+    for (const band of bands) {
+      out.push(origin + band.start, origin + band.start + band.size / 2, origin + band.start + band.size);
+    }
     return out;
   };
   return {

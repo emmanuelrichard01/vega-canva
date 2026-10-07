@@ -38,6 +38,8 @@ import {
   X,
 } from 'lucide-react';
 import './chartPanel.css';
+import { CategoryAxisFields, SeriesRows, TableSource, TextSizeRow } from './chartPanelData';
+import { useLinkedSpec } from './useLinkedSpec';
 import { NumberStepper } from '../ui/NumberStepper';
 import { Slider } from '../ui/Slider';
 import { Switch } from '../ui/Switch';
@@ -299,7 +301,7 @@ function useNotice(): [string | null, (msg: string) => void] {
 // ===========================================================================
 
 export const ChartSection: React.FC<Props> = ({ node }) => {
-  const spec = node.chart;
+  const spec = useLinkedSpec(node.chart);
   const radial = isRadial(spec.kind);
   const polar = isPolar(spec.kind);
   const plot = isPlot(spec.kind);
@@ -363,6 +365,19 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
     [spec.functions, patch]
   );
 
+  /** Kinds with a category axis along the bottom, whose names can turn and thin. */
+  const categoryAxis =
+    !radial &&
+    !polar &&
+    !plot &&
+    !isSampleKind(kind) &&
+    kind !== 'treemap' &&
+    kind !== 'network' &&
+    kind !== 'matrix' &&
+    kind !== 'timeline' &&
+    kind !== 'pie' &&
+    kind !== 'donut';
+
   const marksApply =
     can.curved ||
     isLineRun(kind) ||
@@ -410,6 +425,13 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
         </Group>
       )}
 
+      {/* ─── Series: shown, how it is drawn, which axis ───────────────── */}
+      {!plot && !isSampleKind(kind) && !legendNamesCategories(kind) && spec.series.length > 0 && (
+        <Group label="Series" icon={<List size={14} />}>
+          <SeriesRows spec={spec} patch={patch} />
+        </Group>
+      )}
+
       {/* ─── 2. Marks ──────────────────────────────────────────────────── */}
       {marksApply && (
         <Group label="Marks" icon={<Shapes size={14} />}>
@@ -418,8 +440,8 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
       )}
 
       {/* ─── 3. Scales ─────────────────────────────────────────────────── */}
-      {(plot || can.valueAxis || can.numberFormat || can.sort) && (
-        <Group label="Scales" icon={<Ruler size={14} />}>
+      {(plot || can.valueAxis || can.numberFormat || can.sort || categoryAxis) && (
+        <Group label="Axes" icon={<Ruler size={14} />}>
           {plot && (twoVar ? <PlaneFields spec={spec} patch={patch} /> : <DomainFields spec={spec} patch={patch} />)}
 
           {can.valueAxis && (
@@ -444,11 +466,19 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
               <OrderFields spec={spec} patch={patch} />
             </>
           )}
+
+          {categoryAxis && (
+            <>
+              <SubHead label="Categories" />
+              <CategoryAxisFields spec={spec} patch={patch} />
+            </>
+          )}
         </Group>
       )}
 
       {/* ─── 4. Labels ─────────────────────────────────────────────────── */}
       <Group label="Labels" icon={<Type size={14} />}>
+        <TextSizeRow spec={spec} patch={patch} />
         <LabelFields
           spec={spec}
           patch={patch}
@@ -466,7 +496,7 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
 
       {/* ─── 6. Notes ──────────────────────────────────────────────────── */}
       {(can.reference || kind === 'function' || isField(kind)) && (
-        <Group label="Notes" icon={<StickyNote size={14} />}>
+        <Group label="Annotations" icon={<StickyNote size={14} />}>
           {/* A timeline's line runs down the chart — a "today" — and a band
               across a time axis would be a range of dates, not a tolerance. */}
           {can.reference && <ReferenceFields spec={spec} patch={patch} allowBand={kind !== 'timeline'} />}
@@ -597,9 +627,22 @@ const DataPanel: React.FC<{ node: ChartNode } & FieldProps> = ({ node, spec, pat
   };
 
   const points = spec.series.reduce((n, s) => n + s.values.filter((v) => v !== null).length, 0);
+  const replace = (next: ChartSpec) => updateChart(node.id, next);
+
+  if (spec.link) {
+    return (
+      <>
+        <TableSource spec={spec} replace={replace} />
+        <div className="chartp-datafoot">
+          <span>{`${spec.categories.length} rows · ${spec.series.length} series · ${points} values`}</span>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
+      <TableSource spec={spec} replace={replace} />
       <div className="chartp-databar" role="toolbar" aria-label="Table">
         <button type="button" className="chartp-databar__open" onClick={() => void run('sheet')}>
           <Sheet size={14} aria-hidden="true" />

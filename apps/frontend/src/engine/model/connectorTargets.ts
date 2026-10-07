@@ -192,7 +192,18 @@ function outlineKey(node: AnyNode): string {
 }
 
 /** The cached outline for a node, computing it the first time. */
+/** The same node object always has the same outline; skip building the key. */
+const outlineByNode = new WeakMap<object, Point[] | null>();
+
 export function outlineFor(node: AnyNode): Point[] | null {
+  const known = outlineByNode.get(node);
+  if (known !== undefined) return known;
+  const value = outlineForKey(node);
+  outlineByNode.set(node, value);
+  return value;
+}
+
+function outlineForKey(node: AnyNode): Point[] | null {
   const key = outlineKey(node);
   const hit = outlineCache.get(key);
   if (hit !== undefined) return hit;

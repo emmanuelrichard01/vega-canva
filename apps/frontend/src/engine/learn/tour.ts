@@ -97,7 +97,7 @@ export const TOUR: readonly TourStep[] = [
     id: 'help',
     anchor: 'help',
     title: 'The rest of it',
-    body: 'Every shortcut and every gesture worth knowing. It is also on the question-mark key from anywhere.',
+    body: 'Export, view settings, music, help and every shortcut live in the board menu, on the arrow beside the board\x27s name. Help is also on the question-mark key, and in the corner beside the radar.',
     side: 'bottom',
   },
 ];

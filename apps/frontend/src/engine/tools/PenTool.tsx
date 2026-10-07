@@ -1,181 +1,132 @@
 import { nanoid } from 'nanoid';
+import * as React from 'react';
+import { getStroke } from 'perfect-freehand';
+import { Group, Path, Rect, Text } from 'react-konva';
 import { ThemeService } from '../ThemeService';
 import { simplifyPoints } from '../model/simplify';
 import { isClosedLoop } from '../model/freehandLoop';
+import type { Point } from '../model/schema';
+import { undoManager } from '../document';
 import type { Tool, ToolContext } from './Tool';
-import * as React from 'react';
-import { getStroke } from 'perfect-freehand';
-import { Path } from 'react-konva';
 import { useStore } from '../../hooks/useStore';
+import { brushPaint, brushWidth, strokeOptions, svgPathFromStroke, type Brush } from './brushes';
+import { drawSettings } from './drawSettings';
+import { RECOGNIZED_LABEL, recognizeShape, type Recognized } from './shapeRecognition';
 
-function getSvgPathFromStroke(stroke: number[][]) {
-  if (!stroke.length) return '';
-  const d = stroke.reduce(
-    (acc, [x0, y0], i, arr) => {
-      const [x1, y1] = arr[(i + 1) % arr.length];
-      acc.push(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
-      return acc;
-    },
-    ['M', ...stroke[0], 'Q']
-  );
-  d.push('Z');
-  return d.join(' ');
+/**
+ * The most recent pen pressure the browser reported.
+ *
+ * The stage delivers mouse and touch events, which carry no pressure, so it is
+ * recorded from the pointer event the browser fires just before each of them,
+ * in the capture phase so it lands before the stage's handlers run.
+ */
+let penPressure: number | undefined;
+let pressureListening = false;
+
+function latestPenPressure(): number | undefined {
+  if (!pressureListening && typeof window !== 'undefined') {
+    pressureListening = true;
+    const record = (ev: PointerEvent) => {
+      penPressure = ev.pointerType === 'pen' ? ev.pressure : undefined;
+    };
+    window.addEventListener('pointerdown', record, true);
+    window.addEventListener('pointermove', record, true);
+  }
+  return penPressure;
+}
+latestPenPressure();
+
+/** How long the pen has to rest at the end of a stroke before it snaps to a shape. */
+const HOLD_MS = 450;
+/** Strokes smaller than this, in screen pixels, are never recognised as shapes. */
+const MIN_SHAPE_SCREEN = 28;
+
+interface Sample {
+  x: number;
+  y: number;
+  p: number;
 }
 
+/**
+ * The freehand pen: one tool, three brushes.
+ *
+ * | gesture                         | result                                     |
+ * |---------------------------------|--------------------------------------------|
+ * | drag                            | a stroke with the current brush            |
+ * | **Shift** while dragging        | a straight line from where the stroke began |
+ * | rest at the end of a stroke     | snaps to the shape it was drawn as          |
+ * | move again after a snap         | back to freehand                            |
+ * | **Escape**                      | abandon the stroke                          |
+ * | tap                             | a dot                                       |
+ *
+ * Each stroke is its own undo step, however quickly the next one follows.
+ */
 export class PenTool implements Tool {
   id = 'pen';
   cursor = 'crosshair';
 
-  /**
-   * The ink the pencil draws in, from the theme.
-   *
-   * ## Why this was wrong
-   *
-   * It was `static currentColor = DEFAULT_INK` — `#1F2937`, a near-black —
-   * and, unusually, **nothing anywhere ever assigned it**. There is no colour
-   * control for the pencil, so that constant was the colour of every freehand
-   * stroke this product has ever drawn. On a dark board it is a near-black
-   * line on a near-black surface: the tool appeared to do nothing, and the
-   * stroke was there all along.
-   *
-   * `BezierPenTool` one file over already asks `ThemeService` for its stroke,
-   * so the pencil was the odd one out rather than the rule.
-   *
-   * ## Why the body text colour, and not the shape stroke
-   *
-   * `getDefaultStrokeColor` is blue in light mode — right for a shape's edge,
-   * wrong for ink. A pencil draws the same mark a sentence is made of, so it
-   * takes the same pair, and `penInkContrast.test.ts` holds both ends of that
-   * pair against the board they are drawn on.
-   *
-   * ## Why a getter, and what it does not solve
-   *
-   * Read at draw time, so a stroke started after a theme change uses the new
-   * ink. A stroke already *committed* keeps the colour it was drawn with —
-   * switching to light does not repaint a white line — which is inherent to
-   * storing a colour and is what every editor does. This sets the default at
-   * creation, exactly as `getDefaultShapeFill` does for a new rectangle.
-   */
-  static get currentColor(): string {
+  /** The theme's ink: body text colour, so a stroke reads on either board. */
+  static get themeInk(): string {
     return ThemeService.getDefaultTextColor();
   }
 
-  /** The nib, from the store so the dock's control and the stroke agree. */
+  /** The ink the next stroke is drawn in, for the brush held. */
+  static inkFor(brush: Brush): string {
+    const settings = drawSettings.get();
+    if (brush === 'highlighter') return settings.highlight;
+    return settings.ink ?? PenTool.themeInk;
+  }
+
+  /** Kept for callers that ask for the pen's ink without naming a brush. */
+  static get currentColor(): string {
+    return PenTool.inkFor(drawSettings.get().brush);
+  }
+
+  /** The nib setting, from the store so the dock's control and the stroke agree. */
   private static get size(): number {
     return useStore.getState().penSize;
   }
 
-  /**
-   * How hard the input is smoothed, as `perfect-freehand` wants it.
-   *
-   * The slider is 0–100 because that is a number somebody can report and
-   * return to; the library takes 0–1, and the conversion happens once, here.
-   *
-   * `streamline` is a low-pass filter on the *input samples*, which is
-   * precisely what Illustrator calls Fidelity: turn it up and the line ignores
-   * more of what your hand actually did. `smoothing` shapes the curve fitted
-   * through whatever survives. They move together because they are two halves
-   * of one question — how literal should this line be — and exposing them
-   * separately would be offering a choice nobody can hold in their head.
-   *
-   * `smoothing` is deliberately the gentler of the two: it rounds corners, and
-   * at the top of the range a fully smoothed line loses the sharp reversal
-   * that makes an arrow head or a tick read as one. So the fidelity slider
-   * spends most of its travel on `streamline`, which drops samples without
-   * rounding what is left.
-   */
-  private static get smoothing(): { streamline: number; smoothing: number } {
-    const t = useStore.getState().penSmoothing / 100;
-    return { streamline: t, smoothing: 0.25 + t * 0.45 };
+  /** The smoothing setting, 0–1. */
+  private static get smoothing(): number {
+    return useStore.getState().penSmoothing / 100;
   }
 
   private isDrawing = false;
+  /** The raw input, with pen pressure where the device reports it. */
+  private points: Sample[] = [];
   /**
-   * The raw input, with pen pressure where the device reports it.
-   *
-   * `perfect-freehand` takes `[x, y, pressure]` and will thin the line for
-   * you. It was being handed `[x, y]` only, so a graphics tablet drew exactly
-   * the same dead-weight line as a mouse — the one input that has something to
-   * say about how hard you pressed was the one thing thrown away.
-   */
-  private points: { x: number; y: number; p: number }[] = [];
-  /**
-   * Whether anything is actually varying the pressure.
-   *
-   * A mouse reports a constant 0.5 while held (and 0 otherwise), so trusting
-   * it would produce a line of rigidly uniform width. When nothing real is
-   * arriving, `simulatePressure` lets the library infer weight from velocity,
-   * which is what makes a mouse-drawn stroke look drawn rather than extruded.
+   * Whether anything is actually varying the pressure. A mouse reports a
+   * constant 0.5 while held, and trusting it would give a rigidly uniform line.
    */
   private hasRealPressure = false;
+  /** The brush for the stroke in progress, fixed when it starts. */
+  private brush: Brush = 'pen';
+  /** Shift held: the stroke is a straight line from its first point. */
+  private straight = false;
+  private holdTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The shape the stroke snapped to, while the pen is resting. */
+  private snapped: Recognized | null = null;
+  private zoom = 1;
 
-  /**
-   * One set of options, used by the preview and by the committed stroke.
-   *
-   * These were written out twice — here and in `renderOverlay` — so the ghost
-   * you drew against and the mark you got were two independent definitions of
-   * the same line, free to drift apart at the next edit.
-   */
-  private strokeOptions() {
-    return {
+  private options() {
+    return strokeOptions(this.brush, {
       size: PenTool.size,
-      /**
-       * How much the line narrows with speed or pressure.
-       *
-       * A stylus earns the full effect — that variation is the whole reason
-       * to hold one. A **mouse** has no pressure to report, so this was being
-       * inferred from cursor velocity at the same strength, and mouse velocity
-       * is not a smooth signal: it arrives in bursts shaped by the OS, the
-       * frame budget and the surface under your hand. Every one of those
-       * bursts became a bulge in the line. That is the lumpiness — the tool
-       * was faithfully drawing noise nobody produced.
-       */
-      thinning: this.hasRealPressure ? 0.5 : 0.12,
-      /**
-       * From the setting, with the device still counted.
-       *
-       * These were two hard-coded pairs — 0.5 for a stylus, 0.7/0.72 for a
-       * mouse — and the reasoning behind the split was sound: mouse input
-       * arrives in bursts shaped by the OS and the frame budget, and every
-       * burst became a bulge. The constant was still the wrong shape. How
-       * literal a line should be is a property of *what is being drawn*, not
-       * of the hardware: handwriting and a quick circle want opposite ends of
-       * it, on the same device.
-       *
-       * So the setting is the value and the device is an offset. A stylus
-       * reports real positions at a real rate, so it needs about a fifth less
-       * help at every setting — which keeps "less smoothing on a pen than on a
-       * mouse" true across the whole range instead of at one point on it.
-       */
-      ...(() => {
-        const { streamline, smoothing } = PenTool.smoothing;
-        const relief = this.hasRealPressure ? 0.8 : 1;
-        return { streamline: streamline * relief, smoothing: smoothing * relief };
-      })(),
-      simulatePressure: !this.hasRealPressure,
+      smoothing: PenTool.smoothing,
+      realPressure: this.hasRealPressure,
       last: !this.isDrawing,
-    };
+    });
   }
 
   /**
-   * Ignore samples that have barely moved.
-   *
-   * A pointer at rest still emits events, and every one of them used to be
-   * recorded — so pausing mid-stroke piled dozens of near-identical points on
-   * one spot, which the smoother then had to average its way out of, leaving a
-   * visible knot exactly where the hand hesitated. Sampling by distance rather
-   * than by event also means the stored path does not grow with how long the
-   * gesture took.
-   *
-   * The threshold is in world units, so it is a constant *screen* distance at
-   * any zoom — a stroke drawn at 400% should not be recorded four times as
-   * finely as the same gesture at 100%.
+   * Samples closer than this to the last one are dropped, so a resting pen
+   * does not pile points on one spot. In world units, so it is a constant
+   * screen distance at any zoom.
    */
   private farEnough(x: number, y: number, zoom: number): boolean {
     const last = this.points[this.points.length - 1];
     if (!last) return true;
-    const minimum = 1.4 / (zoom || 1);
-    return Math.hypot(x - last.x, y - last.y) >= minimum;
+    return Math.hypot(x - last.x, y - last.y) >= 1.4 / (zoom || 1);
   }
 
   onPointerDown(ctx: ToolContext, e: any) {
@@ -183,8 +134,13 @@ export class PenTool implements Tool {
     if (!pos) return;
     this.isDrawing = true;
     this.hasRealPressure = false;
+    this.brush = drawSettings.get().brush;
+    this.straight = Boolean(e?.evt?.shiftKey);
+    this.snapped = null;
+    this.zoom = ctx.camera.zoom || 1;
     this.points = [{ ...pos, p: this.pressureOf(e) }];
-    ctx.setOverlayState?.({ type: 'pen', points: [...this.points] });
+    this.armHold(ctx);
+    this.publish(ctx);
   }
 
   onPointerMove(ctx: ToolContext, e: any) {
@@ -192,222 +148,244 @@ export class PenTool implements Tool {
     const pos = this.getPointerPos(ctx, e);
     if (!pos) return;
     const p = this.pressureOf(e);
-    // A pen is only "real" once it varies. A mouse pins 0.5 for the whole
-    // stroke, and treating that as pressure gives a line of constant weight.
     if (!this.hasRealPressure && Math.abs(p - this.points[0].p) > 0.02) {
       this.hasRealPressure = true;
     }
+    this.straight = Boolean(e?.evt?.shiftKey);
     if (!this.farEnough(pos.x, pos.y, ctx.camera.zoom)) return;
+
+    // Moving again after a snap takes it back: the hand is still drawing.
+    if (this.snapped) this.snapped = null;
     this.points.push({ ...pos, p });
-    ctx.setOverlayState?.({ type: 'pen', points: [...this.points] });
+    this.armHold(ctx);
+    this.publish(ctx);
   }
 
-  /** Pointer pressure, defaulted to the middle of the range for a mouse. */
+  /** Restart the rest timer; when it fires, try to recognise the stroke as a shape. */
+  private armHold(ctx: ToolContext) {
+    this.clearHold();
+    if (!drawSettings.get().recognizeShapes || this.brush === 'highlighter') return;
+    this.holdTimer = setTimeout(() => {
+      this.holdTimer = null;
+      if (!this.isDrawing || this.straight || this.points.length < 6) return;
+      const found = recognizeShape(this.points, MIN_SHAPE_SCREEN / this.zoom);
+      if (!found) return;
+      this.snapped = found;
+      this.publish(ctx);
+    }, HOLD_MS);
+  }
+
+  private clearHold() {
+    if (this.holdTimer) clearTimeout(this.holdTimer);
+    this.holdTimer = null;
+  }
+
+  /**
+   * The centreline the stroke will be built from: the snapped shape, a
+   * straight line under Shift, or the samples themselves.
+   */
+  private effectivePoints(): Sample[] {
+    if (this.snapped) return this.snapped.points.map((pt) => ({ ...pt, p: 0.5 }));
+    if (this.straight && this.points.length > 1) {
+      const a = this.points[0];
+      const b = this.points[this.points.length - 1];
+      return [a, { ...b, p: a.p }];
+    }
+    return this.points;
+  }
+
+  /** Options for a centreline that is already clean: no streamlining, no taper. */
+  private cleanOptions() {
+    const base = this.options();
+    return { ...base, streamline: 0, smoothing: 0.2, thinning: 0, simulatePressure: false, last: true };
+  }
+
+  private outline(points: Sample[]): number[][] {
+    const clean = Boolean(this.snapped) || (this.straight && points.length === 2);
+    return getStroke(
+      points.map((pt) => [pt.x, pt.y, pt.p]),
+      clean ? this.cleanOptions() : this.options()
+    );
+  }
+
+  /** Hand the live stroke to the overlay. The array is shared, not copied. */
+  private publish(ctx: ToolContext) {
+    ctx.setOverlayState?.({
+      type: 'pen',
+      points: this.points,
+      count: this.points.length,
+      snapped: this.snapped,
+      straight: this.straight,
+    });
+  }
+
   private pressureOf(e: any): number {
-    const raw = e?.evt?.pressure;
+    const own = e?.evt?.pressure;
+    const raw = typeof own === 'number' ? own : latestPenPressure();
     return typeof raw === 'number' && raw > 0 ? raw : 0.5;
   }
 
   onKeyDown(ctx: ToolContext, e: KeyboardEvent) {
-    // Escape abandons the stroke, matching every other drawing gesture here.
     if (e.key === 'Escape' && this.isDrawing) {
-      this.isDrawing = false;
-      this.points = [];
-      ctx.setOverlayState?.(null);
+      this.abandon(ctx);
+      return;
     }
+    if (e.key === 'Shift' && this.isDrawing && !this.straight) {
+      this.straight = true;
+      this.publish(ctx);
+    }
+  }
+
+  onKeyUp(ctx: ToolContext, e: KeyboardEvent) {
+    if (e.key === 'Shift' && this.isDrawing && this.straight) {
+      this.straight = false;
+      this.publish(ctx);
+    }
+  }
+
+  private abandon(ctx: ToolContext) {
+    this.clearHold();
+    this.isDrawing = false;
+    this.points = [];
+    this.snapped = null;
+    ctx.setOverlayState?.(null);
   }
 
   onPointerUp(ctx: ToolContext) {
     if (!this.isDrawing) return;
+    this.clearHold();
     this.isDrawing = false;
     ctx.setOverlayState?.(null);
 
-    // A tap is a dot. `>= 2` silently discarded it, so pressing the pencil
-    // down without moving produced nothing at all — which reads as the tool
-    // being broken rather than as a deliberate refusal. Two coincident points
-    // are what `getStroke` needs to close a round cap into a dot.
-    if (this.points.length === 1) {
-      this.points.push({ ...this.points[0] });
-    }
+    // A tap is a dot: two coincident points close a round cap into one.
+    if (this.points.length === 1) this.points.push({ ...this.points[0] });
 
-    if (this.points.length >= 2) {
-      const strokePoints = getStroke(
-        this.points.map((pt) => [pt.x, pt.y, pt.p]),
-        this.strokeOptions()
-      );
-
-      // Storing the svgPath in absolute canvas coordinates (with x/y always 0)
-      // meant every freehand stroke reported a phantom 100x100 bounding box to
-      // anything that reads obj.width/height (marquee-select, the eraser, the
-      // minimap) — a scribble spanning half the canvas would still register
-      // as "at the origin, 100x100" for hit-testing. Normalize to the actual
-      // bounds and store the path relative to them, matching every other
-      // object type's (x, y) + relative-content convention.
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const p of this.points) {
-        minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
-        minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
-      }
-      const pad = PenTool.size; // the stroke itself extends ~size/2 beyond the raw points
-      minX -= pad; minY -= pad; maxX += pad; maxY += pad;
-
-      const svgPath = getSvgPathFromStroke(strokePoints.map(([x, y]) => [x - minX, y - minY]));
-      // The outline blob (svgPath) is what renders, but it's a filled polygon
-      // traced around the stroke — not the stroke itself, so there's no way
-      // to tell where along it you clicked. Keeping the original centerline
-      // points (relative to the same origin) is what lets the Eraser cut an
-      // actual gap in a freehand stroke instead of only being able to delete
-      // the whole thing.
-      /**
-       * Thinned before it is stored.
-       *
-       * The raw samples are what the pointer reported — hundreds for a short
-       * stroke, and nearly all of them on straight runs where the neighbours
-       * already say everything. They are replicated to every client, written
-       * into every snapshot and serialized into every export. Douglas–Peucker
-       * at just over a unit keeps every corner and drops the rest; the drawn
-       * outline is unaffected because it comes from `svgPath`, which
-       * `perfect-freehand` has already produced from the full-rate input.
-       */
-      const nib = useStore.getState().pencilNib;
-      /**
-       * The stored centreline is thinned in proportion to the smoothing.
-       *
-       * This was a flat `1.2`, chosen when smoothing was a constant — so the
-       * setting shaped the *drawn* outline and left the stored geometry
-       * identical at every value. That is a real inconsistency rather than an
-       * omission: the centreline is what the eraser cuts on, what a sketched
-       * nib is drawn from, and what a resize refits, so a stroke set to
-       * maximum smoothing still carried every wobble the smoothing was asked
-       * to remove — invisible until you erased through it or switched the nib,
-       * and then plainly there.
-       *
-       * Tying the tolerance to the setting makes the two agree: a literal line
-       * keeps its detail, a heavily smoothed one is stored as smoothly as it
-       * is drawn, and a long stroke at high fidelity stops carrying hundreds
-       * of points that say nothing.
-       *
-       * Scaled by the **nib** as well, because tolerance is a distance and a
-       * deviation that matters on a hairline is invisible under a 40-unit
-       * brush. The floor keeps a fine pen honest.
-       */
-      const smoothing = useStore.getState().penSmoothing / 100;
-      const tolerance = Math.max(0.6, (0.6 + smoothing * 1.8) * Math.max(1, PenTool.size / 6));
-      const centerline = simplifyPoints(
-        this.points.map(p => ({ x: p.x - minX, y: p.y - minY })),
-        tolerance
-      );
-
-      const id = nanoid();
-      ctx.editor.createNode({
-        id,
-        type: 'path',
-        x: minX,
-        y: minY,
-        width: Math.max(1, maxX - minX),
-        height: Math.max(1, maxY - minY),
-        geometry: {
-          kind: 'freehand',
-          svgPath,
-          points: centerline,
-          strokeSize: PenTool.size,
-          /**
-           * Whether the stroke came back to where it started.
-           *
-           * Decided here, when the pen lifts, because the test involves the
-           * nib and the distance travelled — both facts about the moment it
-           * was drawn. Recomputed later, a stroke could stop being closed
-           * because somebody resized it or erased a piece out of the middle,
-           * and a fill would vanish for a reason nobody could see.
-           *
-           * `isClosedLoop` is deliberately strict about what a loop is: two
-           * short back-and-forth scribbles end near where they began and
-           * enclose nothing. See its own note.
-           */
-          ...(isClosedLoop(centerline, PenTool.size) ? { closed: true } : null),
-        },
-        /**
-         * The nib in the pencil, written onto the stroke.
-         *
-         * A stroke is finished the moment the pen lifts, so this cannot be a
-         * decision made afterwards without drawing, selecting and editing every
-         * single line. It is stored on the node rather than read from the store
-         * at render time for the ordinary reason: a document has to draw the
-         * same on every machine, and a tool setting is a property of *this*
-         * browser.
-         *
-         * ## Only the stroke now, where it used to be both
-         *
-         * The colour was written to `fill` *and* `stroke`, because the smooth
-         * renderer painted the outline polygon with the fill and the sketched
-         * one stroked the centreline. That made the pencil the one node type
-         * where `fill` did not mean the interior — and it is why a closed
-         * pencil loop could never be filled: the field that would hold the
-         * colour was already the ink.
-         *
-         * Both renderers read `stroke.color` now, so the ink is written once
-         * and `fill` is left free to mean what it means everywhere else. A
-         * stroke drawn before this change carries the same colour in both
-         * fields, so nothing already on a board looks different; it simply has
-         * a fill it never asked for, which paints nothing until the stroke is
-         * also closed.
-         */
-        appearance: {
-          stroke: { color: PenTool.currentColor, width: PenTool.size },
-          ...(nib !== 'smooth' ? { sketch: nib } : null),
-        },
-      });
-
-      /**
-       * Whether the stroke you just drew stays selected.
-       *
-       * Off by default, and it is the setting anybody who draws a lot ends up
-       * on. Keeping the last stroke selected means every following press lands
-       * on a selection handle rather than the board, the properties panel
-       * changes under you between strokes, and a sketch of twenty lines is
-       * twenty deselections. Keeping it *on* is right for the other job —
-       * drawing one line and immediately restyling it — which is why this is a
-       * preference and not a decision.
-       *
-       * The tool is not swapped either way. `ShapeTool` hands back to Select
-       * after it draws, because a rectangle is placed once; a pencil is held
-       * for a while, and taking it out of your hand after every stroke is the
-       * behaviour people turn off first in the tools that do it.
-       */
-      if (useStore.getState().penKeepSelected) ctx.editor.select(id);
-    }
+    const centre = this.effectivePoints();
+    if (centre.length >= 2) this.commit(ctx, centre);
 
     this.points = [];
+    this.snapped = null;
+  }
+
+  private commit(ctx: ToolContext, centre: Sample[]) {
+    const brush = this.brush;
+    const width = brushWidth(brush, PenTool.size);
+    const outline = this.outline(centre);
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of centre) {
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y);
+      maxY = Math.max(maxY, p.y);
+    }
+    // The ink reaches about half the nib past the centreline.
+    const pad = width;
+    minX -= pad;
+    minY -= pad;
+    maxX += pad;
+    maxY += pad;
+
+    const svgPath = svgPathFromStroke(outline.map(([x, y]) => [x - minX, y - minY]));
+
+    // The stored centreline is thinned in proportion to the smoothing and the
+    // nib, so a heavily smoothed stroke is stored as smoothly as it is drawn.
+    // A snapped shape is already clean and is kept as it is.
+    const tolerance = this.snapped
+      ? 0.25
+      : Math.max(0.6, (0.6 + PenTool.smoothing * 1.8) * Math.max(1, width / 6));
+    const centerline = simplifyPoints(
+      centre.map((p) => ({ x: p.x - minX, y: p.y - minY })),
+      tolerance
+    );
+    const closed = this.snapped ? this.snapped.closed : isClosedLoop(centerline, width);
+    const nib = useStore.getState().pencilNib;
+
+    // The previous stroke stays its own undo step, however soon this one starts.
+    undoManager.stopCapturing();
+    const id = nanoid();
+    ctx.editor.createNode({
+      id,
+      type: 'path',
+      x: minX,
+      y: minY,
+      width: Math.max(1, maxX - minX),
+      height: Math.max(1, maxY - minY),
+      geometry: {
+        kind: 'freehand',
+        svgPath,
+        points: centerline,
+        strokeSize: width,
+        ...(closed ? { closed: true } : null),
+        ...(brush !== 'pen' ? { brush } : null),
+      },
+      // The nib (smooth or sketched) is written onto the stroke, because a
+      // document has to draw the same on every machine.
+      appearance: {
+        stroke: { color: PenTool.inkFor(brush), width },
+        ...(nib !== 'smooth' && brush !== 'highlighter' ? { sketch: nib } : null),
+      },
+    });
+    undoManager.stopCapturing();
+
+    if (useStore.getState().penKeepSelected) ctx.editor.select(id);
   }
 
   onDeactivate(ctx: ToolContext) {
-    // Switching tools mid-stroke (e.g. a keyboard shortcut while still
-    // dragging) left the in-progress preview permanently stuck on screen —
-    // nothing else clears overlayState, and this tool only ever cleared it
-    // from onPointerUp. BezierPenTool already resets on deactivate; this one
-    // didn't.
-    this.isDrawing = false;
-    this.points = [];
-    ctx.setOverlayState?.(null);
+    this.abandon(ctx);
   }
 
   renderOverlay(ctx: ToolContext, overlayState: any) {
-    if (overlayState?.type === 'pen' && overlayState.points) {
-      const strokePoints = getStroke(
-        overlayState.points.map((pt: any) => [pt.x, pt.y, pt.p ?? 0.5]),
-        this.strokeOptions()
-      );
-      const pathData = getSvgPathFromStroke(strokePoints);
-      
-      return (
-        <Path
-          data={pathData}
-          fill={PenTool.currentColor}
-          listening={false}
-        />
+    if (overlayState?.type !== 'pen' || !overlayState.points) return null;
+    const zoom = ctx.camera.zoom || 1;
+    const centre = this.effectivePoints();
+    const pathData = svgPathFromStroke(this.outline(centre));
+    const paint = brushPaint(this.brush, ThemeService.isDarkMode());
+    const snapped: Recognized | null = overlayState.snapped ?? null;
+
+    let chip: React.ReactNode = null;
+    if (snapped) {
+      const last: Point = this.points[this.points.length - 1] ?? centre[centre.length - 1];
+      const label = RECOGNIZED_LABEL[snapped.kind];
+      const fontSize = 11 / zoom;
+      const padX = 6 / zoom;
+      const width = label.length * fontSize * 0.62 + padX * 2;
+      const height = fontSize + 8 / zoom;
+      const dark = ThemeService.isDarkMode();
+      chip = (
+        <Group x={last.x + 12 / zoom} y={last.y + 12 / zoom} listening={false}>
+          <Rect
+            width={width}
+            height={height}
+            cornerRadius={height / 2}
+            fill={dark ? '#F4F4F5' : '#18181B'}
+            opacity={0.92}
+          />
+          <Text
+            x={padX}
+            y={4 / zoom}
+            text={label}
+            fontSize={fontSize}
+            fontFamily="Inter, system-ui, sans-serif"
+            fontStyle="600"
+            fill={dark ? '#18181B' : '#FAFAFA'}
+          />
+        </Group>
       );
     }
-    return null;
+
+    return (
+      <>
+        <Path
+          data={pathData}
+          fill={PenTool.inkFor(this.brush)}
+          opacity={paint.opacity}
+          globalCompositeOperation={paint.globalCompositeOperation}
+          listening={false}
+        />
+        {chip}
+      </>
+    );
   }
 
   private getPointerPos(ctx: ToolContext, e: any) {
@@ -416,7 +394,7 @@ export class PenTool implements Tool {
     if (!pos) return null;
     return {
       x: (pos.x - ctx.camera.x) / ctx.camera.zoom,
-      y: (pos.y - ctx.camera.y) / ctx.camera.zoom
+      y: (pos.y - ctx.camera.y) / ctx.camera.zoom,
     };
   }
 }

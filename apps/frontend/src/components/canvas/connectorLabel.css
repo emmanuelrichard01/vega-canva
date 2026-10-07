@@ -1,0 +1,19 @@
+/* The field a connector label is typed into, sitting where the label will. */
+.connector-label-input {
+  box-sizing: border-box;
+  height: auto;
+  padding: 2px 6px;
+  border: 1.5px solid var(--focus-field-color);
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  line-height: 1.3;
+  text-align: center;
+  outline: none;
+}
+
+.connector-label-input::placeholder {
+  color: var(--text-tertiary);
+}

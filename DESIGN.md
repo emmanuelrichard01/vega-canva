@@ -198,6 +198,42 @@ in both themes — a mark that changed colour with the theme would not be a mark
 Only the foreground role and the tints move, because those are about legibility
 rather than identity.
 
+### Increase contrast
+
+A viewer setting with three values: **Auto** follows the OS
+(`prefers-contrast: more`, and forced colours), **Increased** and **Standard**
+pin a choice. It is never stored in a board. The effect is one attribute,
+`data-contrast="more"` on `<html>`, decided before first paint by the boot
+script in `index.html` and kept current by `engine/ui/contrast.ts`.
+
+`styles/contrast.css` re-declares **tokens only**. A component that paints from
+the semantic roles gets the stronger version for free; a component that paints
+a literal colour does not, which is one more reason literals are a bug.
+
+What changes, and the floor each change is tested against (`contrast.test.ts`,
+both themes, every app surface):
+
+- Primary and secondary text reach 7:1. Tertiary reaches 7:1 on panels and
+  stays above 4.5:1 on sunken and canvas grounds.
+- Dividers, control borders and the focus ring reach 3:1 (WCAG 1.4.11), so a
+  field or a section edge is visible without hover.
+- Glass becomes opaque with a solid hairline: a translucent panel's contrast
+  depends on the board behind it, which is the opposite of a guarantee.
+- The focus ring thickens to 3px and takes the primary ink. It is still
+  neutral; increased contrast never paints focus in the accent.
+- Selection keeps its colour and adds weight: the selected hairline is drawn
+  at full `--text-accent` strength, so the state does not rely on hue alone.
+- Canvas chrome cannot read CSS, so Konva-drawn handles, guides and outlines
+  take `canvasChromeContrast()`: a thicker stroke and a halo that separates
+  them from whatever board content they cross.
+
+Under forced colours the OS owns the palette and strips box-shadows, so the
+focus ring becomes a `Highlight` outline there.
+
+**The Tokens Carry It Rule.** Never write `[data-contrast]` into a component's
+CSS. If a surface is too faint under increased contrast, it is painting the
+wrong role; fix the role it reads.
+
 ## Typography
 
 **Display / Body Font:** Inter Variable, self-hosted (`system-ui` fallback)

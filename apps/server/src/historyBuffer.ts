@@ -1,38 +1,13 @@
 /**
- * The history log, written in batches instead of a row at a time.
+ * The Time Travel log, written in batches instead of a row at a time.
  *
- * ## The problem
+ * `onChange` fires once per Yjs transaction, and a drag emits one every few
+ * frames. Updates accumulate in memory and flush on a timer, or early when the
+ * buffer gets big, so one multi-row insert replaces N single-row ones.
  *
- * `onChange` fires once per Yjs transaction, and a transaction is not a
- * user-visible action -- dragging a shape emits one every few frames. Each one
- * used to perform **two** round trips to Postgres: an `INSERT INTO rooms ...
- * ON CONFLICT DO NOTHING`, which is only meaningful the first time a room is
- * ever seen, and the actual append.
- *
- * At roughly thirty transactions a second on a single board being actively
- * worked in, that is sixty queries a second from one user. The connection pool
- * is twenty. A handful of concurrent boards saturates the database with
- * bookkeeping while the sync itself, which is in memory, is doing nothing at
- * all -- so the first thing to fall over under load is the feature nobody is
- * using rather than the one everybody is.
- *
- * ## The shape of the fix
- *
- * Updates accumulate in memory and flush on a timer, or when the buffer gets
- * big, whichever comes first. One multi-row insert replaces N single-row ones,
- * and the room upsert happens once per room per process rather than once per
- * frame.
- *
- * ## What this trades away, and why it is acceptable
- *
- * A crash loses whatever has not flushed yet -- at most `flushIntervalMs` of
- * history. That is fine, and it would not be fine for the document: the
- * canonical state is `room_snapshots`, written by Hocuspocus's own debounced
- * persistence, and this table only feeds Time Travel's scrubber. Losing the
- * last two seconds of *scrubbable history* after a hard kill costs somebody
- * the ability to step through a moment they can still see on their screen.
- *
- * The flush on shutdown means the ordinary case -- a deploy -- loses nothing.
+ * A crash loses whatever has not flushed yet, at most `flushIntervalMs` of
+ * history. The canonical document is `room_snapshots`; this table only feeds
+ * Time Travel's scrubber. `drain` on shutdown means a deploy loses nothing.
  */
 
 export interface PendingUpdate {
@@ -46,37 +21,38 @@ export interface HistoryBufferOptions {
   /** How many updates may queue before a flush is triggered early. */
   maxBatch?: number;
   /**
-   * A ceiling on the queue, after which the oldest are dropped.
-   *
-   * Backpressure, not politeness. If the database is unreachable the flush
-   * keeps failing and the queue is the only thing that grows; without a cap
-   * the process runs out of memory, which takes live sync down with it. Live
-   * sync is the product and history is a convenience, so the convenience is
-   * what gets dropped.
+   * Ceilings on the queue, by count and by bytes, past which the oldest are
+   * dropped. If the database is unreachable the queue is the only thing that
+   * grows; live sync is the product and history a convenience, so history is
+   * what gets dropped rather than the process running out of memory.
    */
   maxQueue?: number;
+  maxBytes?: number;
   /** Writes one batch. Rejecting means the batch is retried in the next flush. */
   write: (batch: PendingUpdate[]) => Promise<void>;
-  onError?: (err: unknown) => void;
+  onError?: (err: unknown, batch: PendingUpdate[]) => void;
 }
 
 export class HistoryBuffer {
   private queue: PendingUpdate[] = [];
+  private queuedBytes = 0;
   private timer: NodeJS.Timeout | undefined;
-  private flushing = false;
+  private inFlight: Promise<void> | null = null;
   private stopped = false;
   private droppedCount = 0;
 
   private readonly flushIntervalMs: number;
   private readonly maxBatch: number;
   private readonly maxQueue: number;
+  private readonly maxBytes: number;
   private readonly write: (batch: PendingUpdate[]) => Promise<void>;
-  private readonly onError: (err: unknown) => void;
+  private readonly onError: (err: unknown, batch: PendingUpdate[]) => void;
 
   constructor(options: HistoryBufferOptions) {
     this.flushIntervalMs = options.flushIntervalMs ?? 1000;
     this.maxBatch = options.maxBatch ?? 200;
     this.maxQueue = options.maxQueue ?? 5000;
+    this.maxBytes = options.maxBytes ?? 64 * 1024 * 1024;
     this.write = options.write;
     this.onError = options.onError ?? (() => {});
   }
@@ -90,42 +66,58 @@ export class HistoryBuffer {
     return this.queue.length;
   }
 
+  get bytes(): number {
+    return this.queuedBytes;
+  }
+
   add(roomId: string, update: Uint8Array): void {
     if (this.stopped) return;
 
     this.queue.push({ roomId, update });
-
-    if (this.queue.length > this.maxQueue) {
-      const overflow = this.queue.length - this.maxQueue;
-      this.queue.splice(0, overflow);
-      this.droppedCount += overflow;
-    }
+    this.queuedBytes += update.byteLength;
+    this.enforceCaps();
 
     if (this.queue.length >= this.maxBatch) {
       void this.flush();
       return;
     }
+    this.schedule();
+  }
 
-    if (!this.timer) {
-      this.timer = setTimeout(() => {
-        this.timer = undefined;
-        void this.flush();
-      }, this.flushIntervalMs);
-      this.timer.unref?.();
+  private enforceCaps(): void {
+    let drop = Math.max(0, this.queue.length - this.maxQueue);
+    let bytes = this.queuedBytes;
+    for (let i = 0; i < drop; i++) bytes -= this.queue[i].update.byteLength;
+    while (bytes > this.maxBytes && drop < this.queue.length) {
+      bytes -= this.queue[drop].update.byteLength;
+      drop++;
     }
+    if (drop === 0) return;
+    this.queue.splice(0, drop);
+    this.queuedBytes = bytes;
+    this.droppedCount += drop;
+  }
+
+  private schedule(): void {
+    if (this.timer || this.stopped || this.queue.length === 0) return;
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.flush();
+    }, this.flushIntervalMs);
+    this.timer.unref?.();
   }
 
   /**
    * Write everything queued.
    *
-   * Re-entrant calls are ignored rather than queued: a flush already in flight
-   * will pick up anything added since it started, on its next pass, and two
-   * overlapping writers would interleave rows and lose the ordering that
-   * replay depends on.
+   * One writer at a time, so rows keep the order replay depends on. A call
+   * made while a write is in flight waits for it and then writes whatever
+   * arrived meanwhile, so nothing queued during a flush is left waiting for
+   * the next `add`.
    */
   async flush(): Promise<void> {
-    if (this.flushing || this.queue.length === 0) return;
-    this.flushing = true;
+    while (this.inFlight) await this.inFlight;
+    if (this.queue.length === 0) return;
 
     if (this.timer) {
       clearTimeout(this.timer);
@@ -133,43 +125,67 @@ export class HistoryBuffer {
     }
 
     const batch = this.queue;
+    const batchBytes = this.queuedBytes;
     this.queue = [];
+    this.queuedBytes = 0;
+
+    this.inFlight = (async () => {
+      try {
+        await this.write(batch);
+      } catch (err) {
+        this.onError(err, batch);
+        // Back at the front so ordering survives a failed write; the caps
+        // deal with it if the database stays down.
+        this.queue = batch.concat(this.queue);
+        this.queuedBytes += batchBytes;
+        this.enforceCaps();
+      }
+    })();
 
     try {
-      await this.write(batch);
-    } catch (err) {
-      this.onError(err);
-      // Put them back at the front so ordering survives a failed write, and
-      // let the cap deal with it if the database stays down.
-      this.queue = batch.concat(this.queue);
-      if (this.queue.length > this.maxQueue) {
-        const overflow = this.queue.length - this.maxQueue;
-        this.queue.splice(0, overflow);
-        this.droppedCount += overflow;
-      }
+      await this.inFlight;
     } finally {
-      this.flushing = false;
+      this.inFlight = null;
     }
+    // Anything that arrived during the write, or a batch put back after a
+    // failure, still needs a timer.
+    this.schedule();
   }
 
-  /** Flush and stop accepting anything further. For shutdown. */
+  /**
+   * Stop accepting updates and write what is queued, for shutdown.
+   *
+   * Waits for any flush already running, then makes one more attempt per
+   * remaining batch. A batch that still fails is reported through `onError`
+   * and given up on: shutdown cannot wait for a database that is down.
+   */
   async drain(): Promise<void> {
     this.stopped = true;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = undefined;
     }
-    await this.flush();
+    while (this.inFlight) await this.inFlight;
+    if (this.queue.length === 0) return;
+
+    const batch = this.queue;
+    this.queue = [];
+    this.queuedBytes = 0;
+    try {
+      await this.write(batch);
+    } catch (err) {
+      this.onError(err, batch);
+      this.droppedCount += batch.length;
+    }
   }
 }
 
 /**
  * The rooms this process has already made sure exist.
  *
- * The upsert is idempotent and cheap, and it was still being run on every
- * transaction for a fact that cannot change once it is true. A set in memory
- * turns it into once per room per process. Being wrong costs nothing: a room
- * missing from the set is inserted again, which the `ON CONFLICT` handles.
+ * Turns the per-transaction `INSERT INTO rooms ... ON CONFLICT` into once per
+ * room per process. Being wrong costs nothing: a room missing from the set is
+ * inserted again, which the `ON CONFLICT` handles.
  */
 export class KnownRooms {
   private seen = new Set<string>();
@@ -180,9 +196,7 @@ export class KnownRooms {
   needsInsert(roomId: string): boolean {
     if (this.seen.has(roomId)) return false;
     if (this.seen.size >= this.limit) {
-      // A long-lived process on a busy deployment should not accumulate every
-      // room id it has ever seen. Dropping the whole set costs one redundant
-      // upsert per active room afterwards.
+      // Dropping the whole set costs one redundant upsert per active room.
       this.seen.clear();
     }
     this.seen.add(roomId);
@@ -191,5 +205,10 @@ export class KnownRooms {
 
   forget(roomId: string): void {
     this.seen.delete(roomId);
+  }
+
+  /** Forget every room in a batch whose write failed, so the next one re-creates them. */
+  forgetAll(roomIds: Iterable<string>): void {
+    for (const id of roomIds) this.seen.delete(id);
   }
 }

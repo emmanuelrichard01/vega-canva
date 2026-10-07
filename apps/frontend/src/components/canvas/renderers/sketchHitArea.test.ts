@@ -1,7 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+// @vitest-environment jsdom
+import { afterEach, describe, it, expect } from 'vitest';
+import { createElement } from 'react';
+import { cleanup } from '@testing-library/react';
+import type Konva from 'konva';
+import { nodesOf, renderInStage } from '../../../test/konvaHarness';
+import { ShapeRenderer } from './ShapeRenderer';
 import { roughShape } from '../../../engine/model/roughShape';
 import { FILL_STYLES, fillsInterior } from '../../../engine/model/rough';
 import type { FillStyle } from '../../../engine/model/rough';
@@ -23,37 +26,11 @@ import type { ShapeNode } from '../../../engine/model/schema';
  * on the stage clears the selection -- so the object reads as refusing to be
  * selected and refusing to move, rather than as having been missed.
  *
- * ## Why this file is in two halves
- *
- * The first version of it had only the second half, and that is why the bug
- * survived its own fix. Reading the source proved the *element* was there:
- *
- *     {!open && hasFill && sketch.silhouette && <Path fill="transparent" … />}
- *
- * and it was, and it rendered nothing, because `roughShape` returned
- * `silhouette: ''` for every style except `solid` -- so the gate that could
- * never pass was the one guarding the case the fix was written for. Four
- * assertions passed over an inert fix.
- *
- * The lesson is the repo's own instruction to check a test is not vacuous by
- * reverting the fix: reverting the *markup* would have failed these, so they
- * looked sound. Reverting the thing that actually mattered -- the value the
- * markup consumes -- was not something the check could see, because it never
- * called anything. A structural check needs the value half to mean anything at
- * all, which is what `describe('the region exists')` below is.
+ * Two halves: the value `roughShape` produces, and the Konva nodes the
+ * renderer builds from it. Either alone can pass over a broken fix: markup
+ * gated on an empty silhouette renders nothing, and a correct silhouette is
+ * useless if no listening node carries it.
  */
-const here = dirname(fileURLToPath(import.meta.url));
-const src = readFileSync(join(here, 'ShapeRenderer.tsx'), 'utf8');
-
-/** The sketch branch, from `if (sketch) {` to the crisp renderer below it. */
-function sketchBranch(): string {
-  const from = src.indexOf('if (sketch) {');
-  const to = src.indexOf('let shape: React.ReactElement;', from);
-  expect(from, 'the sketch branch should still exist').toBeGreaterThan(-1);
-  expect(to, 'the crisp branch should still follow it').toBeGreaterThan(from);
-  return src.slice(from, to);
-}
-
 const shape = (fillStyle: FillStyle, filled = true): ShapeNode =>
   ({
     id: 'hit-area-probe',
@@ -114,44 +91,59 @@ describe('fillsInterior separates the region from the paint', () => {
   });
 });
 
-/* ------------------------------------------------------------- structure */
+/* ---------------------------------------------------------------- render */
+
+afterEach(cleanup);
+
+const COLOR = '#5B8DEF';
+
+function paths(node: ShapeNode): Konva.Path[] {
+  const stage = renderInStage(createElement(ShapeRenderer, { node, showLabel: false }));
+  return nodesOf<Konva.Path>(stage, 'Path');
+}
+
+/** The node that makes the interior a target: declared fill, painted nothing. */
+const hitRegion = (ps: Konva.Path[]) => ps.find((p) => p.fill() === 'transparent');
 
 describe('a sketched shape carries its own hit area', () => {
-  it('renders a silhouette path whose fill is declared', () => {
-    // `fill="transparent"` is the point: Konva paints the scene with the
-    // declared fill (nothing) and the hit canvas with the shape's colour key,
-    // so the interior becomes a target without becoming a mark.
-    expect(sketchBranch()).toMatch(/data=\{sketch\.silhouette\}\s+fill="transparent"/);
+  for (const style of FILL_STYLES) {
+    it(`gives a filled ${style} shape a listening interior`, () => {
+      const node = shape(style);
+      const region = hitRegion(paths(node));
+      expect(region, `${style} has no hit region`).toBeDefined();
+      // listening={false} on this node is the whole bug.
+      expect(region!.listening()).toBe(true);
+      expect(region!.data()).toBe(roughShape(node, true).silhouette);
+    });
+  }
+
+  it('leaves a hollow shape edge-only', () => {
+    expect(hitRegion(paths(shape('hachure', false)))).toBeUndefined();
   });
 
-  it('leaves that path listening, unlike every painted layer', () => {
-    const branch = sketchBranch();
-    const hit = branch.slice(branch.indexOf('fill="transparent"'));
-    const element = hit.slice(0, hit.indexOf('/>'));
-    expect(
-      element,
-      'the hit path must not be listening={false} — that is the whole bug'
-    ).not.toMatch(/listening=\{false\}/);
+  it('paints a solid fill with the silhouette, behind the hit region', () => {
+    const painted = paths(shape('solid')).filter((p) => p.fill() === COLOR);
+    expect(painted).toHaveLength(1);
+    expect(painted[0].listening()).toBe(false);
   });
 
-  it('gates the hit area on the shape actually having a fill', () => {
-    // A hollow sketched shape should stay edge-only, because a hollow crisp
-    // one does: you click the outline of an unfilled rectangle, not its hole.
-    expect(sketchBranch()).toMatch(/!open && hasFill && sketch\.silhouette/);
-  });
-
-  it('gates the painted fill on the style, not merely on there being a region', () => {
-    // The two used to be the same test by accident. Now that the region exists
-    // for a hachured shape, only this stops it being painted solid underneath
-    // its own strokes.
-    expect(sketchBranch()).toMatch(
-      /sketch\.silhouette && hachureColor && fillsInterior\(fillStyle\)/
-    );
+  it('does not paint a pen-style fill solid under its own strokes', () => {
+    for (const style of FILL_STYLES.filter((s) => !fillsInterior(s))) {
+      const ps = paths(shape(style));
+      expect(ps.filter((p) => p.fill() === COLOR), style).toHaveLength(0);
+      // The style is drawn as strokes in the fill colour, and those do not listen.
+      const strokes = ps.filter((p) => p.stroke() === COLOR);
+      expect(strokes.length, style).toBeGreaterThan(0);
+      for (const p of strokes) expect(p.listening(), style).toBe(false);
+      cleanup();
+    }
   });
 
   it('still gives the outline a generous stroke target', () => {
     // The interior is the fix, not a replacement: an unfilled sketched shape
     // and every open one still depend on this.
-    expect(sketchBranch()).toMatch(/hitStrokeWidth=\{Math\.max\(20, nib \* 3\)\}/);
+    const outline = paths(shape('hachure', false)).find((p) => p.listening() && p.fill() !== 'transparent');
+    expect(outline).toBeDefined();
+    expect(outline!.hitStrokeWidth()).toBeGreaterThanOrEqual(20);
   });
 });

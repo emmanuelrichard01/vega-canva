@@ -288,6 +288,73 @@ export interface ChartSeries {
   values: Array<number | null>;
   /** Overrides the palette slot. Absent means "take the series colour". */
   color?: string;
+  /**
+   * Left out of the drawing and of exports. The legend keeps the entry while
+   * the chart is selected, so the series can be turned back on where it was
+   * turned off.
+   */
+  hidden?: boolean;
+  /**
+   * Combo charts: how this series is drawn. Absent follows the chart's kind.
+   * Honoured on `bar`, `line` and `area` charts — see `isComboKind`.
+   */
+  mark?: SeriesMark;
+  /** Which value axis the series is read against. Absent is the left one. */
+  axis?: 'left' | 'right';
+}
+
+export type SeriesMark = 'bar' | 'line' | 'area';
+export const SERIES_MARKS: readonly SeriesMark[] = ['bar', 'line', 'area'];
+
+/** The kinds whose series may mix bars, lines and areas, on two axes. */
+export function isComboKind(kind: ChartKind): boolean {
+  return kind === 'bar' || kind === 'line' || kind === 'area';
+}
+
+/** Whether a spec actually uses the combo layout: a mixed mark or a right axis. */
+export function usesCombo(spec: ChartSpec): boolean {
+  if (!isComboKind(spec.kind)) return false;
+  const own = spec.kind as SeriesMark;
+  return spec.series.some((s) => !s.hidden && ((s.mark && s.mark !== own) || s.axis === 'right'));
+}
+
+/**
+ * A chart drawn from a range of a table on the same board.
+ *
+ * Indices are stored rows and columns of the table's `cells`, inclusive. The
+ * chart's own `categories` and `series` hold the values as last resolved, so
+ * a chart whose table has gone still has something true to draw.
+ */
+export interface ChartTableLink {
+  tableId: string;
+  r0: number;
+  c0: number;
+  r1: number;
+  c1: number;
+  /** Absent: each column after the first is a series. `rows` reads across. */
+  seriesIn?: 'columns' | 'rows';
+}
+
+/**
+ * What a kind switch set aside, so switching back restores it.
+ *
+ * A data chart and a formula plot read different fields, so moving between
+ * the two families keeps the other family's payload here rather than
+ * leaving the chart empty or discarding what was typed.
+ */
+export interface ChartStash {
+  data?: { categories: string[]; series: ChartSeries[] };
+  plot?: Partial<Record<PlotShape, PlotPayload>>;
+}
+
+export type PlotShape = 'curve' | 'parametric' | 'polar' | 'field' | 'vector';
+
+export interface PlotPayload {
+  functions: PlotCurve[];
+  xMin?: number;
+  xMax?: number;
+  yPlotMin?: number;
+  yPlotMax?: number;
 }
 
 export interface ChartSpec {
@@ -600,9 +667,7 @@ export interface ChartSpec {
    * Label / unit title for the vertical value axis.
    */
   yAxisLabel?: string;
-  /**
-   * Placement for the legend: 'top' (default), 'bottom', 'right', or 'none'.
-   */
+  /** Where the legend sits. Absent is 'bottom', under the plot. */
   legendPosition?: 'top' | 'bottom' | 'right' | 'none';
   /**
    * Corner radius in pixels for bar and column charts (0 to 12).
@@ -665,6 +730,18 @@ export interface ChartSpec {
    * Multi-series sort criterion: 'series' | 'first' (primary series), 'total' | 'sum' (sum across series), or 'category' (label).
    */
   sortKey?: 'series' | 'total' | 'first' | 'sum' | 'category';
+  /** Where the numbers come from when they come from a table on the board. */
+  link?: ChartTableLink;
+  /** The other family's data, kept across a kind switch. See `ChartStash`. */
+  stash?: ChartStash;
+  /** Category label angle in degrees. Absent turns labels only when they collide. */
+  labelAngle?: 0 | 45 | 90;
+  /** Label every nth category. Absent thins them only when they collide. */
+  labelEvery?: number;
+  /** Draw categories last to first. */
+  reverseCategories?: boolean;
+  /** One scale for axis, value and legend text. Absent is 'm'. */
+  textSize?: 's' | 'm' | 'l';
 }
 
 /**
@@ -845,6 +922,11 @@ export interface ResolvedChartOptions {
    */
   legendSide?: 'top' | 'bottom' | 'right' | 'none';
   legendBox?: { x: number; y: number; width: number; height: number };
+  /**
+   * The legend's entries when the layout decides them: every series by its
+   * spec index, hidden ones included while the chart is selected.
+   */
+  legendItems?: Array<{ label: string; color: string; seriesIndex: number; hidden: boolean }>;
 }
 
 /**

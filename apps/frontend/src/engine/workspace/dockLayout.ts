@@ -22,12 +22,12 @@
  * go.
  *
  * So a separator is an ordinary item in the order, draggable and removable like
- * any other. The default arrangement reproduces today's grouping exactly, and
+ * any other. The default arrangement groups the tools by what they are for, and
  * anyone who rearranges gets to say where their own seams are. Illustrator's
  * toolbar editor makes the same call.
  */
 
-/** Every tool that can hold a seat, in the order a fresh dock shows them. */
+/** Every tool that can hold a seat. */
 export const DOCK_SEATS = [
   'select',
   'directSelect',
@@ -41,10 +41,13 @@ export const DOCK_SEATS = [
   'grid',
   'chart',
   'table',
+  'data',
   'connector',
   'sticky',
   'image',
   'audio',
+  'media',
+  'comment',
   'forces',
 ] as const;
 
@@ -69,33 +72,95 @@ export interface DockLayout {
 }
 
 /**
- * The arrangement everyone starts with.
+ * Seats that another seat carries in its flyout.
  *
- * The separators are where the hand-written dock had its `dock-group`
- * boundaries, so a fresh install is pixel-identical to what shipped before the
- * dock became editable — the editor is an affordance, not a redesign.
+ * Direct select rides with Select, the eraser with Draw, line and arrow with
+ * Shape, the three data tools on one Data seat, image and voice on Media. A
+ * carried seat that is put away is still one hover from the dock, so the
+ * drawer does not list it a second time. Anyone can still pin it back as a
+ * seat of its own in edit mode.
+ */
+export const SEAT_HOST: Partial<Record<DockSeat, DockSeat>> = {
+  directSelect: 'select',
+  eraser: 'draw',
+  line: 'shape',
+  grid: 'data',
+  chart: 'data',
+  table: 'data',
+  image: 'media',
+  audio: 'media',
+};
+
+/**
+ * The arrangement everyone starts with: eleven seats.
+ *
+ * Navigate, then create, then data and media, then comment. Every tool not
+ * shown here is carried by a seat that is (see `SEAT_HOST`), except Forces,
+ * which lives in the drawer. Every single-key shortcut still arms its tool,
+ * because a key arms a tool, not a seat.
  */
 export const DEFAULT_LAYOUT: DockLayout = {
   order: [
-    'select', 'directSelect', 'hand',
+    'select', 'hand',
     SEPARATOR,
-    'draw', 'eraser',
+    'draw', 'type', 'sticky', 'shape', 'connector', 'frame',
     SEPARATOR,
-    'type', 'shape', 'line', 'frame', 'grid', 'chart', 'table', 'connector', 'sticky',
-    SEPARATOR,
-    'image', 'audio', 'forces',
+    'data', 'media', 'comment',
   ],
-  /**
-   * Nothing starts put away.
-   *
-   * The text block did, purely for width -- sixteen seats plus three dividers
-   * plus the drawer overflowed a laptop dock. Folding it and the Text tool into
-   * one `type` seat removed a seat instead of hiding one, so the compromise is
-   * no longer needed and the block is reachable again from a seat that is
-   * always there.
-   */
-  hidden: [],
+  hidden: ['directSelect', 'eraser', 'line', 'grid', 'chart', 'table', 'image', 'audio', 'forces'],
 };
+
+/** Whether a seat is on the dock, as opposed to put away. */
+export function isOnDock(layout: DockLayout, seat: DockSeat): boolean {
+  return layout.order.includes(seat);
+}
+
+/**
+ * Whether a put-away seat is still reachable from the flyout of a seat that is
+ * on the dock. Such a seat is shown by its host and not listed in the drawer.
+ */
+export function isCarried(layout: DockLayout, seat: DockSeat): boolean {
+  const host = SEAT_HOST[seat];
+  return Boolean(host) && !isOnDock(layout, seat) && isOnDock(layout, host!);
+}
+
+/** The put-away seats the drawer has to offer: those no seat on the dock carries. */
+export function drawerSeats(layout: DockLayout): DockSeat[] {
+  return layout.hidden.filter((seat) => !isCarried(layout, seat));
+}
+
+/** The storage format version. Layouts stored before the eleven-seat dock carry none. */
+export const LAYOUT_VERSION = 2;
+
+/**
+ * A layout stored before the data and media seats existed, brought forward.
+ *
+ * Someone who rearranged the old dock placed Grid, Chart and Table (and Image
+ * and Voice) where they wanted them. Those seats fold into Data and Media at
+ * the position of the first of each family, and are put away, so the person's
+ * arrangement keeps its shape instead of growing three new seats at the end.
+ * The folded seats can be pinned back from edit mode.
+ */
+export function migrateStoredLayout(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return raw;
+  const source = raw as { v?: unknown; order?: unknown; hidden?: unknown };
+  if (source.v === LAYOUT_VERSION || !Array.isArray(source.order)) return raw;
+
+  const FOLD: Record<string, DockSeat> = { grid: 'data', chart: 'data', table: 'data', image: 'media', audio: 'media' };
+  const order: unknown[] = [];
+  const folded: DockSeat[] = [];
+  for (const item of source.order) {
+    const into = typeof item === 'string' ? FOLD[item] : undefined;
+    if (!into) {
+      order.push(item);
+      continue;
+    }
+    folded.push(item as DockSeat);
+    if (!order.includes(into)) order.push(into);
+  }
+  const hidden = [...(Array.isArray(source.hidden) ? source.hidden : []), ...folded];
+  return { order, hidden };
+}
 
 /**
  * Seats that used to exist, and what they became.
@@ -154,7 +219,7 @@ export function normalizeLayout(raw: unknown): DockLayout {
    * Nothing recognisable means a first run, and a first run gets the default.
    *
    * Without this the rules below are still perfectly well-defined and give the
-   * wrong answer: no stored seats, so rule 3 appends all sixteen — a correct,
+   * wrong answer: no stored seats, so rule 3 appends every seat — a correct,
    * complete dock with every separator missing. Which is to say a new user's
    * toolbar would be one undivided row, and `DEFAULT_LAYOUT`'s grouping would
    * only ever be seen by someone who pressed Reset.

@@ -1,5 +1,7 @@
 import {
   DEFAULT_LAYOUT,
+  LAYOUT_VERSION,
+  migrateStoredLayout,
   normalizeLayout,
   type DockLayout,
 } from './dockLayout';
@@ -42,7 +44,7 @@ function read(): DockLayout {
     // Normalised on the way *in*, not on the way out: every reader then gets a
     // layout that is already safe, and the repair happens once per load rather
     // than once per render.
-    return normalizeLayout(raw ? JSON.parse(raw) : null);
+    return normalizeLayout(migrateStoredLayout(raw ? JSON.parse(raw) : null));
   } catch {
     // A corrupt or unavailable store must not take the toolbar down with it —
     // and the toolbar is the one piece of chrome you cannot work without.
@@ -98,7 +100,7 @@ export const dockDefaults = {
     undoStash = null;
     layout = normalizeLayout(next);
     try {
-      localStorage.setItem(KEY, JSON.stringify(layout));
+      localStorage.setItem(KEY, JSON.stringify({ v: LAYOUT_VERSION, ...layout }));
     } catch {
       /* persistence is a nicety here; the session still works without it */
     }

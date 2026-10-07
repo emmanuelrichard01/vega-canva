@@ -33,6 +33,7 @@ import {
 } from '../../engine/model/pathEditing';
 import { claimCursor } from '../../engine/cursor/cursorOverride';
 import { curvatureAt } from '../../engine/model/pathGeometry';
+import { bendSegment } from '../../engine/model/pathBend';
 import { cursorCss } from '../../engine/cursor/cursorCss';
 import { penVisual } from '../../engine/cursor/cursorVisual';
 
@@ -68,7 +69,8 @@ const MODE_TOOLTIP: Record<string, string> = { mirrored: 'Symmetric', smooth: 'S
  * - Alt/Option-click to convert anchors and retract bezier handles.
  * - Smooth vs corner mode visual cues and double-click conversion.
  * - Real-time delta coordinate HUD badges during manipulation.
- * - Non-destructive outline anchor insertion.
+ * - Non-destructive outline anchor insertion: click the outline.
+ * - Drag the outline to bend that curve; the grabbed point follows the pointer.
  */
 export const PathEditor: React.FC<Props> = ({ stageScale }) => {
   const selection = useSyncExternalStore(pathEdit.subscribe, pathEdit.getSnapshot, pathEdit.getSnapshot);
@@ -82,8 +84,10 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
    * The live drag session.
    */
   const session = React.useRef<{
-    kind: 'anchor' | 'handle' | 'marquee';
+    kind: 'anchor' | 'handle' | 'marquee' | 'segment';
     ref?: AnchorRef;
+    /** The curve grabbed by a segment drag: its contour, index and parameter. */
+    grab?: { sub: number; curve: number; t: number };
     side?: 'in' | 'out';
     working: ContourGeometry;
     origin: { x: number; y: number };
@@ -93,6 +97,20 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
     moved: boolean;
     anchors: AnchorRef[];
   } | null>(null);
+
+  /**
+   * Ends the live session: `false` commits it as a release would, `true`
+   * cancels it and puts the path back. Held so Escape, leaving the editor and
+   * unmounting can all end a drag that is still in progress.
+   */
+  const endSession = React.useRef<((cancel: boolean) => void) | null>(null);
+
+  // Leaving the editor mid-drag (Escape, a click elsewhere) cancels the drag
+  // rather than letting it commit on the next mouse-up.
+  React.useEffect(() => {
+    if (!selection) endSession.current?.(true);
+  }, [selection]);
+  React.useEffect(() => () => endSession.current?.(true), []);
 
   /** Modifier keys tracked during pointer movement */
   const altHeld = React.useRef(false);
@@ -242,6 +260,20 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
     });
   };
 
+  /** Add an anchor where a click landed on the outline, without moving the path. */
+  const insertAt = (grab: { sub: number; curve: number; t: number }) => {
+    const subs = subpathsOf(geometry);
+    const target = subs[grab.sub];
+    if (!target) return;
+    const edited = insertAnchor(target, grab);
+    const next: ContourGeometry =
+      geometry.kind === 'compound'
+        ? { kind: 'compound', subpaths: subs.map((sub, i) => (i === grab.sub ? edited : sub)) }
+        : edited;
+    commit(next);
+    pathEdit.select([{ sub: grab.sub, index: grab.curve + 1 }]);
+  };
+
   /** Pointer position in world coordinates. */
   const worldPointer = (stage: Konva.Stage | null): { x: number; y: number } | null =>
     stage?.getRelativePointerPosition() ?? null;
@@ -257,9 +289,14 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
    */
   const beginSession = (
     stage: Konva.Stage | null,
-    kind: 'anchor' | 'handle' | 'marquee',
+    kind: 'anchor' | 'handle' | 'marquee' | 'segment',
     at: { x: number; y: number },
-    extra: { ref?: AnchorRef; side?: 'in' | 'out'; anchors?: AnchorRef[] } = {}
+    extra: {
+      ref?: AnchorRef;
+      side?: 'in' | 'out';
+      anchors?: AnchorRef[];
+      grab?: { sub: number; curve: number; t: number };
+    } = {}
   ) => {
     if (!stage) return;
     session.current = {
@@ -273,8 +310,10 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
       anchors: extra.anchors ?? [],
       ref: extra.ref,
       side: extra.side,
+      grab: extra.grab,
     };
 
+    const startGeometry = geometry;
     let rafId: number | null = null;
     let pendingGeo: ContourGeometry | null = null;
 
@@ -320,7 +359,18 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
         return;
       }
 
-      if (s.kind === 'handle' && s.ref && s.side) {
+      if (s.kind === 'segment' && s.grab) {
+        const subs = subpathsOf(startGeometry);
+        const target = subs[s.grab.sub];
+        if (target) {
+          const bent = bendSegment(target, s.grab.curve, s.grab.t, { x: p.x - s.origin.x, y: p.y - s.origin.y });
+          s.working =
+            startGeometry.kind === 'compound'
+              ? { kind: 'compound', subpaths: subs.map((sub, i) => (i === s.grab!.sub ? bent : sub)) }
+              : bent;
+          setDragBadge({ x: p.x - node.x, y: p.y - node.y, text: 'Bend' });
+        }
+      } else if (s.kind === 'handle' && s.ref && s.side) {
         let dest = { x: p.x - s.origin.x, y: p.y - s.origin.y };
         let snapAngleDeg: number | null = null;
         if (shiftHeld.current && s.ref) {
@@ -383,6 +433,10 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        finish(true);
+        return;
+      }
       if (e.key === 'Alt') {
         e.preventDefault();
         if (!e.repeat && !altHeld.current) {
@@ -414,29 +468,46 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
       }
     };
 
-    const onUp = () => {
+    const finish = (cancel: boolean) => {
       if (rafId !== null) {
         cancelAnimationFrame(rafId);
         rafId = null;
       }
       const s = session.current;
       session.current = null;
+      endSession.current = null;
       setDragBadge(null);
       stage.off('mousemove.patheditor');
       window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('blur', onUp);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       if (!s) return;
 
       if (s.kind === 'marquee') {
-        finishMarquee(s.moved);
+        if (cancel) setMarquee(null);
+        else finishMarquee(s.moved);
+        return;
+      }
+      if (s.kind === 'segment' && !s.moved && !cancel && s.grab) {
+        insertAt(s.grab);
+        return;
+      }
+      if (cancel) {
+        // The transient frames already wrote geometry; put the original back.
+        if (s.moved) updateNode(node.id, { geometry: startGeometry });
         return;
       }
       if (s.moved) commit(s.working, true);
     };
+    const onUp = () => finish(false);
+    endSession.current = finish;
 
     stage.on('mousemove.patheditor', onMove);
     window.addEventListener('mouseup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    window.addEventListener('blur', onUp);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
   };
@@ -549,7 +620,7 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
         strokeWidth={scale}
         fillEnabled={false}
         hitStrokeWidth={INSERT_SLOP * 2 * scale}
-        onClick={(e) => {
+        onMouseDown={(e) => {
           const p = localPointer(e);
           if (!p) return;
           const subs = subpathsOf(geometry);
@@ -562,14 +633,13 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
           const found = best as Best | null;
           if (!found || found.hit.distance > INSERT_SLOP * scale) return;
           e.cancelBubble = true;
-
-          const edited = insertAnchor(subs[found.sub], found.hit);
-          const next: ContourGeometry =
-            geometry.kind === 'compound'
-              ? { kind: 'compound', subpaths: subs.map((s, i) => (i === found.sub ? edited : s)) }
-              : edited;
-          commit(next);
-          pathEdit.select([{ sub: found.sub, index: found.hit.curve + 1 }]);
+          const stage = e.target.getStage();
+          const at = worldPointer(stage);
+          if (!at) return;
+          // A drag bends the curve; a click without travel adds an anchor there.
+          beginSession(stage, 'segment', at, {
+            grab: { sub: found.sub, curve: found.hit.curve, t: found.hit.t },
+          });
         }}
         onMouseEnter={() => claimCursor('path-segment', cursorCss(penVisual('add'), 'copy'))}
         onMouseLeave={() => claimCursor('path-segment', null)}

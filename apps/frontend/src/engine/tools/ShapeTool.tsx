@@ -29,6 +29,7 @@ import {
 import { bindCandidates } from '../model/connectorTargets';
 import { snapLineEndpoint } from '../interaction/lineMagneticSnap';
 import * as React from 'react';
+import { recordRecentShape } from './recentShapes';
 
 /** Minimum drag before a shape is sized by the drag rather than dropped at its own proportions. */
 const MIN_DRAG = 5;
@@ -414,6 +415,7 @@ export class ShapeTool implements Tool {
     }
 
     const nodeId = nanoid();
+    recordRecentShape(this.preset);
     ctx.editor.createNode({
       id: nodeId,
       type: 'shape',
@@ -478,6 +480,7 @@ export class ShapeTool implements Tool {
     if (points.length > 2 && useStore.getState().lineSmooth) geometry.smooth = true;
     const run = lineNodeFromVertices(points, undefined, geometry);
     const nodeId = nanoid();
+    recordRecentShape(this.preset);
     ctx.editor.createNode({
       id: nodeId,
       type: 'shape',

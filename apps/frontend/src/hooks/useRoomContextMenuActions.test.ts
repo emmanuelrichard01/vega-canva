@@ -41,6 +41,8 @@ vi.mock('../engine/CameraSystem', () => ({
 }));
 
 const { useRoomContextMenuActions } = await import('./useRoomContextMenuActions');
+// The hook reads the live document from the store when an action runs.
+const { useStore } = await import('./useStore');
 
 describe('useRoomContextMenuActions', () => {
   beforeEach(() => {
@@ -53,10 +55,10 @@ describe('useRoomContextMenuActions', () => {
 
   it('handles remove and clears selection', () => {
     const setSelectedIds = vi.fn();
+    useStore.setState({ objects: {} as never });
     const actions = useRoomContextMenuActions({
       selectedIds: ['n1', 'n2'],
       setSelectedIds,
-      diagramObjects: {},
       contextTarget: null,
       localTitle: 'Test Board',
       clipboardRef: { current: null },
@@ -85,10 +87,10 @@ describe('useRoomContextMenuActions', () => {
       n1: { ...box, id: 'n1', zIndex: 1 },
       n2: { ...box, id: 'n2', zIndex: 2 },
     } as unknown as Record<string, AnyNode>;
+    useStore.setState({ objects: diagramObjects as never });
     const actions = useRoomContextMenuActions({
       selectedIds: ['n1'],
       setSelectedIds,
-      diagramObjects,
       contextTarget: null,
       localTitle: 'Test Board',
       clipboardRef: { current: null },
@@ -118,10 +120,10 @@ describe('useRoomContextMenuActions', () => {
 
   it('handles group and ungroup', () => {
     const setSelectedIds = vi.fn();
+    useStore.setState({ objects: {} as never });
     const actions = useRoomContextMenuActions({
       selectedIds: ['n1', 'n2'],
       setSelectedIds,
-      diagramObjects: {},
       contextTarget: null,
       localTitle: 'Test Board',
       clipboardRef: { current: null },
@@ -150,10 +152,10 @@ describe('useRoomContextMenuActions', () => {
     const diagramObjects: Record<string, AnyNode> = {
       n1: { id: 'n1', locked: false } as AnyNode,
     };
+    useStore.setState({ objects: diagramObjects as never });
     const actions = useRoomContextMenuActions({
       selectedIds: ['n1'],
       setSelectedIds,
-      diagramObjects,
       contextTarget: null,
       localTitle: 'Test Board',
       clipboardRef: { current: null },

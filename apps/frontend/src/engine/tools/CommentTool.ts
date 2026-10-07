@@ -1,15 +1,33 @@
 import type { Tool, ToolContext } from './Tool';
 import { engineEvents } from '../EventBus';
+import { spatialIndex } from '../SpatialIndex';
+import { compareStacking } from '../model/stacking';
+import { anchorFor } from '../comments/threads';
+import type { AnyNode } from '../model/schema';
 
 /**
- * CommentTool — places a new comment thread on the canvas.
+ * Drops a comment where the board is clicked.
  *
- * Previously the Comment button only changed the cursor: `addComment()` existed in
- * useComments but nothing anywhere called it, so no thread could ever be created.
- * This tool closes that gap. It doesn't create the thread directly — it emits the
- * world-space point so CommentsOverlay can open a composer there, which means an
- * empty thread is never written to the doc if the user changes their mind.
+ * A click on an object attaches the thread to that object, at the spot that
+ * was clicked, so the pin travels with it. A click on empty board leaves a
+ * free-standing pin at that point. The composer itself lives in
+ * `CommentsOverlay`, which listens for `CommentDraftRequested`.
  */
+
+/** Types a comment attaches to. Lines and connectors are too thin to aim at. */
+const ANCHORABLE = (node: AnyNode) => node.type !== 'connector' && node.type !== 'comment' && !node.hidden;
+
+/** The topmost anchorable object under a world point, preferring content over frames. */
+export function commentTargetAt(x: number, y: number): AnyNode | null {
+  const hits = spatialIndex
+    .query({ minX: x, minY: y, maxX: x, maxY: y })
+    .filter(ANCHORABLE)
+    .sort(compareStacking);
+  if (hits.length === 0) return null;
+  const content = hits.filter((n) => n.type !== 'frame');
+  return (content.length ? content : hits)[(content.length ? content : hits).length - 1];
+}
+
 export class CommentTool implements Tool {
   id = 'comment';
   cursor = 'crosshair';
@@ -24,6 +42,16 @@ export class CommentTool implements Tool {
     const y = (pos.y - ctx.camera.y) / ctx.camera.zoom;
     if (isNaN(x) || isNaN(y)) return;
 
+    const target = commentTargetAt(x, y);
+    if (target) {
+      engineEvents.emit('CommentDraftRequested', {
+        x,
+        y,
+        objectId: target.id,
+        anchor: anchorFor({ x, y }, target),
+      });
+      return;
+    }
     engineEvents.emit('CommentDraftRequested', { x, y });
   }
 

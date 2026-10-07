@@ -65,3 +65,7 @@ design inspirations/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Agent scratch: preview builds and downloaded vendor icon packs
+apps/frontend/.preview-*
+apps/frontend/.icon-sources/

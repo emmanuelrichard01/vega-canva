@@ -1,0 +1,21 @@
+/* A chart label edited in place: laid over the label in the chart's own space,
+   so its size and position are the label's. The field reads as the label being
+   typed into, with a quiet neutral outline to show it is live. */
+.chart-label-editor {
+  position: absolute;
+  margin: 0;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  outline: 1.5px solid var(--focus-field-color);
+  outline-offset: 1px;
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  line-height: 1.25;
+  box-sizing: border-box;
+}
+
+.chart-label-editor::placeholder {
+  color: var(--text-tertiary);
+}

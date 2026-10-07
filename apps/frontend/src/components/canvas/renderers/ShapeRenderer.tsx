@@ -1,5 +1,5 @@
 import React from 'react';
-import { labelInk } from '../../../engine/model/labelInk';
+import { labelInk, solidFillOf } from '../../../engine/model/labelInk';
 import { Circle, Ellipse, Group, Label, Line, Path, Rect, Tag, Text } from 'react-konva';
 import { DEFAULT_INK, isOpenShape, type ShapeNode } from '../../../engine/model/schema';
 import { canvasFontFamily, konvaFontStyle, konvaTextDecoration, shadowProps, shadowSpreadProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
@@ -12,6 +12,7 @@ import { runPoints } from '../../../engine/model/lineEnds';
 import { terminateRun } from '../../../engine/model/connectorEnds';
 import { contourData } from '../../../engine/model/pathGeometry';
 import { shapeFeaturePaths } from '../../../engine/model/shapeOutline';
+import { labelPlated, shapeLabelBox } from '../../../engine/model/shapes/labelBox';
 import { roughShape } from '../../../engine/model/roughShape';
 import { fillsInterior, roughEllipse, roughPolyline, seedFrom } from '../../../engine/model/rough';
 import { ThemeService } from '../../../engine/ThemeService';
@@ -109,16 +110,28 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
   const innerShadow = open ? undefined : node.appearance?.innerShadow;
   const backdropBlur = open ? 0 : (node.appearance?.backdropBlur ?? 0);
 
+  const liveGeometry = liveTransform?.geometry;
   const effectiveNode = React.useMemo(() => {
-    if (liveTransform?.cornerRadius === undefined) return node;
+    if (liveTransform?.cornerRadius === undefined && !liveGeometry) return node;
     return {
       ...node,
+      // A parameter handle mid-drag: the stored geometry with the dragged field over it.
+      geometry: liveGeometry ? { ...node.geometry, ...liveGeometry } : node.geometry,
       appearance: {
         ...(node.appearance ?? {}),
         cornerRadius: radius,
       },
     };
-  }, [node, liveTransform?.cornerRadius, radius]);
+  }, [node, liveTransform?.cornerRadius, liveGeometry, radius]);
+
+  const labelPlate = labelPlated(node.geometry.kind) ? solidFillOf(node) : undefined;
+
+  /** Where the label lays out: the shape's usable interior, not its whole box. */
+  const labelBox = React.useMemo(
+    () => shapeLabelBox(effectiveNode),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [effectiveNode.geometry, w, node.height]
+  );
 
   // Built once and shared by both effects: `ctx.clip(path)` and
   // `ctx.fill(path, 'evenodd')` each take a path *object*, and building it
@@ -313,6 +326,21 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
           />
         </Label>
       ) : node.typography ? (
+        <>
+        {/* On a shape with interior detail, the label sits on a plate of the
+            shape's own fill, so the bays, rims or crossing lines behind it
+            break around the words the way a line breaks around its label. */}
+        {labelPlate && (
+          <Rect
+            x={labelBox.x}
+            y={labelBox.y}
+            width={labelBox.width}
+            height={labelBox.height}
+            cornerRadius={Math.min(labelBox.height, labelBox.width) * 0.2}
+            fill={labelPlate}
+            listening={false}
+          />
+        )}
         <Text
           /**
            * Keyed on the epoch so the node is rebuilt when the font changes.
@@ -324,8 +352,10 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
            * per frame.
            */
           key={`label-${epoch}`}
-          width={w}
-          height={h}
+          x={labelBox.x}
+          y={labelBox.y}
+          width={labelBox.width}
+          height={labelBox.height}
           text={node.text}
           fontSize={node.typography.fontSize}
           fontFamily={canvasFontFamily(node.typography.fontFamily)}
@@ -341,6 +371,7 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
           letterSpacing={node.typography.letterSpacing}
           listening={false}
         />
+        </>
       ) : null
     ) : null;
 
@@ -782,7 +813,7 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
       />
     );
 
-    const featurePaths = shapeFeaturePaths(node, 0, 0);
+    const featurePaths = shapeFeaturePaths(effectiveNode, 0, 0);
     if (featurePaths.length > 0) {
       shape = (
         <Group>

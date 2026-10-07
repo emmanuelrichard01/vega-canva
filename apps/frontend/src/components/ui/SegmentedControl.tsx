@@ -4,16 +4,7 @@ export interface Segment {
   value: string;
   icon?: React.ReactNode;
   label?: string;
-  /**
-   * What this option *does*, shown on hover.
-   *
-   * These controls are mostly 20px specimen icons — a mitred corner, a butt
-   * cap, an orthogonal route. The specimen shows you the shape, which is the
-   * right way round for recognising one you already know, and says nothing at
-   * all about when you would want it. The label alone does not close that gap
-   * either: "Right angles" and "Curved" are both obvious as *shapes* and
-   * neither tells you that one keeps a flowchart readable when arrows cross.
-   */
+  /** What this option does, shown on hover. A specimen shows the shape, not when you would want it. */
   hint?: string;
 }
 
@@ -21,77 +12,43 @@ interface Props {
   segments: Segment[];
   value: string;
   onChange: (val: string) => void;
-  /**
-   * Names what the group as a whole selects.
-   *
-   * Without it a screen reader reads three unrelated buttons — "Solid",
-   * "Dashed", "Dotted" — with nothing saying they are one choice, or a choice
-   * of what.
-   */
+  /** Names what the group selects, so it is read as one choice. */
   ariaLabel?: string;
   /**
-   * The selected objects disagree, so no segment is the answer.
-   *
-   * Rendered as nothing raised rather than as an extra "Mixed" segment: a
-   * fourth segment would be a state you could *choose*, and "make these
-   * disagree" is not an instruction anyone can carry out. Clicking any real
-   * segment still resolves the whole selection to it.
+   * The selected objects disagree: no segment is chosen. Clicking any
+   * segment resolves the whole selection to it.
    */
   mixed?: boolean;
-  /**
-   * Why this choice is unavailable right now.
-   *
-   * Shown as a tooltip and dims the group. Preferred over withholding the
-   * control: a segmented choice that vanishes when it does not apply is
-   * indistinguishable from one that is broken, and the reason it went is
-   * exactly the thing worth saying.
-   */
+  /** Why the choice is unavailable. Shown as a tooltip; dims the group. */
   disabledReason?: string;
   /**
    * Divide the column between the segments instead of letting them wrap.
-   *
-   * The default is to wrap, and that is right for a long group: six list
-   * styles or five colour ramps are wider than the 136px value column however
-   * they are arranged, so the choice there is between two tidy lines and a row
-   * that draws over its own label.
-   *
-   * A short group is a different problem. Four case segments come to 132px
-   * against a 136px column — four pixels of slack, which is not a layout, it
-   * is a coincidence. Anything that moves (a longer label, a narrower panel, a
-   * scrollbar) tips it into a second line, and a four-segment control that
-   * sometimes has two rows and sometimes one is the kind of thing you notice
-   * without being able to say why.
-   *
-   * Filling makes it deliberate: the group takes the column and the segments
-   * share it. Only offered where the share is *wider* than a segment's natural
-   * size — 136/4 is 34 against a 32px segment, and a stacked row's 228 divides
-   * six ways at 38 — so nothing is squeezed and the rule above still holds.
-   *
-   * Every group in the type sections fills now, which is the other half of the
-   * point: a panel where some segmented controls span their column and others
-   * hug their contents reads as ragged, and the raggedness carries no meaning.
-   * The long ones were also the ones with four pixels of slack, so they were
-   * the ones that would wrap first on a narrower panel.
+   * For short groups whose share is wider than a segment's natural size.
    */
   fill?: boolean;
 }
 
 /**
- * A one-of-several choice.
+ * A one-of-several choice, as a radio group.
  *
- * Built as a radio group rather than a row of buttons. The previous version
- * used `title` for the accessible name, which is not one: `title` is a
- * tooltip, it is unreliable for assistive technology, and it never appears on
- * a touch device at all — so an icon-only segment had no name anywhere. Each
- * segment now carries `role="radio"` with `aria-checked`, and the label is on
- * the element whether or not it is also drawn.
- *
- * The active segment is raised rather than tinted: one border-or-shadow
- * elevation step, no second colour, which is the same language the rest of the
- * app's chrome uses for "this one".
+ * The chosen segment takes an ink wash, the panel's single language for
+ * "this one". Arrow keys move the choice, as in any radio group.
  */
 export const SegmentedControl: React.FC<Props> = ({ segments, value, onChange, ariaLabel, mixed = false, disabledReason, fill = false }) => {
   const disabled = Boolean(disabledReason);
+  const activeIndex = mixed ? -1 : segments.findIndex((s) => s.value === value);
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (disabled) return;
+    const dir = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+    if (!dir) return;
+    e.preventDefault();
+    const from = activeIndex < 0 ? (dir > 0 ? -1 : 0) : activeIndex;
+    const next = (from + dir + segments.length) % segments.length;
+    onChange(segments[next].value);
+    e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus();
+  };
+
   return (
     <div
       role="radiogroup"
@@ -99,31 +56,13 @@ export const SegmentedControl: React.FC<Props> = ({ segments, value, onChange, a
       aria-disabled={disabled || undefined}
       data-tooltip={disabledReason}
       data-tooltip-pos="left"
-      style={{
-        opacity: disabled ? 0.4 : 1,
-        pointerEvents: disabled ? 'none' : undefined,
-        display: 'flex',
-        alignItems: 'center',
-        // Wraps rather than overflowing. A six- or seven-segment group in the
-        // properties panel's control column is wider than the column, and a
-        // non-wrapping flex row does not shrink below its content — so the
-        // group ran out under its own label and the two drew on top of each
-        // other. `minWidth: 0` is the other half: without it the flex item
-        // refuses to be narrower than its contents and the wrap never fires.
-        // A filling group takes its column and divides it; a natural one wraps.
-        // See `fill`.
-        flexWrap: fill ? 'nowrap' : 'wrap',
-        width: fill ? '100%' : undefined,
-        minWidth: 0,
-        rowGap: '2px',
-        background: 'var(--surface-hover)',
-        padding: '2px',
-        borderRadius: 'var(--radius-md)',
-      }}
+      className={`seg${fill ? ' seg--fill' : ''}`}
+      onKeyDown={onKeyDown}
     >
-      {segments.map((seg) => {
-        const isActive = !mixed && value === seg.value;
+      {segments.map((seg, i) => {
+        const isActive = i === activeIndex;
         const name = seg.label ?? seg.value;
+        const tabbable = isActive || (activeIndex < 0 && i === 0);
         return (
           <button
             key={seg.value}
@@ -131,41 +70,16 @@ export const SegmentedControl: React.FC<Props> = ({ segments, value, onChange, a
             role="radio"
             aria-checked={isActive}
             aria-label={seg.hint ? `${name}. ${seg.hint}` : name}
-            // Not on the group's own wrapper: that carries `disabledReason`,
-            // and one element cannot show two different tooltips.
-            data-tooltip={disabled ? undefined : seg.hint}
+            data-tooltip={disabled ? undefined : seg.hint ?? (seg.icon ? name : undefined)}
             disabled={disabled}
+            tabIndex={tabbable ? 0 : -1}
             onClick={() => onChange(seg.value)}
-            className="btn-icon"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              // Never squeezed narrower than its own icon: a segment that
-              // shrinks to fit is a specimen you can no longer recognise,
-              // which is the whole reason these are specimens. A filling group
-              // divides its column instead, which is only offered where the
-              // share is wider than a segment's natural size anyway.
-              flex: fill ? '1 1 0' : '0 0 auto',
-              width: fill ? 'auto' : undefined,
-              minWidth: 0,
-              gap: 'var(--space-1)',
-              padding: '4px 6px',
-              borderRadius: 'var(--radius-sm)',
-              background: isActive ? 'var(--surface-primary)' : 'transparent',
-              color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
-              boxShadow: isActive ? 'var(--shadow-sm)' : 'none',
-            }}
+            className="seg__item"
           >
-            {seg.icon && (
-              <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {seg.icon}
-              </span>
-            )}
-            {seg.label && !seg.icon && (
-              <span style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-medium)' }}>
-                {seg.label}
-              </span>
+            {seg.icon ? (
+              <span className="seg__icon" aria-hidden="true">{seg.icon}</span>
+            ) : (
+              seg.label && <span className="seg__label">{seg.label}</span>
             )}
           </button>
         );

@@ -1,0 +1,31 @@
+version: 2
+updates:
+  # One entry covers every workspace: the lockfile is at the root.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      # Patch and minor bumps arrive as one pull request; majors stay
+      # separate because they are the ones that need reading.
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # The esbuild override pins esbuild to esbuild-wasm on purpose
+      # (see scripts/ensure-esbuild.js); bump esbuild-wasm instead.
+      - dependency-name: esbuild
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /apps/server
+    schedule:
+      interval: weekly
+    ignore:
+      # Majors move with .nvmrc and CI, and only to even (LTS) releases.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]

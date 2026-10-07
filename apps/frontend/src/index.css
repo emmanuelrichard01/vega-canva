@@ -430,6 +430,16 @@
   --control-pad-md: 0 var(--space-3);
   --control-pad-lg: 0 var(--space-4);
 
+  /* Board chrome geometry. Anything positioned against the header or a panel
+     reads these instead of a literal, so a height change happens in one place.
+     `--header-h` itself is set with the layout tokens below. */
+  --panel-head-h: 40px;
+  --section-pad-y: var(--space-3);
+  --section-pad-x: var(--space-4);
+  --row-gap: var(--space-2);
+  --hover-outline: color-mix(in srgb, var(--text-primary) 50%, transparent);
+  --route-hop: 6px;
+
   /* Icon sizes travel with control sizes. Konva-drawn glyphs are not included:
      those are sized in world units and live in cursorArt.tsx. */
   --icon-sm: 14px;
@@ -968,7 +978,8 @@ textarea:focus-visible {
 
 :root {
   --panel-w: 260px;
-  --header-h: 56px;
+  /* 32px controls with 8px above and below: the board gets the rest. */
+  --header-h: 48px;
   --gutter: 16px;
   /* The Radar's expanded height. The Layers panel shares this corner and ends
      above it, so the two are kept in step by one number rather than by two
@@ -1263,10 +1274,10 @@ textarea:focus-visible {
   align-items: center;
   gap: var(--space-2);
   box-sizing: border-box;
-  height: 48px;
+  height: var(--panel-head-h);
   padding: 0 var(--space-2) 0 var(--panel-inset);
   border-bottom: 1px solid var(--border-divider);
-  background: transparent;
+  background: var(--surface-primary);
 }
 
 .panel-head__mark {
@@ -2044,8 +2055,8 @@ textarea:focus-visible {
 }
 
 .comment-composer:focus {
-  border-color: var(--border-strong);
-  box-shadow: 0 0 0 3px var(--surface-active);
+  border-color: var(--focus-field-color);
+  box-shadow: 0 0 0 0.5px var(--focus-field-color);
 }
 
 /* The @-picker. Above the field, because the composer is usually at the bottom
@@ -3108,6 +3119,58 @@ textarea:focus-visible {
 /* Moved by transform rather than by `left`, so it animates on the compositor
    instead of triggering layout on every toggle. */
 .ui-switch[aria-checked='true'] .ui-switch__thumb { transform: translateX(14px); }
+/* Mixed: the thumb rests in the middle, so neither state is claimed. */
+.ui-switch[aria-checked='mixed'] .ui-switch__thumb { transform: translateX(7px); }
+.ui-switch:disabled { opacity: 0.45; cursor: default; }
+
+/* Segmented control: a one-of-several choice. The chosen segment takes an ink
+   wash, never the accent; the group wraps unless it fills its column. */
+.seg {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  row-gap: 2px;
+  min-width: 0;
+  padding: 1px;
+  border: 1px solid var(--control-border, transparent);
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+}
+.seg--fill { flex-wrap: nowrap; width: 100%; }
+.seg[aria-disabled='true'] { opacity: 0.4; pointer-events: none; }
+
+.seg__item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  gap: var(--space-1);
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+.seg--fill .seg__item { flex: 1 1 0; }
+.seg__item:hover { color: var(--text-primary); }
+.seg__item[aria-checked='true'] {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+.seg__item:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+.seg__icon { display: flex; align-items: center; justify-content: center; }
+.seg__label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .ui-switch__thumb, .ui-switch__track { transition: none; }
@@ -4444,7 +4507,7 @@ input.slider__value {
   width: 100%;
   min-width: 0;
   padding: 2px 4px;
-  border: 1px solid transparent;
+  border: 1px solid var(--control-border, transparent);
   border-radius: var(--radius-sm);
   background: transparent;
   cursor: text;
@@ -8833,11 +8896,9 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   box-shadow: inset 0 0 0 1px var(--border-strong), var(--shadow-md);
 }
 
-.tcard:focus-visible,
-.bcard:focus-visible { outline: none; }
+.tcard:focus-visible { outline: none; }
 
-.tcard:focus-visible .tcard__art,
-.bcard:focus-visible .bcard__art {
+.tcard:focus-visible .tcard__art {
   box-shadow: inset 0 0 0 1px var(--border-strong), 0 0 0 3px color-mix(in srgb, var(--focus-ring-color) 35%, transparent);
 }
 
@@ -8885,64 +8946,6 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 .tcard__count { white-space: nowrap; }
 
 .bcard__meta { font-size: var(--text-xs); color: var(--text-tertiary); }
-
-/* ## What a board offers, behind one button
-
-   It was a single `X` that appeared on hover — the most destructive thing on
-   the page as the only thing on the card, and nothing at all for the two
-   ordinary wants: take the link, open it beside what you are doing. One `⋯`
-   holds all three, in that order, with removal last and marked. */
-.bcard__tools {
-  position: absolute;
-  top: var(--space-2);
-  right: var(--space-2);
-  display: flex;
-  gap: 4px;
-  opacity: 0;
-  transition: opacity var(--motion-hover);
-}
-
-.bcard:hover .bcard__tools,
-.bcard:focus-within .bcard__tools,
-.bcard[data-open] .bcard__tools { opacity: 1; }
-
-.bcard__tool {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: var(--surface-primary);
-  color: var(--text-secondary);
-  cursor: pointer;
-  box-shadow: var(--shadow-sm), inset 0 0 0 1px var(--border-divider);
-  transition: color var(--motion-hover), background-color var(--motion-hover);
-}
-
-.bcard__tool:hover { color: var(--text-primary); background: var(--surface-hover); }
-
-.bcard__tool:focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: 1px;
-}
-
-/* Hung off the card's own corner, so it opens beside the thing it acts on
-   rather than at the pointer. */
-.bcard__menu {
-  position: absolute;
-  top: 38px;
-  right: var(--space-2);
-  z-index: 6;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 208px;
-  padding: 5px;
-  border-radius: var(--radius-lg);
-  cursor: default;
-}
 
 /* ## The list
 
@@ -9001,8 +9004,6 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 /* The picture does not lift in a row: the row itself is the target. */
 .bcard--list:hover .bcard__art { transform: none; box-shadow: inset 0 0 0 1px var(--border-divider); }
 
-.bcard--list:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: -2px; }
-.bcard--list:focus-visible .bcard__art { box-shadow: inset 0 0 0 1px var(--border-divider); }
 
 .bcard--list .bcard__body {
   flex-direction: row;
@@ -9031,12 +9032,7 @@ body:has(.tool-shelf) { --dock-h: 112px; }
    turns the one empty row into the noisiest thing in the list. */
 .bcard--list .cover__hint { display: none; }
 
-.bcard--list .bcard__tools {
-  position: static;
-  margin-left: var(--space-1);
-}
 
-.bcard--list .bcard__menu { top: calc(100% - 4px); right: var(--space-3); }
 
 /* A row on a narrow screen drops the date rather than squeezing the name. */
 @media (max-width: 620px) {
@@ -9270,32 +9266,10 @@ body[data-rulers='off'] {
 .radar-title { color: var(--text-secondary); }
 
 /* ------------------------------------------------------- the header ---
-   An earlier version of this shrank to 44px when idle and grew to 64px on
-   hover. It was the wrong trade and it is gone.
-
-   Hover-to-reveal suits transient information — a notification that has
-   something to say and then stops. It does not suit a toolbar. Undo, history
-   and the canvas modes are things you reach for repeatedly and without
-   thinking, and putting them behind a deliberate gesture costs both
-   discoverability and a movement every single time, to buy twenty pixels of
-   height that were never the problem. The clutter was solved by grouping the
-   bar into three zones by what each control acts on; the height was never what
-   made it feel wrong.
-
-   What is worth keeping from the idea is that chrome should be quieter while
-   you work. So the bar **recedes rather than hides**: it drops in contrast
-   while you are actually dragging something on the canvas, and comes back the
-   instant you let go. Nothing moves, nothing is hidden, and a click lands
-   immediately because the target never went anywhere.
-
-   That also removes both layout animations this section used to carry — a
-   transitioned `height` on the bar and a transitioned `max-width` on a group
-   inside it, which reflowed the whole row every frame and slid its neighbours
-   sideways. Opacity is a compositor property; it animates without touching
-   layout at all. */
-:root {
-  --header-h: 52px;
-}
+   One fixed height (`--header-h`, with the layout tokens). While something is
+   being dragged the bar recedes in opacity rather than hiding or resizing:
+   nothing moves, and a click lands where the control already was. See
+   `components/workspace/shell.css`. */
 
 .workspace-header {
   z-index: 120;
@@ -9859,9 +9833,52 @@ body[data-rulers='off'] {
  */
 .stepper {
   box-sizing: border-box;
+  display: flex;
+  align-items: center;
   flex: 1;
   min-width: 0;
   height: var(--control-h-sm);
+  overflow: hidden;
+  border: 1px solid var(--control-border, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  transition: border-color var(--motion-hover);
+}
+
+.stepper:hover { border-color: var(--border-strong); }
+
+.field[data-disabled] { opacity: 0.45; }
+
+/* The number itself. Left-aligned so a column of fields scans as a column;
+   the right inset belongs to the unit when there is one, so `100 %` reads as
+   one value and the field is no wider than its neighbours. */
+.stepper__input {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 28px;
+  height: 100%;
+  padding: 0 8px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+.stepper__input[data-has-glyph] { padding-left: 6px; }
+.stepper__input[data-has-suffix] { padding-right: 2px; }
+.stepper__input[data-mixed] { min-width: 44px; font-style: italic; }
+.stepper__input::placeholder { color: var(--text-tertiary); }
+
+.stepper__suffix {
+  flex-shrink: 0;
+  padding-right: 8px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  pointer-events: none;
 }
 
 .stepper-label {
@@ -9872,6 +9889,20 @@ body[data-rulers='off'] {
   font-weight: var(--weight-semibold);
   text-align: center;
 }
+
+/* Letters and glyphs you can drag: the handle for scrubbing a value. */
+.stepper-label[data-scrub],
+.stepper-glyph[data-scrub] {
+  cursor: ew-resize;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+}
+.stepper-label[data-scrub]:hover,
+.stepper-glyph[data-scrub]:hover,
+.field[data-scrubbing] .stepper-label,
+.field[data-scrubbing] .stepper-glyph { color: var(--text-primary); }
+.field[data-scrubbing] .stepper { border-color: var(--border-strong); }
 
 /**
  * A disclosure inside a section.
@@ -9967,7 +9998,7 @@ body[data-rulers='off'] {
   font-weight: 600;
   color: var(--text-secondary);
   background: var(--surface-hover);
-  border: 1px solid transparent;
+  border: 1px solid var(--control-border, transparent);
   border-radius: var(--radius-pill);
   padding: 4px 10px;
   cursor: pointer;
@@ -10130,10 +10161,8 @@ html.dark-theme,
    thing on screen. */
 .layer-row.is-selected,
 .layer-row.is-selected:hover {
-  background: var(--accent-quiet);
-  box-shadow: inset 0 0 0 1px var(--accent-line);
+  background: var(--surface-active);
   color: var(--text-primary);
-  font-weight: var(--weight-semibold);
 }
 
 /**
@@ -10180,8 +10209,8 @@ html.dark-theme,
  * whole row lights instead of an edge, which reads as "this will take it".
  */
 .layer-row.is-drop-into {
-  background: var(--accent-quiet);
-  box-shadow: inset 0 0 0 2px var(--brand-orange);
+  background: var(--surface-active);
+  box-shadow: inset 0 0 0 1.5px var(--text-primary);
 }
 
 /**
@@ -14852,7 +14881,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   min-width: 0;
   height: 28px;
   padding: 0 8px;
-  border: 1px solid transparent;
+  border: 1px solid var(--control-border, transparent);
   border-radius: var(--radius-md);
   background: var(--surface-hover);
   color: var(--text-primary);
@@ -15639,6 +15668,12 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   transition: border-color var(--motion-hover), background-color var(--motion-hover);
 }
 
+/* One line box for the gutter and the editor, so line numbers cannot drift
+   from the text they number. */
+.mermaid-modal__editor-wrap {
+  --mm-line: calc(var(--text-sm) * 1.6);
+}
+
 .mermaid-modal__editor-wrap:hover {
   background: var(--surface-hover);
 }
@@ -15659,7 +15694,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   overflow: hidden;
   font-family: var(--font-mono, monospace);
   font-size: var(--text-xs);
-  line-height: 1.6;
+  line-height: var(--mm-line);
   text-align: right;
 }
 
@@ -15667,15 +15702,15 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   position: relative;
   padding-right: 10px;
   color: var(--text-disabled);
-  height: 22.4px;
+  height: var(--mm-line);
   font-variant-numeric: tabular-nums;
   box-sizing: border-box;
 }
 
 .mm-gutter__line.is-error {
-  color: var(--status-warning, #EF4444);
+  color: var(--status-danger);
   font-weight: 700;
-  background: rgba(239, 68, 68, 0.14);
+  background: color-mix(in srgb, var(--status-danger) 14%, transparent);
 }
 
 .mm-gutter__line.is-warn {
@@ -15695,7 +15730,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   color: var(--text-primary);
   font-family: var(--font-mono, monospace);
   font-size: var(--text-sm);
-  line-height: 1.6;
+  line-height: var(--mm-line);
   tab-size: 4;
   overflow-y: auto;
   white-space: pre;
@@ -18600,7 +18635,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   width: 24px;
   height: 24px;
   padding: 0;
-  border: 1px solid transparent;
+  border: 1px solid var(--control-border, transparent);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-tertiary);
@@ -18610,9 +18645,9 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 
 .radius-link:hover { background: var(--surface-hover); color: var(--text-secondary); }
 
-/* Lit while the four are joined, because that is the state the single field
-   above it is describing. */
-.radius-link[data-on] { color: var(--accent); }
+/* Pressed while the four are joined: an ink wash, the panel's one language
+   for an on toggle. */
+.radius-link[data-on] { color: var(--text-primary); background: var(--surface-active); }
 
 .radius-control--open .radius-link { margin-top: 2px; }
 
@@ -18888,7 +18923,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   height: var(--control-h-sm);
   /* Room on the right for the chevron drawn behind it. */
   padding: 0 20px 0 8px;
-  border: 1px solid transparent;
+  border: 1px solid var(--control-border, transparent);
   border-radius: var(--radius-sm);
   background-color: var(--surface-hover);
   /* The chevron is a background image rather than an element, because a
@@ -18942,7 +18977,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   width: 100%;
   height: var(--control-h-sm);
   padding: 0 6px 0 8px;
-  border: 1px solid transparent;
+  border: 1px solid var(--control-border, transparent);
   border-radius: var(--radius-sm);
   background: var(--surface-hover);
   color: var(--text-primary);
@@ -21200,3 +21235,105 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 
 .tgrid--seam .tcard__blurb { display: none; }
 .tgrid--seam .tcard__name { font-size: var(--text-sm); }
+
+/* ------------------------------------------------------------------ */
+/* Feature fallback: a panel or dialog that crashed, replaced on its own */
+/* ------------------------------------------------------------------ */
+.feature-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-divider);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+.feature-fallback--modal {
+  max-width: 360px;
+  box-shadow: var(--shadow-overlay);
+}
+.feature-fallback__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+}
+.feature-fallback__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.feature-fallback__body {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.feature-fallback__actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.feature-fallback__button {
+  height: 32px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.feature-fallback__button:hover { background: var(--surface-hover); }
+.feature-fallback__button:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+.feature-fallback__button--quiet { border-color: transparent; background: transparent; color: var(--text-secondary); }
+
+/* A comment being edited in place. Focus is shown with the neutral field
+   colour, as every other text field is (DESIGN.md, Inputs). */
+.comment-edit-field {
+  width: 100%;
+  resize: none;
+  background: var(--surface-primary);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  padding: 6px 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-sans);
+}
+.comment-edit-field:focus-visible {
+  outline: 1.5px solid var(--focus-field-color);
+  outline-offset: 0;
+  border-color: var(--focus-field-color);
+}
+
+/* ===========================================================================
+   DASHBOARD → BOARD
+   Navigations between the library and a board cross-fade, and the cover of
+   the board you clicked grows into its canvas: the cover's dot grid is the
+   board's dot grid. The cover is named only at the moment it is clicked
+   (Home.tsx), so exactly one element carries the name. Skipped entirely under
+   reduced motion, and a no-op in browsers without cross-document transitions.
+   =========================================================================== */
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition { navigation: auto; }
+
+  .canvas-container { view-transition-name: board-canvas; }
+
+  ::view-transition-group(board-canvas) {
+    animation-duration: 420ms;
+    animation-timing-function: var(--ease-settle);
+  }
+
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 220ms;
+  }
+}

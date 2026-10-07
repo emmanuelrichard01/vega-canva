@@ -1,20 +1,16 @@
 import React from 'react';
-import { Check, Copy, ExternalLink, PencilLine, Play, RotateCw } from 'lucide-react';
+import { Check, Copy } from 'lucide-react';
 import type { LinkNode } from '../../engine/model/schema';
-import { useStore } from '../../hooks/useStore';
-import { RailButton, Divider } from './RailBase';
+import { RailButton } from './RailBase';
+import { RailPopover } from './RailPopover';
 import { providerFor } from '../../engine/link/linkProviders';
 import { resolveDisplay } from '../../engine/link/linkLayout';
-import { openLink, refreshPreview, setLinkDisplay } from '../../engine/link/linkApply';
+import { setLinkDisplay } from '../../engine/link/linkApply';
 import { LINK_DISPLAY_LABELS, type LinkDisplay } from '../../engine/link/linkTypes';
-import { openLinkComposerFor } from '../link/openLinkComposer';
 
 /**
- * A link's display, drawn as the card it produces.
- *
- * Four shapes that differ only in layout, so each is a thumbnail of that layout
- * — a bar, a picture beside lines, a picture above lines, a player — rather
- * than four abstract glyphs somebody has to learn.
+ * A link's display, drawn as the card it produces: a bar, a picture beside
+ * lines, a picture above lines, a player.
  */
 export const LinkDisplayIcon: React.FC<{ display: Exclude<LinkDisplay, 'auto'> }> = ({ display }) => (
   <svg width="18" height="16" viewBox="0 0 18 16" fill="none" aria-hidden>
@@ -48,73 +44,65 @@ export const LinkDisplayIcon: React.FC<{ display: Exclude<LinkDisplay, 'auto'> }
   </svg>
 );
 
-
 /**
- * What a selected link puts on the rail: how it is shown, and where it goes.
+ * How the link is shown, as one control wearing the layout it is using now.
  *
- * The four displays are one segmented run, the pressed one showing the layout
- * the card is *currently* using — which, left on auto, is the one its shape
- * picked. Pressing one pins it and snaps the card to that layout's natural
- * size, so the choice is visible the moment it is made.
+ * Left on auto, that is the one its shape picked; pressing a layout pins it and
+ * snaps the card to that layout's natural size.
  */
-export const LinkRailSection: React.FC<{ node: LinkNode }> = ({ node }) => {
+export const LinkDisplayControl: React.FC<{ node: LinkNode }> = ({ node }) => {
   const { link } = node;
   const provider = providerFor(link.url);
   const shown = resolveDisplay(link.display, node.width, node.height, Boolean(provider.embed));
-  const [copied, setCopied] = React.useState(false);
   const options: Array<Exclude<LinkDisplay, 'auto'>> = provider.embed
     ? ['compact', 'horizontal', 'vertical', 'embed']
     : ['compact', 'horizontal', 'vertical'];
-
   return (
-    <>
-      <div className="ctx-group" role="radiogroup" aria-label="Show link as">
-        {options.map((d) => (
-          <RailButton
-            key={d}
-            label={LINK_DISPLAY_LABELS[d]}
-            hint={link.display === 'auto' && shown === d ? `${LINK_DISPLAY_LABELS[d]} (chosen by its shape)` : LINK_DISPLAY_LABELS[d]}
-            pressed={shown === d}
-            onClick={() => setLinkDisplay(node, d)}
-          >
-            <LinkDisplayIcon display={d} />
-          </RailButton>
-        ))}
-      </div>
-      <Divider />
-      <div className="ctx-group">
-        {shown === 'embed' && provider.embed && (
-          <RailButton label="Play here" hint="Interact with it on the board" onClick={() => useStore.getState().setEmbedActiveNodeId(node.id)}>
-            <Play size={15} />
-          </RailButton>
-        )}
-        <RailButton label={`Open ${provider.id === 'web' ? 'link' : `in ${provider.name}`}`} onClick={() => openLink(link.url)}>
-          <ExternalLink size={16} />
-        </RailButton>
-        <RailButton
-          label={copied ? 'Copied' : 'Copy link'}
-          onClick={() => {
-            void navigator.clipboard?.writeText(link.url).then(() => {
-              setCopied(true);
-              window.setTimeout(() => setCopied(false), 1400);
-            });
-          }}
-        >
-          {copied ? <Check size={16} /> : <Copy size={16} />}
-        </RailButton>
-        <RailButton
-          label="Edit link"
-          onClick={() => openLinkComposerFor(node)}
-        >
-          <PencilLine size={16} />
-        </RailButton>
-        {link.status === 'error' && (
-          <RailButton label="Try the preview again" onClick={() => refreshPreview(node)}>
-            <RotateCw size={16} />
-          </RailButton>
-        )}
-      </div>
-      <Divider />
-    </>
+    <RailPopover label={`Show as: ${LINK_DISPLAY_LABELS[shown]}`} trigger={<LinkDisplayIcon display={shown} />} align="start">
+      {(close) => (
+        <>
+          <span className="ctx-popover__label">Show as</span>
+          <div className="rail-display-grid" role="radiogroup" aria-label="Show link as">
+            {options.map((d) => (
+              <button
+                key={d}
+                type="button"
+                role="radio"
+                aria-checked={shown === d}
+                className="rail-display"
+                onClick={() => {
+                  setLinkDisplay(node, d);
+                  close();
+                }}
+              >
+                <LinkDisplayIcon display={d} />
+                <span>
+                  {LINK_DISPLAY_LABELS[d]}
+                  {link.display === 'auto' && shown === d && <span className="rail-display__auto"> · auto</span>}
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </RailPopover>
   );
 };
+
+export const CopyLinkButton: React.FC<{ url: string }> = ({ url }) => {
+  const [copied, setCopied] = React.useState(false);
+  return (
+    <RailButton
+      label={copied ? 'Copied' : 'Copy link'}
+      onClick={() => {
+        void navigator.clipboard?.writeText(url).then(() => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1400);
+        });
+      }}
+    >
+      {copied ? <Check size={16} /> : <Copy size={16} />}
+    </RailButton>
+  );
+};
+

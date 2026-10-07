@@ -1,11 +1,7 @@
 /**
  * The collaborative document layer.
  *
- * Import everything document-related from this barrel. Previously all of this
- * lived inside `hooks/useSync.ts` — a React hooks module that also happened to
- * construct the Y.Doc, own the websocket provider, and run its own change
- * observer, which is why non-React code (tools, exporters, physics, the
- * minimap) all had to reach into a hooks file to touch the CRDT.
+ * Import everything document-related from this barrel.
  */
 export {
   roomId,
@@ -17,11 +13,15 @@ export {
   metadataMap,
   identitiesMap,
   commentsMap,
-  historyArray,
+  fontsMap,
   undoManager,
   getConnectionStatus,
   onStatusChange,
   onSyncedChange,
+  isDocumentSynced,
+  whenSynced,
+  whenDocumentReady,
+  DERIVED_ORIGIN,
 } from './doc';
 export type { ConnectionStatus } from './doc';
 
@@ -39,8 +39,9 @@ export {
   localAuthorId,
   localAuthor,
   publishLocalIdentity,
+  setBoardMetadata,
 } from './mutations';
-export type { NewNodeInput } from './mutations';
+export type { NewNodeInput, CreateNodeOptions, WriteOptions } from './mutations';
 export { applyGroupPlan, renameGroup } from './mutations';
 export { observeGroups } from './observe';
 
@@ -49,3 +50,13 @@ export type { NodeChangeSet } from './observe';
 
 export { normalizeNode, isCanonical } from './normalize';
 export { migrateDocument, scheduleMigration } from './migrate';
+
+export {
+  registerBoardFont,
+  removeBoardFont,
+  readBoardFonts,
+  listBoardFonts,
+  groupBoardFonts,
+  normalizeBoardFont,
+} from './fonts';
+export type { BoardFont } from './fonts';

@@ -2,6 +2,7 @@ import { SCHEMA_VERSION } from '../model/schema';
 import { doc, groupsMap, metadataMap, objectsMap } from './doc';
 import { migrateGridGroups } from '../grid/gridMigrate';
 import { migrateDoc } from './migrateDoc';
+import { canEditObjects } from '../model/permissions';
 
 export { migrateDoc } from './migrateDoc';
 
@@ -18,7 +19,13 @@ export function migrateDocument(): { migrated: number; skipped: number } {
 }
 
 /**
- * Run the migration once the document has finished syncing.
+ * Run the migration once the server's state has arrived.
+ *
+ * Never before: migrating the IndexedDB copy alone would write stale values
+ * concurrently with the server's, and last-writer-wins could let them revert
+ * other people's edits. An offline session simply does not migrate; reads are
+ * normalised at the store boundary either way. Only an editor migrates, since
+ * a viewer's writes are dropped by the server.
  *
  * Returns a disposer. Safe to call repeatedly (StrictMode double-invokes).
  */
@@ -30,7 +37,7 @@ export function scheduleMigration(provider: {
   let done = false;
 
   const run = () => {
-    if (done) return;
+    if (done || !canEditObjects()) return;
     done = true;
 
     /**
@@ -66,12 +73,5 @@ export function scheduleMigration(provider: {
   }
 
   provider.on('synced', run);
-  // An offline start never fires `synced`; IndexedDB still has a document to
-  // migrate, so don't block on the network indefinitely.
-  const timer = setTimeout(run, 4000);
-
-  return () => {
-    provider.off('synced', run);
-    clearTimeout(timer);
-  };
+  return () => provider.off('synced', run);
 }

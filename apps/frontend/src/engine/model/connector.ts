@@ -14,6 +14,15 @@
  */
 
 import { anchorPoint, anchorPort, type Anchor } from './connectorAnchor';
+import { inflate, portDir, rectOf, type Rect } from './connectorRouter/geometry';
+import {
+  OBSTACLE_MARGIN,
+  routeOrthogonalAvoiding,
+  type Obstacle,
+  type Segment,
+} from './connectorRouter/router';
+import { applyNudges, type SegmentNudge } from './connectorRouter/pathOps';
+import { CURVE_CLEARANCE, fitCurve, intrusion } from './connectorRouter/curve';
 
 /** The four sides an end can attach to, plus "work it out". */
 export type Port = 'top' | 'right' | 'bottom' | 'left' | 'auto';
@@ -112,11 +121,12 @@ export function autoPorts(from: Box, to: Box): { from: Exclude<Port, 'auto'>; to
 }
 
 /**
- * How far back from a corner an elbow starts to turn.
+ * The elbow radius a connector draws with when it has never been given one.
  *
- * Small on purpose. This is a softened corner, not a curve -- past about 12px
+ * Small on purpose. This is a softened corner, not a curve: past about 12px
  * an orthogonal connector stops reading as orthogonal, and the right angles
- * are what make a flowchart scan as a flowchart.
+ * are what make a flowchart scan as a flowchart. Connectors draw their
+ * corners through `connectorPathData`; this is its default.
  */
 export const ELBOW_RADIUS = 8;
 
@@ -126,17 +136,8 @@ export const ELBOW_RADIUS = 8;
 const ELBOW_STEPS = 4;
 
 /**
- * Round the corners of a polyline, by inserting points rather than by
- * switching to arcs.
- *
- * ## Why sampled points and not a `Path`
- *
- * The same reason `routeCurved` samples: the point list *is* the geometry
- * here. `connectorBounds`, hit-testing, the radar and the board thumbnail all
- * read it, and none of them would know about a `Q` command hidden in an SVG
- * path string. A rounded corner drawn only in the renderer would be a shape
- * the rest of the system could not see -- clicks would miss it and its box
- * would be wrong.
+ * Round the corners of a polyline by inserting points, for readers that need
+ * a sampled polyline rather than a path string.
  *
  * ## The clamp
  *
@@ -193,15 +194,9 @@ export function roundCorners(points: Point[], radius = ELBOW_RADIUS): Point[] {
 }
 
 /**
- * An orthogonal route between two ports.
- *
- * Deliberately simple and predictable rather than a full obstacle-avoiding
- * router. A diagram tool's connectors are read constantly and adjusted
- * constantly, and a clever router that finds a *different* clever answer each
- * time something nudges is worse than a plain one whose behaviour you can
- * predict and work with. Three segments cover the cases people actually draw;
- * the elbow sits at the midpoint of the gap so two parallel connectors between
- * the same pair of boxes do not overlap along their whole length.
+ * The plain three-segment elbow between two ports, with no stubs and no
+ * avoidance. Connectors route through `connectorRoute`; this is the reference
+ * shape for the simple case, where both agree.
  */
 export function routeOrthogonal(
   a: Point,
@@ -339,20 +334,81 @@ function onOutline(
   return attachOf(nodeId, point) ?? point;
 }
 
-/** The full route for a connector, as a flat Konva points array. */
-export function connectorPoints(
+export interface RouteOptions {
+  /** Route around `obstaclesIn` as well as the two ends' own boxes. */
+  avoid?: boolean;
+  /** Obstacles near a corridor, already inflated. Read only when `avoid` is on. */
+  obstaclesIn?: (corridor: Rect) => readonly Obstacle[];
+  /** Segments of routes already drawn, for the crossing penalty. */
+  segmentsIn?: (corridor: Rect) => readonly Segment[];
+  /** An end's own box as the router should keep clear of it (rotation-aware). */
+  ownRectOf?: (id: string) => Rect | null;
+  /** A user's segment offsets, applied to an elbow route. */
+  nudges?: readonly SegmentNudge[];
+  /**
+   * Slide both ends this far along their sides, for connectors that share
+   * both objects. Applied to edge ports only; an anchor is an exact spot.
+   */
+  pairShift?: number;
+  /** Search budget; see `routeOrthogonalAvoiding`. */
+  maxExpansions?: number;
+}
+
+export interface ConnectorRoute {
+  points: Point[];
+  /** True for an elbow route, whose points are its corners. */
+  orthogonal: boolean;
+  /** The router ran out of budget and ignored third-party obstacles. */
+  degraded: boolean;
+  /** Obstacles the route went around, for cache keys and invalidation. */
+  obstacleIds: string[];
+}
+
+/**
+ * Slide an edge-port point along its side, staying inside the side by a
+ * margin. A side too short to share returns the point unchanged.
+ */
+function slideAlongSide(
+  point: Point,
+  port: Exclude<Port, 'auto'>,
+  box: Box | null,
+  shift: number
+): Point {
+  if (!box || !shift) return point;
+  const vertical = port === 'left' || port === 'right';
+  const lo = (vertical ? box.y : box.x) + 6;
+  const hi = (vertical ? box.y + box.height : box.x + box.width) - 6;
+  if (hi <= lo) return point;
+  const value = Math.min(hi, Math.max(lo, (vertical ? point.y : point.x) + shift));
+  return vertical ? { x: point.x, y: value } : { x: value, y: point.y };
+}
+
+/**
+ * The route for a connector, from its two ends.
+ *
+ * Every elbow route goes through the router: it leaves and arrives along each
+ * port's normal and never cuts back through either end's own box. With
+ * `avoid` it also goes around everything `obstaclesIn` reports. A curved route
+ * that avoids is a curve fitted over that elbow route; one that does not is
+ * the free Bézier between the ends. Straight is straight.
+ *
+ * The points are the route's real vertices. Rounded elbows and line jumps are
+ * applied when the path is drawn (`connectorPathData`), so bounds,
+ * hit-testing and export all start from the same corners.
+ */
+export function connectorRoute(
   from: ConnectorEnd,
   to: ConnectorEnd,
   routing: Routing,
   boxOf: (id: string) => Box | null,
-  /** See `resolveEnd`. Optional; absent means the box is the answer. */
-  attachOf: ((id: string, boxPoint: Point) => Point | null) | null = null
-): number[] {
+  attachOf: ((id: string, boxPoint: Point) => Point | null) | null = null,
+  options: RouteOptions = {}
+): ConnectorRoute {
   const fromBox = from.nodeId ? boxOf(from.nodeId) : null;
   const toBox = to.nodeId ? boxOf(to.nodeId) : null;
 
   // An end with no box is a bare coordinate, and that coordinate is known
-  // without resolving anything — so each end can be told where the other one
+  // without resolving anything, so each end can be told where the other one
   // is even when the other one is not an object.
   const fromLoose = fromBox ? null : { x: from.x ?? 0, y: from.y ?? 0 };
   const toLoose = toBox ? null : { x: to.x ?? 0, y: to.y ?? 0 };
@@ -360,17 +416,75 @@ export function connectorPoints(
   const a = resolveEnd(from, toBox, boxOf, toLoose, attachOf);
   const b = resolveEnd(to, fromBox, boxOf, fromLoose, attachOf);
 
-  const path =
-    routing === 'orthogonal'
-      ? // Softened at the turns. The rounding inserts points rather than
-        // drawing arcs, so bounds, hit-testing, the radar and export all keep
-        // seeing the same geometry the renderer draws.
-        roundCorners(routeOrthogonal(a.point, b.point, a.port, b.port))
-      : routing === 'curved'
-        ? routeCurved(a.point, b.point, a.port, b.port)
-        : [a.point, b.point];
+  if (routing === 'straight') {
+    return { points: [a.point, b.point], orthogonal: false, degraded: false, obstacleIds: [] };
+  }
+  const shift = options.pairShift ?? 0;
+  const start = from.anchor ? a.point : slideAlongSide(a.point, a.port, a.box, shift);
+  const end = to.anchor ? b.point : slideAlongSide(b.point, b.port, b.box, shift);
 
-  return path.flatMap((p) => [p.x, p.y]);
+  const ownOf = (id: string | undefined, box: Box | null): Rect | null => {
+    if (!box) return null;
+    return inflate((id && options.ownRectOf?.(id)) || rectOf(box), OBSTACLE_MARGIN);
+  };
+  const sides = [a.box, b.box].filter((box): box is Box => Boolean(box));
+
+  // A curve that does not avoid is the free Bézier between the ends, unless
+  // that Bézier would loop back through either end's own box; then it is
+  // fitted over an elbow route around the two ends like any other curve.
+  if (routing === 'curved' && !options.avoid) {
+    const free = routeCurved(start, end, a.port, b.port);
+    const own = [ownOf(from.nodeId, a.box), ownOf(to.nodeId, b.box)]
+      .filter((r): r is Rect => Boolean(r))
+      .map((r) => inflate(r, -(OBSTACLE_MARGIN - CURVE_CLEARANCE)));
+    if (intrusion(free, own) < 0) {
+      return { points: free, orthogonal: false, degraded: false, obstacleIds: [] };
+    }
+  }
+
+  const routed = routeOrthogonalAvoiding({
+    a: start,
+    dirA: portDir(a.port),
+    b: end,
+    dirB: portDir(b.port),
+    ownA: ownOf(from.nodeId, a.box),
+    ownB: ownOf(to.nodeId, b.box),
+    obstaclesIn: options.avoid ? options.obstaclesIn : undefined,
+    segmentsIn: options.avoid ? options.segmentsIn : undefined,
+    bendScale: sides.length ? Math.min(...sides.map((box) => Math.min(box.width, box.height))) : 0,
+    maxExpansions: options.maxExpansions,
+  });
+
+  if (routing === 'curved') {
+    // Checked against each obstacle's box plus the curve's own clearance; the
+    // elbow skeleton already keeps the router's wider margin.
+    const boxes = routed.obstacles.map((r) => inflate(r, -(OBSTACLE_MARGIN - CURVE_CLEARANCE)));
+    return {
+      points: fitCurve(routed.points, boxes),
+      orthogonal: false,
+      degraded: routed.degraded,
+      obstacleIds: routed.obstacleIds,
+    };
+  }
+  return {
+    points: applyNudges(routed.points, options.nudges),
+    orthogonal: true,
+    degraded: routed.degraded,
+    obstacleIds: routed.obstacleIds,
+  };
+}
+
+/** The route as a flat Konva points array. */
+export function connectorPoints(
+  from: ConnectorEnd,
+  to: ConnectorEnd,
+  routing: Routing,
+  boxOf: (id: string) => Box | null,
+  /** See `resolveEnd`. Optional; absent means the box is the answer. */
+  attachOf: ((id: string, boxPoint: Point) => Point | null) | null = null,
+  options: RouteOptions = {}
+): number[] {
+  return connectorRoute(from, to, routing, boxOf, attachOf, options).points.flatMap((p) => [p.x, p.y]);
 }
 
 /**

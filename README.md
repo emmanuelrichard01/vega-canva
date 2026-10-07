@@ -75,16 +75,24 @@ depends on nothing above it.
 | Module | Responsibility |
 | --- | --- |
 | `doc.ts` | `Y.Doc`, Hocuspocus provider, IndexedDB persistence, the shared maps, connection status |
-| `mutations.ts` | The **only** write path. Stamps z-index, timestamps and authorship so no caller can forget them |
-| `observe.ts` | The **only** observer of the objects map. Publishes a `{changed, removed}` id set |
+| `mutations.ts` | The write path for canvas objects, groups and board metadata. Enforces the role gate and stamps z-index, timestamps and authorship |
+| `observe.ts` | The one observer of the live objects map. Publishes a `{changed, removed, local}` id set |
+| `upkeep.ts` / `election.ts` | Automatic repairs (empty-group sweep, stale frame membership), run by one elected client |
 | `normalize.ts` | Maps any persisted node — current or legacy — onto the canonical schema |
 | `migrateDoc.ts` | Idempotent, transactional rewrite of a stored document to the current schema |
 
 Two invariants worth knowing before changing anything here:
 
-- **All writes go through `mutations.ts`.** New nodes always land on top of the
-  stacking order and always carry `createdAt`/`updatedAt`/`createdBy`, because
-  those are stamped centrally rather than by each tool.
+- **Object writes go through `mutations.ts`.** New nodes always land on top of
+  the stacking order and always carry `createdAt`/`updatedAt`/`createdBy`,
+  because those are stamped centrally rather than by each tool. Other shared
+  state has its own writers, each gated by role the same way: comments
+  (`hooks/useComments.ts`), ruler guides (`guides.ts`), backup restore
+  (`engine/export/restoreDocument.ts`) and the grid migration
+  (`engine/grid/gridMigrate.ts`).
+- **Draw order is `compareStacking`** (`engine/model/stacking.ts`): `zIndex`,
+  then id. Two people can be given the same `zIndex`; the id tie-break is what
+  makes every screen agree.
 - **All reads are normalized at the boundary.** `useStore` normalizes each
   changed node once, so nothing downstream ever sees a legacy field.
 

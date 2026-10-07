@@ -47,11 +47,34 @@ export interface ParsedFont {
   };
 }
 
-/** Families the app loads from Google Fonts — see `index.html`. */
-const GOOGLE_FAMILIES = new Set([
-  'Inter', 'DM Sans', 'Outfit', 'Plus Jakarta Sans', 'Space Grotesk', 'Roboto',
-  'Lora', 'Playfair Display', 'JetBrains Mono', 'Caveat', 'Architects Daughter',
-]);
+import { fontEntry } from './fontCatalogue';
+import { bestFace, dynamicFamily } from './fontLibrary';
+import { localFontBlob } from './localFonts';
+
+/**
+ * Whether Google serves the file behind a family. Every catalogue face that
+ * is fetched from Google or bundled through `@fontsource` is also on Google
+ * Fonts; system faces are not.
+ */
+function servedByGoogle(family: string): boolean {
+  const source = fontEntry(family)?.source;
+  return source === 'google' || source === 'bundled';
+}
+
+/** The bytes of an uploaded or local face, or null for any other family. */
+async function runtimeFaceBytes(family: string, weight: number, italic: boolean): Promise<ArrayBuffer | null> {
+  const fam = dynamicFamily(family);
+  if (!fam) return null;
+  const face = bestFace(fam.faces, weight, italic);
+  if (!face) return null;
+  if (face.source.kind === 'url') {
+    const res = await fetch(face.source.url);
+    if (!res.ok) throw new Error(String(res.status));
+    return res.arrayBuffer();
+  }
+  const blob = await localFontBlob(family, weight, italic);
+  return blob ? blob.arrayBuffer() : null;
+}
 
 /**
  * Raised when a face cannot be outlined, with a sentence fit to show someone.
@@ -96,7 +119,25 @@ export function loadFont(family: string, weight = 400, italic = false): Promise<
   if (existing) return existing;
 
   const pending = (async () => {
-    if (!GOOGLE_FAMILIES.has(family)) {
+    if (dynamicFamily(family)) {
+      let bytes: ArrayBuffer | null;
+      try {
+        bytes = await runtimeFaceBytes(family, weight, italic);
+      } catch {
+        throw new FontUnavailableError(`Could not read ${family} from the board. Check the connection and try again.`);
+      }
+      if (!bytes) {
+        throw new FontUnavailableError(`${family} could not be read on this device.`);
+      }
+      const fontkit = await (fontkitPromise ??= import('fontkit'));
+      const font = fontkit.create(new Uint8Array(bytes) as never) as unknown as ParsedFont;
+      if (typeof font?.layout !== 'function') {
+        throw new FontUnavailableError(`${family} arrived in a form that cannot be read.`);
+      }
+      return font;
+    }
+
+    if (!servedByGoogle(family)) {
       throw new FontUnavailableError(
         `${family} is installed on this machine rather than served with the board, so its outlines are not available to read. Set the text in one of the board's own fonts first.`
       );

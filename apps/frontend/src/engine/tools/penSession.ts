@@ -195,3 +195,40 @@ export function isClosable(
   if (anchors.length < 2) return false;
   return withinTarget(anchors[0], pointer, zoom);
 }
+
+/**
+ * Anchors of an existing open path, in world space, ready to be extended from
+ * the end the pen was pressed on.
+ *
+ * Pressed on the last anchor, the path continues as it is. Pressed on the
+ * first, it is reversed (handles swap sides) so the new anchors are still
+ * appended at the end. Null when the press is on neither end.
+ */
+export function continuationFrom(
+  anchors: readonly Anchor[],
+  origin: Point,
+  pointer: Point,
+  zoom: number
+): Anchor[] | null {
+  if (anchors.length < 2) return null;
+  const world = anchors.map((a) => ({
+    x: a.x + origin.x,
+    y: a.y + origin.y,
+    ...(a.inX !== undefined && a.inY !== undefined ? { inX: a.inX + origin.x, inY: a.inY + origin.y } : null),
+    ...(a.outX !== undefined && a.outY !== undefined ? { outX: a.outX + origin.x, outY: a.outY + origin.y } : null),
+  }));
+  const last = world[world.length - 1];
+  if (withinTarget(last, pointer, zoom)) return world;
+  if (withinTarget(world[0], pointer, zoom)) {
+    return world
+      .slice()
+      .reverse()
+      .map((a) => ({
+        x: a.x,
+        y: a.y,
+        ...(a.outX !== undefined && a.outY !== undefined ? { inX: a.outX, inY: a.outY } : null),
+        ...(a.inX !== undefined && a.inY !== undefined ? { outX: a.inX, outY: a.inY } : null),
+      }));
+  }
+  return null;
+}

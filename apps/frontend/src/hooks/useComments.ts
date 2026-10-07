@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import * as Y from 'yjs';
 import { commentsMap, doc, localAuthor, localAuthorId } from '../engine/document';
-import { extractMentions } from '../engine/comments/threads';
+import { extractMentions, reactionKey } from '../engine/comments/threads';
+import { canPostComments } from '../engine/model/permissions';
 import { nanoid } from 'nanoid';
 
 export interface Message {
@@ -29,35 +30,60 @@ export interface CommentThread {
   x: number;
   y: number;
   objectId?: string;
+  /** Where on the object the pin sits; see `anchorPoint`. */
+  anchor?: { u: number; v: number };
   messages: Message[];
   resolved: boolean;
   createdAt: number;
+  /** Raw reaction keys; read them through `messageReactions`. */
+  reactions?: Record<string, unknown>;
 }
 
+/**
+ * One observer and one sorted list for the whole page.
+ *
+ * Several components read the comments; each mounting its own `observeDeep`
+ * meant each re-serialised and re-sorted every thread on every change. The
+ * list is built once per document change and shared through
+ * `useSyncExternalStore`.
+ *
+ * A thread with no messages is not listed. Deleting the last message empties
+ * the thread rather than deleting its container, because deleting the
+ * container would also discard a reply someone posted at the same moment;
+ * emptied, that reply simply brings the thread back.
+ */
+let snapshot: CommentThread[] = [];
+const listeners = new Set<() => void>();
+
+function rebuild(): void {
+  const result: CommentThread[] = [];
+  commentsMap.forEach((commentMap) => {
+    const thread = commentMap.toJSON() as CommentThread;
+    if (Array.isArray(thread.messages) && thread.messages.length > 0) result.push(thread);
+  });
+  result.sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  snapshot = result;
+  listeners.forEach((fn) => fn());
+}
+
+const onCommentsChanged = () => rebuild();
+
+function subscribe(listener: () => void): () => void {
+  if (listeners.size === 0) {
+    commentsMap.observeDeep(onCommentsChanged);
+    rebuild();
+  }
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) commentsMap.unobserveDeep(onCommentsChanged);
+  };
+}
+
+const getSnapshot = () => snapshot;
+
 export function useComments() {
-  const [comments, setComments] = useState<CommentThread[]>([]);
-
-  useEffect(() => {
-    const updateComments = () => {
-      const result: CommentThread[] = [];
-      commentsMap.forEach((commentMap) => {
-        result.push(commentMap.toJSON() as CommentThread);
-      });
-      result.sort((a, b) => a.createdAt - b.createdAt);
-      setComments(result);
-    };
-
-    updateComments();
-
-    const observer = () => {
-      updateComments();
-    };
-
-    commentsMap.observeDeep(observer);
-    return () => {
-      commentsMap.unobserveDeep(observer);
-    };
-  }, []);
+  const comments = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   /**
    * Who is writing. Routed through `localAuthor()` so comments are stamped
@@ -70,7 +96,8 @@ export function useComments() {
     return { authorId: author.id, authorName: author.name, authorColor: author.color };
   };
 
-  const addComment = useCallback((x: number, y: number, body: string, objectId?: string) => {
+  const addComment = useCallback((x: number, y: number, body: string, objectId?: string, anchor?: { u: number; v: number }) => {
+    if (!canPostComments()) return;
     const threadId = nanoid();
     const messageId = nanoid();
     const author = getAuthorInfo();
@@ -80,6 +107,9 @@ export function useComments() {
     newMap.set('x', x);
     newMap.set('y', y);
     if (objectId) newMap.set('objectId', objectId);
+    if (objectId && anchor) newMap.set('anchor', { u: anchor.u, v: anchor.v });
+    // Created with the thread, so no two people ever race to create it.
+    newMap.set('reactions', new Y.Map());
     newMap.set('resolved', false);
     newMap.set('createdAt', Date.now());
 
@@ -101,6 +131,7 @@ export function useComments() {
   }, []);
 
   const addReply = useCallback((threadId: string, body: string) => {
+    if (!canPostComments()) return;
     const threadMap = commentsMap.get(threadId);
     if (!threadMap) return;
 
@@ -131,6 +162,7 @@ export function useComments() {
    * produce an unauthorized write.
    */
   const editMessage = useCallback((threadId: string, messageId: string, newBody: string) => {
+    if (!canPostComments()) return;
     const threadMap = commentsMap.get(threadId);
     if (!threadMap) return;
 
@@ -161,6 +193,7 @@ export function useComments() {
 
   /** Delete a single message. Author-only, same reasoning as editMessage. */
   const deleteMessage = useCallback((threadId: string, messageId: string) => {
+    if (!canPostComments()) return;
     const threadMap = commentsMap.get(threadId);
     if (!threadMap) return;
 
@@ -173,24 +206,43 @@ export function useComments() {
     if (idx === -1) return;
     if (items[idx].authorId !== myId) return;
 
-    // Removing the only message removes the whole thread — an empty pin is noise.
-    if (items.length === 1) {
-      commentsMap.delete(threadId);
-    } else {
-      messagesArray.delete(idx, 1);
-    }
+    // Only the message goes, never the container: see the note on `snapshot`.
+    messagesArray.delete(idx, 1);
   }, []);
 
   const resolveComment = useCallback((threadId: string) => {
+    if (!canPostComments()) return;
     const threadMap = commentsMap.get(threadId);
     if (!threadMap) return;
-    
-    // Toggle resolved state
+
     const currentResolved = threadMap.get('resolved') as boolean;
     threadMap.set('resolved', !currentResolved);
   }, []);
   
+  /**
+   * Add or take back the local person's reaction to one message.
+   *
+   * Threads created before reactions existed get their map on first use; a
+   * collision there costs at most one reaction, once, on an old thread.
+   */
+  const toggleMessageReaction = useCallback((threadId: string, messageId: string, emoji: string) => {
+    if (!canPostComments()) return;
+    const threadMap = commentsMap.get(threadId);
+    if (!threadMap) return;
+    doc.transact(() => {
+      let reactions = threadMap.get('reactions') as Y.Map<boolean> | undefined;
+      if (!(reactions instanceof Y.Map)) {
+        reactions = new Y.Map<boolean>();
+        threadMap.set('reactions', reactions);
+      }
+      const key = reactionKey(messageId, emoji, localAuthorId());
+      if (reactions.has(key)) reactions.delete(key);
+      else reactions.set(key, true);
+    });
+  }, []);
+
   const deleteComment = useCallback((threadId: string) => {
+    if (!canPostComments()) return;
     commentsMap.delete(threadId);
   }, []);
 
@@ -201,6 +253,7 @@ export function useComments() {
     editMessage,
     deleteMessage,
     resolveComment,
+    toggleMessageReaction,
     deleteComment,
     currentAuthorId,
   };

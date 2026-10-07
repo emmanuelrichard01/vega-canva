@@ -2,18 +2,72 @@ import React, { useState, useEffect } from 'react';
 import { nanoid } from 'nanoid';
 import { getColorForUser } from '../engine/presence/ColorPalette';
 import { AuthContext, type User } from './useAuth';
+import { storageRemove, storageSet } from '../utils/safeStorage';
 
 export type { User, AuthContextType } from './useAuth';
 
 const colorForId = getColorForUser;
 
+/**
+ * The browser's store of this kind, or null where reading it would throw
+ * (site data blocked). Merely touching `window.localStorage` throws then.
+ */
+function webStorage(kind: 'local' | 'session'): Storage | null {
+  try {
+    return kind === 'local' ? window.localStorage : window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+function sessionSet(key: string, value: string): void {
+  try {
+    webStorage('session')?.setItem(key, value);
+  } catch {
+    /* blocked or full: the in-memory identity is what the room reads */
+  }
+}
+
+function sessionRemove(key: string): void {
+  try {
+    webStorage('session')?.removeItem(key);
+  } catch {
+    /* nothing to clean */
+  }
+}
+
+/**
+ * A stored identity, or null — never a throw.
+ *
+ * This was a bare JSON.parse in the state initialiser of the provider that
+ * wraps the whole app. One corrupt entry — a truncated write, an extension,
+ * a hand edit — threw on every load before anything could render, and the
+ * only way out was clearing site data, which nobody knows to do. A value that
+ * is not a usable identity is removed and treated as signed out: the visitor
+ * types their name again, and loses nothing else.
+ */
+function readStoredUser(store: Storage | null, key: string): User | null {
+  if (!store) return null;
+  try {
+    const raw = store.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.id === 'string' && typeof parsed.name === 'string') return parsed as User;
+  } catch {
+    /* corrupt — fall through and discard it */
+  }
+  try {
+    store.removeItem(key);
+  } catch {
+    /* storage unavailable: nothing to clean */
+  }
+  return null;
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(() => {
     if (typeof window === 'undefined') return null;
-    const savedUser = localStorage.getItem('vega_user');
-    if (savedUser) return JSON.parse(savedUser);
-    const savedGuest = sessionStorage.getItem('vega_guest');
-    return savedGuest ? JSON.parse(savedGuest) : null;
+    return readStoredUser(webStorage('local'), 'vega_user') ?? readStoredUser(webStorage('session'), 'vega_guest');
   });
 
   useEffect(() => {
@@ -23,13 +77,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (!data?.user?.id) return;
-        if (data.token) {
-          try {
-            localStorage.setItem('vega_session_token', data.token);
-          } catch {
-            // Storage quota or private browsing: ignore
-          }
-        }
+        // Read by the connection token on every (re)connect: see doc.ts.
+        if (data.token) storageSet('vega_session_token', data.token);
       })
       .catch(() => {
         // Offline or server unreachable: preserve local identity
@@ -39,15 +88,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = (name: string, color: string) => {
     const id = nanoid();
     const newUser = { id, name, color: color || colorForId(id), isGuest: false };
-    localStorage.setItem('vega_user', JSON.stringify(newUser));
-    sessionStorage.removeItem('vega_guest');
+    storageSet('vega_user', JSON.stringify(newUser));
+    sessionRemove('vega_guest');
     setUser(newUser);
   };
 
   const joinAsGuest = (name: string, color: string) => {
     const id = `guest_${nanoid()}`;
     const newGuest = { id, name, color: color || colorForId(id), isGuest: true };
-    sessionStorage.setItem('vega_guest', JSON.stringify(newGuest));
+    sessionSet('vega_guest', JSON.stringify(newGuest));
     setUser(newGuest);
   };
 
@@ -69,21 +118,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!current) return current;
       const next = { ...current, ...patch };
       const key = current.isGuest ? 'vega_guest' : 'vega_user';
-      const store = current.isGuest ? sessionStorage : localStorage;
-      try {
-        store.setItem(key, JSON.stringify(next));
-      } catch {
-        // A full or blocked store must not lose the edit for this session —
-        // the in-memory identity is what the room actually reads.
-      }
+      // A full or blocked store must not lose the edit for this session:
+      // the in-memory identity is what the room actually reads.
+      if (current.isGuest) sessionSet(key, JSON.stringify(next));
+      else storageSet(key, JSON.stringify(next));
       return next;
     });
   };
 
   const logout = () => {
-    localStorage.removeItem('vega_user');
-    sessionStorage.removeItem('vega_guest');
-    localStorage.removeItem('vega_session_token');
+    storageRemove('vega_user');
+    sessionRemove('vega_guest');
+    storageRemove('vega_session_token');
     setUser(null);
   };
 

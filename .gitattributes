@@ -3,9 +3,6 @@
 # macOS/Linux produces whole-file diffs on the same content.
 * text=auto eol=lf
 
-# Windows-only entry point — keep CRLF so cmd.exe parses it reliably.
-*.cmd text eol=crlf
-
 # Binary assets: never touch, never diff.
 *.png binary
 *.jpg binary
@@ -18,5 +15,6 @@
 *.mp3 binary
 *.webm binary
 
-# Generated — collapse in diffs and reviews so real changes stay visible.
-package-lock.json linguist-generated=true -diff
+# Generated: collapsed in GitHub reviews, but still diffable locally so
+# dependency changes can be read.
+package-lock.json linguist-generated=true

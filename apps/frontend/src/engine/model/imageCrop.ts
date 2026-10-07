@@ -250,3 +250,117 @@ export function sourceBoxInWorld(state: CropState, natural: Size): Rect {
     height: natural.height * scale.y,
   };
 }
+
+/** Aspect presets offered while cropping, as width ÷ height on the board. */
+export const CROP_ASPECTS: ReadonlyArray<{ id: string; label: string; ratio: number | 'original' | null }> = [
+  { id: 'free', label: 'Free', ratio: null },
+  { id: 'original', label: 'Original', ratio: 'original' },
+  { id: '1:1', label: '1:1', ratio: 1 },
+  { id: '4:3', label: '4:3', ratio: 4 / 3 },
+  { id: '3:2', label: '3:2', ratio: 3 / 2 },
+  { id: '16:9', label: '16:9', ratio: 16 / 9 },
+  { id: '4:5', label: '4:5', ratio: 4 / 5 },
+  { id: '9:16', label: '9:16', ratio: 9 / 16 },
+];
+
+/** A preset's ratio in board terms, resolving "original" from the bitmap. */
+export function resolveCropAspect(ratio: number | 'original' | null, natural: Size): number | null {
+  if (ratio === null) return null;
+  if (ratio === 'original') return natural.height > 0 ? natural.width / natural.height : null;
+  return ratio > 0 && Number.isFinite(ratio) ? ratio : null;
+}
+
+/**
+ * Reframe to an aspect ratio: the largest window of that shape the picture
+ * can supply, centred on the current crop, with the object's centre and
+ * on-board scale unchanged. `aspect` is width ÷ height on the board.
+ */
+export function cropToAspect(state: CropState, natural: Size, aspect: number): CropState {
+  if (!canCrop(state, natural) || !(aspect > 0) || !Number.isFinite(aspect)) return state;
+  const scale = cropScale(state);
+  // The same shape expressed in natural pixels, which may be scaled unevenly.
+  const naturalAspect = aspect * (scale.y / scale.x);
+
+  let width = natural.width;
+  let height = width / naturalAspect;
+  if (height > natural.height) {
+    height = natural.height;
+    width = height * naturalAspect;
+  }
+  width = Math.max(MIN_CROP_PX, width);
+  height = Math.max(MIN_CROP_PX, height);
+
+  const cx = state.crop.x + state.crop.width / 2;
+  const cy = state.crop.y + state.crop.height / 2;
+  const crop: Rect = {
+    x: clamp(cx - width / 2, 0, Math.max(0, natural.width - width)),
+    y: clamp(cy - height / 2, 0, Math.max(0, natural.height - height)),
+    width,
+    height,
+  };
+
+  const centreX = state.node.x + state.node.width / 2;
+  const centreY = state.node.y + state.node.height / 2;
+  const nodeWidth = crop.width * scale.x;
+  const nodeHeight = crop.height * scale.y;
+  return {
+    crop,
+    node: { x: centreX - nodeWidth / 2, y: centreY - nodeHeight / 2, width: nodeWidth, height: nodeHeight },
+  };
+}
+
+/**
+ * A handle drag that keeps an aspect ratio. Corner handles keep the opposite
+ * corner fixed; edge handles grow the other side evenly about the centre.
+ */
+export function dragCropHandleLocked(
+  state: CropState,
+  natural: Size,
+  handle: CropHandle,
+  deltaWorld: { x: number; y: number },
+  aspect: number
+): CropState {
+  const free = dragCropHandle(state, natural, handle, deltaWorld);
+  if (free === state || !(aspect > 0)) return free;
+  const scale = cropScale(state);
+  const naturalAspect = aspect * (scale.y / scale.x);
+
+  let { x, y, width, height } = free.crop;
+  const right = x + width;
+  const bottom = y + height;
+  const horizontalLead = handle === 'e' || handle === 'w' || (handle.length === 2 && Math.abs(deltaWorld.x) >= Math.abs(deltaWorld.y));
+
+  if (horizontalLead) height = width / naturalAspect;
+  else width = height * naturalAspect;
+
+  // Fit inside the bitmap, shrinking both sides together.
+  const maxW = handle.includes('w') ? right : handle.includes('e') ? natural.width - x : natural.width;
+  const maxH = handle.includes('n') ? bottom : handle.includes('s') ? natural.height - y : natural.height;
+  const shrink = Math.min(1, maxW / width, maxH / height);
+  width *= shrink;
+  height *= shrink;
+
+  if (handle.length === 2) {
+    if (handle.includes('w')) x = right - width;
+    if (handle.includes('n')) y = bottom - height;
+  } else if (handle === 'e' || handle === 'w') {
+    const cy = free.crop.y + free.crop.height / 2;
+    y = clamp(cy - height / 2, 0, Math.max(0, natural.height - height));
+    if (handle === 'w') x = right - width;
+  } else {
+    const cx = free.crop.x + free.crop.width / 2;
+    x = clamp(cx - width / 2, 0, Math.max(0, natural.width - width));
+    if (handle === 'n') y = bottom - height;
+  }
+
+  const crop: Rect = { x, y, width, height };
+  return {
+    crop,
+    node: {
+      x: state.node.x + (crop.x - state.crop.x) * scale.x,
+      y: state.node.y + (crop.y - state.crop.y) * scale.y,
+      width: crop.width * scale.x,
+      height: crop.height * scale.y,
+    },
+  };
+}

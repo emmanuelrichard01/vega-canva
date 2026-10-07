@@ -154,6 +154,8 @@ describe('rosterSignature', () => {
     throws: [],
     following: null,
     spotlightAt: null,
+    listening: null,
+    chat: null,
     ...over,
   });
 

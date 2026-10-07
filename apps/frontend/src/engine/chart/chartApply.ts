@@ -2,6 +2,7 @@ import { nanoid } from 'nanoid';
 import { editor } from '../api/EditorAPI';
 import { nextZIndex } from '../document/mutations';
 import { defaultChartSpec, type ChartKind, type ChartSpec } from './chartTypes';
+import { switchChartKind } from './chartKindSwitch';
 
 /**
  * Creating and editing chart nodes.
@@ -55,18 +56,15 @@ export function updateChart(id: string, spec: ChartSpec): void {
 }
 
 /**
- * Switch a chart to another kind, keeping the data.
+ * Switch a chart to another kind, keeping its data or setting it aside.
  *
- * The point of the control is comparison — the same numbers as bars, then as a
- * line — so the data has to survive the switch. What does *not* survive is
- * anything meaningless in the new kind: a donut's hole is dropped when it
- * stops being a donut rather than lying dormant in the document, which is the
- * dead-field rule applied to a field that is only sometimes alive.
+ * See `switchChartKind`: within a family the numbers carry over, and across
+ * the data/formula boundary each side is kept in `stash` so switching back
+ * restores it. Anything meaningless in the new kind, such as a donut's hole,
+ * is dropped rather than left dormant in the document.
  */
 export function setChartKind(id: string, spec: ChartSpec, kind: ChartKind): void {
-  const next: ChartSpec = { ...spec, kind };
-  if (kind !== 'donut') delete next.innerRadius;
-  updateChart(id, next);
+  updateChart(id, switchChartKind(spec, kind));
 }
 
 /** The chart a click (rather than a drag) should produce. */

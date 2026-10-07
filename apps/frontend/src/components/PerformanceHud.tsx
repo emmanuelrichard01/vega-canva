@@ -42,14 +42,6 @@ export const PerformanceHud: React.FC = () => {
           <span style={{ color: metrics.totalFrameTime > 16 ? '#EF4444' : '#D1D5DB' }}>{metrics.totalFrameTime.toFixed(2)} ms</span>
         </div>
         <div style={row}>
-          <span style={label}>Camera Update</span>
-          <span>{metrics.cameraTime.toFixed(2)} ms</span>
-        </div>
-        <div style={row}>
-          <span style={label}>Physics Update</span>
-          <span>{metrics.physicsTime.toFixed(2)} ms</span>
-        </div>
-        <div style={row}>
           <span style={label}>Spatial Query</span>
           <span>{metrics.spatialQueryTime.toFixed(2)} ms</span>
         </div>

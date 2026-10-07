@@ -2,14 +2,16 @@ import { nanoid } from 'nanoid';
 import React, { useState, useRef, useEffect, useCallback, useSyncExternalStore, Suspense, lazy } from 'react';
 import { Canvas } from './components/Canvas';
 import { AuthModal } from './components/AuthModal';
-import { WorkspaceShell } from './components/workspace/WorkspaceShell';
+import { BoardHeaderLeft, BoardHeaderRight, UNTITLED_BOARD } from './components/workspace/WorkspaceShell';
+import { usePublishBoardLayout, useRegionCycle } from './components/workspace/boardLayout';
+import { PanelWidthHandle } from './components/workspace/PanelWidthHandle';
 import { ToolWorkspace } from './components/workspace/ToolWorkspace';
 import { takePendingRestore, takePendingTemplate } from './engine/export/pendingRestore';
 import { templateById } from './engine/templates/templates';
 import { parseDocumentExport } from './engine/export/DocumentImport';
 import { restoreDocument } from './engine/export/restoreDocument';
 import { Minimap } from './components/Minimap';
-import { PanelRail } from './components/workspace/PanelRail';
+import { BoardFoot } from './components/workspace/BoardFoot';
 import { Eye, Radar } from 'lucide-react';
 import { ObjectContextToolbar } from './components/ObjectContextToolbar';
 import { PropertiesPanel } from './components/PropertiesPanel';
@@ -18,15 +20,18 @@ import { useRoomPermissions } from './hooks/useRoomPermissions';
 import { useShareCard } from './hooks/useShareCard';
 import { useDocumentHead } from './hooks/useDocumentHead';
 import { previewsHidden } from './engine/share/shareCard';
+import { currentInvite } from './engine/room/invite';
+import { rememberBoard } from './components/home/library';
 import { useAuth } from './hooks/useAuth';
-import { doc, provider, metadataMap, deleteNode, localAuthorId, publishLocalIdentity, applyGroupPlan } from './engine/document';
+import { doc, provider, deleteNode, localAuthorId, publishLocalIdentity, setBoardMetadata, whenDocumentReady } from './engine/document';
+import { startDocumentUpkeep } from './engine/document/upkeep';
+import { storageGet, storageSet } from './utils/safeStorage';
 import { useRoomState } from './hooks/useSync';
 import { useOpeningFrame } from './hooks/useOpeningFrame';
 import { fitPose } from './engine/cameraFit';
 import { resolvePresenceColor, type ColorClaim } from './engine/presence/ColorPalette';
 import { initSyncBridge, useStore } from './hooks/useStore';
 import { editor } from './engine/api/EditorAPI';
-import { emptyGroups } from './engine/model/groupTree';
 import { PresenceEdgeMarkers } from './components/PresenceEdgeMarkers';
 import { FollowIndicator } from './components/FollowIndicator';
 import { PresenceStage } from './components/PresenceStage';
@@ -143,6 +148,12 @@ function fitBoardToView(
   }
 }
 
+/** The inbox, subscribed to the document itself so the room need not be. */
+function LiveCommentInbox(props: Omit<React.ComponentProps<typeof CommentInbox>, 'objects'>) {
+  const objects = useStore((s) => s.objects);
+  return <CommentInbox {...props} objects={objects} />;
+}
+
 export default function Room() {
   const { user } = useAuth();
   
@@ -161,6 +172,12 @@ export default function Room() {
    * shape, and why it cannot feed itself.
    */
   useEffect(() => startGridSlotSync(), []);
+
+  /**
+   * Group sweep and frame-membership repair. Document-level subscribers rather
+   * than effects over store state: see `engine/document/upkeep.ts`.
+   */
+  useEffect(() => startDocumentUpkeep(), []);
 
 
   /**
@@ -202,7 +219,9 @@ export default function Room() {
     if (templateId) {
       const template = templateById(templateId);
       if (template) {
-        window.setTimeout(() => {
+        // After the document is ready, so the seed is not written into a copy
+        // that IndexedDB or the server is about to merge over.
+        void whenDocumentReady().then(() => {
           const nodes = template.build();
 
           /**
@@ -244,7 +263,7 @@ export default function Room() {
             tone: 'info',
             duration: 6000,
           });
-        }, 400);
+        });
       }
       return;
     }
@@ -252,10 +271,10 @@ export default function Room() {
     const text = takePendingRestore();
     if (!text) return;
 
-    // Deferred a beat so `y-indexeddb` and the provider have attached. A brand
-    // new room is empty either way, but writing before local persistence is
-    // listening means writing into a document it is about to replace.
-    window.setTimeout(() => {
+    // A replace must run after the server's state has arrived, or what the
+    // server held would merge back over it. Offline, it settles for the local
+    // copy, which is all there is to replace.
+    void whenDocumentReady().then(() => {
       const result = parseDocumentExport(text);
       if (!result.ok) {
         notify({ message: result.error, tone: 'error' });
@@ -272,7 +291,7 @@ export default function Room() {
         tone: 'success',
         duration: null,
       });
-    }, 400);
+    });
   }, []);
 
   const [activeTool, setActiveTool] = useState('select');
@@ -289,7 +308,8 @@ export default function Room() {
   // single selected object (properties panel, floating toolbar, etc). When 0
   // or 2+ objects are selected these simply fall back to their empty state.
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
-  const setSelectedId = (id: string | null) => setSelectedIds(id ? [id] : []);
+  const setSelectedId = useCallback((id: string | null) => setSelectedIds(id ? [id] : []), []);
+  const clearSelection = useCallback(() => setSelectedIds([]), []);
   const [isPlayMode, setIsPlayMode] = useState(false);
   // `searchQuery`/`rightTab`/`activeEditor`/`showMagicMenu`/`showOnboarding`
   // were all declared here and never read by anything — leftovers from UI that
@@ -326,8 +346,12 @@ export default function Room() {
   const [diagramReplaceIds, setDiagramReplaceIds] = useState<string[]>([]);
   const [contextTarget, setContextTarget] = useState<ContextTarget | null>(null);
 
-  /** The live document, for the diagram round trip. Same source every other consumer here reads. */
-  const diagramObjects = useStore((s) => s.objects);
+  /**
+   * The room does not subscribe to `objects`: every collaborator's edit would
+   * re-render this whole tree. Handlers read the document when they run, and
+   * the few views that need it live subscribe to it themselves.
+   */
+  const liveObjects = () => useStore.getState().objects;
 
   const {
     showToast,
@@ -337,7 +361,6 @@ export default function Room() {
     pasteSvg,
     pasteText,
   } = useRoomClipboard({
-    diagramObjects,
     selectionRef,
     setSelectedIds,
   });
@@ -345,7 +368,6 @@ export default function Room() {
   const contextActions = useRoomContextMenuActions({
     selectedIds,
     setSelectedIds,
-    diagramObjects,
     contextTarget,
     localTitle,
     clipboardRef,
@@ -366,33 +388,11 @@ export default function Room() {
   useSelectionCommandKeys({
     actions: contextActions,
     selectedIds,
-    objects: diagramObjects,
     canEdit,
     openMenu: setContextTarget,
   });
 
 
-  /**
-   * Sweep folders that no longer hold anything.
-   *
-   * They arise from ordinary editing: delete the last two members of a group
-   * and the group record is still there — an empty row that cannot be selected
-   * and whose only remaining behaviour is to take up space in the panel.
-   *
-   * Swept rather than prevented, because the alternative is every deletion
-   * path in the app having to know about groups, and there are several. One
-   * peer doing it is enough; a delete of a key that is already gone is a no-op
-   * in Yjs, so the others racing to agree costs nothing.
-   *
-   * Terminates in one step: `emptyGroups` already iterates to a fixed point,
-   * so the write it triggers cannot produce a second round.
-   */
-  const groupRecords = useStore((s) => s.groups);
-  useEffect(() => {
-    const order = Object.keys(diagramObjects);
-    const dead = emptyGroups(order, diagramObjects, groupRecords);
-    if (dead.length > 0) applyGroupPlan({ nodes: [], groups: [], remove: dead });
-  }, [diagramObjects, groupRecords]);
 
 
   /**
@@ -412,7 +412,7 @@ export default function Room() {
    * because the next thing anyone does with a placeholder is move it or replace
    * its words.
    */
-  const addTextBlock = (words: number) => {
+  const addTextBlock = useCallback((words: number) => {
     const box = demoBox(words);
     const centre = cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
     const id = editor.createNode({
@@ -427,10 +427,13 @@ export default function Room() {
       typography: { ...DEFAULT_TYPOGRAPHY, fontSize: 16, lineHeight: 1.5 },
     });
     setSelectedIds([id]);
-  };
+  }, []);
 
-  const openDiagram = () => {
-    const selected = selectedIds.map((id) => diagramObjects[id]).filter(Boolean);
+  // Stable, and reads the selection through its ref, so the dock it is handed
+  // to does not re-render on every selection change.
+  const openDiagram = useCallback(() => {
+    const diagramObjects = liveObjects();
+    const selected = selectionRef.current.map((id) => diagramObjects[id]).filter(Boolean);
     const existing = selected.find((n) => diagramIdOf(n));
     if (existing && canEmitDiagram(selected)) {
       // Everything sharing this diagram's id, not just what happens to be
@@ -470,7 +473,7 @@ export default function Room() {
     }
     setDiagramReplaceIds(existing || canEmitDiagram(selected) ? selected.map((n) => n.id) : []);
     setDiagramOpen(true);
-  };
+  }, []);
 
   /**
    * Turn the editor's source into objects.
@@ -525,7 +528,7 @@ export default function Room() {
     const stale = Array.from(
       new Set([
         ...(diagramReplacing
-          ? Object.values(diagramObjects)
+          ? Object.values(liveObjects())
               .filter((n) => diagramIdOf(n) === diagramReplacing)
               .map((n) => n.id)
           : []),
@@ -548,13 +551,8 @@ export default function Room() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
 
-  // A second `useComments()` subscription, deliberately. `commentsMap` is a
-  // module-level Y.Map, so both this and the canvas's read the same source and
-  // update on the same observer — there is no drift to worry about, only one
-  // extra (cheap) observer. The alternative was drilling seven comment props
-  // through Canvas to reach an overlay several levels down.
+  // The canvas reads comments too; both share one observer and one list.
   const { comments } = useComments();
-  const commentObjects = useStore((s) => s.objects);
   const commentMarks = useSyncExternalStore(
     readMarks.subscribe,
     readMarks.getSnapshot,
@@ -696,16 +694,16 @@ export default function Room() {
    * told gets the new default.
    */
   const [leftExpanded, setLeftExpanded] = useState(
-    () => localStorage.getItem('vega_panel_left') === 'expanded'
+    () => storageGet('vega_panel_left') === 'expanded'
   );
   const [rightExpanded, setRightExpanded] = useState(
-    () => localStorage.getItem('vega_panel_right') === 'expanded'
+    () => storageGet('vega_panel_right') === 'expanded'
   );
   const [radarOpen, setRadarOpen] = useState(
-    () => localStorage.getItem('vega_radar') === 'expanded'
+    () => storageGet('vega_radar') === 'expanded'
   );
   useEffect(() => {
-    localStorage.setItem('vega_panel_left', leftExpanded ? 'expanded' : 'collapsed');
+    storageSet('vega_panel_left', leftExpanded ? 'expanded' : 'collapsed');
   }, [leftExpanded]);
 
   /**
@@ -733,10 +731,10 @@ export default function Room() {
     learnState.learn('panel-layers');
   }, []);
   useEffect(() => {
-    localStorage.setItem('vega_panel_right', rightExpanded ? 'expanded' : 'collapsed');
+    storageSet('vega_panel_right', rightExpanded ? 'expanded' : 'collapsed');
   }, [rightExpanded]);
   useEffect(() => {
-    localStorage.setItem('vega_radar', radarOpen ? 'expanded' : 'collapsed');
+    storageSet('vega_radar', radarOpen ? 'expanded' : 'collapsed');
   }, [radarOpen]);
 
 
@@ -788,22 +786,29 @@ export default function Room() {
    * Colour is resolved here rather than in the pure module, because a sticky's
    * colour lives in `THEMES`, which belongs to its renderer.
    */
-  const previewObjects = useStore((s) => s.objects);
   useEffect(() => {
     if (!roomId) return;
-    const t = window.setTimeout(() => {
-      const nodes = Object.values(previewObjects);
+    let t = 0;
+    const write = () => {
+      const objects = useStore.getState().objects;
       savePreview(
         roomId,
-        buildPreview(
-          nodes,
-          previewColorOf,
-          (node) => previewPointsOf(node, previewObjects)
-        )
+        buildPreview(Object.values(objects), previewColorOf, (node) => previewPointsOf(node, objects))
       );
-    }, 2000);
-    return () => window.clearTimeout(t);
-  }, [previewObjects, roomId]);
+    };
+    // A store subscription rather than an effect over `objects`, so a board
+    // change does not re-render this component just to schedule the write.
+    const off = useStore.subscribe((state, prev) => {
+      if (state.objects === prev.objects) return;
+      window.clearTimeout(t);
+      t = window.setTimeout(write, 2000);
+    });
+    t = window.setTimeout(write, 2000);
+    return () => {
+      off();
+      window.clearTimeout(t);
+    };
+  }, [roomId]);
 
 
   // Read state is per person and per room, so it has to be pointed at the room
@@ -821,19 +826,21 @@ export default function Room() {
 
   useEffect(() => {
     if (!roomId || roomId === 'home') return;
-    localStorage.setItem('lastRoomId', roomId);
-    
-    try {
-      const existing = JSON.parse(localStorage.getItem('recentWorkspaces') || '[]');
-      const filtered = existing.filter((w: any) => w.id !== roomId);
-      const newWorkspace = {
-        id: roomId,
-        name: metadata?.name || localTitle || 'Untitled Workspace',
-        lastAccessed: Date.now()
-      };
-      const updated = [newWorkspace, ...filtered].slice(0, 12);
-      localStorage.setItem('recentWorkspaces', JSON.stringify(updated));
-    } catch { /* corrupt localStorage entry — not worth surfacing */ }
+    storageSet('lastRoomId', roomId);
+
+    // Uncapped, and merged with what is stored rather than rewritten, so no
+    // board is ever dropped from the dashboard to make room for this one. The
+    // invite it was opened through is kept, so the dashboard can act on the
+    // board with the access this device actually has.
+    const invite = currentInvite();
+    rememberBoard({
+      id: roomId,
+      name: metadata?.name || localTitle || 'Untitled Workspace',
+      lastAccessed: Date.now(),
+      ...(invite && invite.roomId === roomId
+        ? { invite: invite.token, role: invite.role, inviteExpires: invite.expiresAt }
+        : {}),
+    });
   }, [roomId, metadata?.name, localTitle]);
 
   /**
@@ -852,21 +859,6 @@ export default function Room() {
     if (metadata?.name) setLocalTitle(metadata.name);
   }, [metadata?.name]);
 
-  // The ambient activity feed used to sit here. It announced every edit as it
-  // happened in the bottom-left corner, and its most common line was "made an
-  // edit" -- which names neither what changed nor where, so the case that
-  // fired most often carried no information at all. Presence answers the same
-  // question better and spatially (cursors, selection outlines, the avatar
-  // row), and Time Travel answers "what changed" properly for anyone who
-  // actually needs it. The shared authoring log it read is still written and
-  // still feeds replay.
-  //
-  // Follow mode used to live here as `const [followingClientId] =
-  // useState(null)` — declared without a setter, so the value was permanently
-  // null and the awareness effect underneath it could never fire. It is
-  // `engine/presence/followMode.ts` now, driven from the shared presence frame
-  // loop, because a viewport change never reaches React: `collaboratorStore`
-  // mutates positions in place and publishes only roster changes.
 
   /**
    * Publish who I am, in a colour nobody else in this room is already using.
@@ -935,14 +927,58 @@ export default function Room() {
     publishLocalIdentity(user.name, color);
   }, [user, awarenessUsers]);
 
-  const handleSaveTitle = (t: string) => {
+  const handleSaveTitle = useCallback((t: string) => {
     // Blurring or hitting Enter with the field cleared saved an empty
     // string as the room's name, synced to every collaborator — the title
     // in the top bar became a blank, still-clickable-but-invisible span.
-    const finalTitle = t.trim() || 'Untitled Workspace';
+    const finalTitle = t.trim() || UNTITLED_BOARD;
     setLocalTitle(finalTitle);
-    metadataMap.set('name', finalTitle);
-  };
+    setBoardMetadata('name', finalTitle);
+  }, []);
+
+  // Stable handlers for the memoised header, so it re-renders only when what
+  // it shows changes.
+  const openShare = useCallback(() => setShowShareModal(true), []);
+  const openBoardExport = useCallback(() => {
+    setExportFromSelection(false);
+    setShowExportMenu(true);
+  }, []);
+  const openHelp = useCallback(() => setShowHelp(true), []);
+  const hideUi = useCallback(() => setIsUiVisible(false), []);
+  const toggleTimeline = useCallback(() => setShowTimeTravel((v) => !v), []);
+  const toggleInbox = useCallback(() => setShowInbox((v) => !v), []);
+  const openCommands = useCallback(() => setShowCommandPalette(true), []);
+  const collapseRight = useCallback(() => setRightExpanded(false), []);
+  const collapseLeft = useCallback(() => setLeftExpanded(false), []);
+
+  /**
+   * The board's frame, UI3-style: a left column, the canvas edge to edge, and a
+   * right column. A column that is closed, or hidden on a narrow window, is a
+   * pill in its top corner instead. See `boardLayout.ts`.
+   */
+  const leftOpen = isUiVisible && panelsVisible && leftExpanded;
+  const rightOpen = isUiVisible && panelsVisible && rightExpanded && canEdit;
+  usePublishBoardLayout(leftOpen, rightOpen);
+  useRegionCycle();
+  /** A pill's expand button. On a narrow window the panels float, so show them too. */
+  const expandLeft = useCallback(() => {
+    if (isCompact) setPanelsOpen(true);
+    openLayers();
+  }, [isCompact, openLayers]);
+  const expandRight = useCallback(() => {
+    if (isCompact) setPanelsOpen(true);
+    openProperties();
+  }, [isCompact, openProperties]);
+  /** Mod+\: both columns to pills and back, as UI3 does. */
+  const togglePanelsCollapsed = useCallback(() => {
+    if (isCompact) {
+      setPanelsOpen((v) => !v);
+      return;
+    }
+    const anyOpen = leftExpanded || (rightExpanded && canEdit);
+    setLeftExpanded(!anyOpen);
+    setRightExpanded(!anyOpen);
+  }, [isCompact, leftExpanded, rightExpanded, canEdit]);
   // Keyboard Shortcuts routed through dedicated useRoomShortcuts hook
   useRoomShortcuts({
     selectTool,
@@ -960,6 +996,7 @@ export default function Room() {
       setExportFromSelection(fromSelection);
       setShowExportMenu(true);
     },
+    togglePanelsCollapsed,
   });
 
   useEffect(() => {
@@ -1318,7 +1355,7 @@ export default function Room() {
         localTitle={localTitle}
         contextTarget={contextTarget}
         setContextTarget={setContextTarget}
-        diagramObjects={diagramObjects}
+        diagramObjects={liveObjects()}
         contextActions={contextActions}
         canEdit={canEdit}
         showHelp={showHelp}
@@ -1390,27 +1427,63 @@ export default function Room() {
        * there is more to say.
        */}
 
-      {/* WORKSPACE SHELL (Header & Navigation) */}
+      {/* LEFT COLUMN: the board (name, menu, save state) above its layers.
+          First in the document, so focus runs left header, layers, canvas,
+          right header, properties. Closed, it is a pill in the top-left. */}
       {isUiVisible && (
         <>
-          <WorkspaceShell 
-            localTitle={localTitle}
-            setLocalTitle={setLocalTitle}
-            onTitleSave={handleSaveTitle}
-            isDarkTheme={isDarkTheme}
-            setIsDarkTheme={setIsDarkTheme}
-            onShareClick={() => setShowShareModal(true)}
-            onExportClick={() => { setExportFromSelection(false); setShowExportMenu(true); }}
-            onHelpClick={() => setShowHelp(true)}
-            onHideUi={() => setIsUiVisible(false)}
-            onToggleTimeline={() => setShowTimeTravel(v => !v)}
-            onToggleComments={() => setShowInbox(v => !v)}
-            commentsOpen={showInbox}
-            timelineOpen={showTimeTravel}
-            onOpenCommands={() => setShowCommandPalette(true)}
-            commentUnread={unreadCount(comments, commentMarks, myAuthorId)}
-            onTogglePanels={() => setPanelsOpen(v => !v)}
-          />
+          {leftOpen ? (
+            <nav
+              className="hierarchy-panel panel-surface"
+              aria-label="Board and layers"
+              data-region="0"
+              data-tour="layers"
+              data-radar-collapsed={!radarOpen}
+            >
+              <BoardHeaderLeft
+                variant="panel"
+                localTitle={localTitle}
+                setLocalTitle={setLocalTitle}
+                onTitleSave={handleSaveTitle}
+                isDarkTheme={isDarkTheme}
+                setIsDarkTheme={setIsDarkTheme}
+                onShareClick={openShare}
+                onExportClick={openBoardExport}
+                onHelpClick={openHelp}
+                onHideUi={hideUi}
+                onToggleTimeline={toggleTimeline}
+                timelineOpen={showTimeTravel}
+                onOpenCommands={openCommands}
+              />
+              <LayersPanel
+                selectedIds={selectedIds}
+                setSelectedId={setSelectedId}
+                setSelectedIds={setSelectedIds}
+                overrideObjects={timeTravelSnapshot}
+                onCollapse={collapseLeft}
+              />
+              <PanelWidthHandle />
+            </nav>
+          ) : (
+            <nav className="board-pill board-pill--left" aria-label="Board" data-region="0" data-tour="layers">
+              <BoardHeaderLeft
+                variant="pill"
+                localTitle={localTitle}
+                setLocalTitle={setLocalTitle}
+                onTitleSave={handleSaveTitle}
+                isDarkTheme={isDarkTheme}
+                setIsDarkTheme={setIsDarkTheme}
+                onShareClick={openShare}
+                onExportClick={openBoardExport}
+                onHelpClick={openHelp}
+                onHideUi={hideUi}
+                onToggleTimeline={toggleTimeline}
+                timelineOpen={showTimeTravel}
+                onOpenCommands={openCommands}
+                onExpand={expandLeft}
+              />
+            </nav>
+          )}
           <GroupIsolationBar />
         </>
       )}
@@ -1421,6 +1494,7 @@ export default function Room() {
       {/* CANVAS AREA (Core Render Engine) */}
       <div
         id="canvas-surface"
+        data-region="1"
         className="canvas-area"
         role="application"
         aria-label="Infinite canvas. Use the tool dock to add objects, or press Ctrl+K for commands."
@@ -1462,21 +1536,24 @@ export default function Room() {
             Collapsed it is a single pill in exactly the same corner, so the
             place you look for it never moves. */}
         {isUiVisible && (radarOpen ? (
-          <Minimap onCollapse={() => setRadarOpen(false)} />
+          <Minimap onCollapse={() => setRadarOpen(false)} onHelp={openHelp} />
         ) : (
-          <button
-            type="button"
-            className="radar-summon"
-            data-tour="radar"
-            style={{ position: 'absolute', left: 16, bottom: 24, zIndex: 90 }}
-            onClick={openRadar}
-            aria-label="Show the radar"
-            data-tooltip="The whole board, and everyone on it"
-            data-tooltip-pos="right"
-          >
-            <Radar size={15} />
-            Radar
-          </button>
+          // Zoom and help stay on screen beside the pill; see `BoardFoot`.
+          <div className="radar-collapsed" style={{ position: 'absolute', left: 16, bottom: 24, zIndex: 90 }}>
+            <button
+              type="button"
+              className="radar-summon"
+              data-tour="radar"
+              onClick={openRadar}
+              aria-label="Show the radar"
+              data-tooltip="The whole board, and everyone on it"
+              data-tooltip-pos="right"
+            >
+              <Radar size={15} />
+              Radar
+            </button>
+            <BoardFoot onHelp={openHelp} />
+          </div>
         ))}
         
         {/* Which way everyone is, when they are off the edge of your screen.
@@ -1570,7 +1647,7 @@ export default function Room() {
         <ObjectContextToolbar
           selectedId={selectedId}
           selectedIds={selectedIds}
-          onDeselect={() => setSelectedIds([])}
+          onDeselect={clearSelection}
           sidebarsVisible={isUiVisible}
           menuActions={contextActions}
         />
@@ -1595,16 +1672,15 @@ export default function Room() {
           Sits above the Properties panel rather than beside it: both own the
           right-hand column, and two 300px columns leave no canvas. */}
       {isUiVisible && showInbox && (
-        <CommentInbox
+        <LiveCommentInbox
           threads={comments}
-          objects={commentObjects}
           marks={commentMarks}
           myAuthorId={myAuthorId}
           onClose={() => setShowInbox(false)}
           onOpenThread={(thread) => {
             const at = anchorPoint(
               thread,
-              thread.objectId ? commentObjects[thread.objectId] : null
+              thread.objectId ? liveObjects()[thread.objectId] : null
             );
             window.dispatchEvent(
               new CustomEvent('navigateViewport', {
@@ -1626,58 +1702,40 @@ export default function Room() {
           and does nothing. A viewer keeps the board, the minimap and the
           comments; they lose a column of dead switches and get the width
           back. */}
-      {isUiVisible && canEdit && (
-        <div
-          className={rightExpanded ? 'context-inspector panel-surface' : 'context-inspector'}
-          data-tour="properties"
-          data-open={panelsVisible}
-          data-collapsed={!rightExpanded}
-        >
-          {rightExpanded ? (
-            <PropertiesPanel
-              selectedIds={selectedIds}
-              overrideObjects={timeTravelSnapshot}
-              onCollapse={() => setRightExpanded(false)}
-            />
-          ) : (
-            <PanelRail
-              side="right"
-              label="Design"
-              count={selectedIds.length}
-              live={selectedIds.length > 0}
-              onExpand={openProperties}
-            />
-          )}
-        </div>
-      )}
-
-      {/* HIERARCHY PANEL (Left Sidebar) */}
-      {isUiVisible && (
-        <div
-          className={leftExpanded ? 'hierarchy-panel panel-surface' : 'hierarchy-panel'}
-          data-tour="layers"
-          data-open={panelsVisible}
-          data-collapsed={!leftExpanded}
-          data-radar-collapsed={!radarOpen}
-        >
-          {leftExpanded ? (
-            <LayersPanel
-              selectedIds={selectedIds}
-              setSelectedId={setSelectedId}
-              setSelectedIds={setSelectedIds}
-              overrideObjects={timeTravelSnapshot}
-              onCollapse={() => setLeftExpanded(false)}
-            />
-          ) : (
-            <PanelRail
-              side="left"
-              label="Layers"
-              count={Object.keys(commentObjects).length}
-              onExpand={openLayers}
-            />
-          )}
-        </div>
-      )}
+      {/* RIGHT COLUMN: who is here and how work leaves, above Properties.
+          Viewers have no properties to change, so for them it is always the
+          pill. Closed, it is a pill in the top-right. */}
+      {isUiVisible && (rightOpen ? (
+        <aside className="context-inspector panel-surface" aria-label="People and properties" data-region="3" data-tour="properties">
+          <BoardHeaderRight
+            variant="panel"
+            onShareClick={openShare}
+            onToggleTimeline={toggleTimeline}
+            onToggleComments={toggleInbox}
+            commentsOpen={showInbox}
+            timelineOpen={showTimeTravel}
+            commentUnread={unreadCount(comments, commentMarks, myAuthorId)}
+          />
+          <PropertiesPanel
+            selectedIds={selectedIds}
+            overrideObjects={timeTravelSnapshot}
+            onCollapse={collapseRight}
+          />
+        </aside>
+      ) : (
+        <aside className="board-pill board-pill--right" aria-label="People" data-region="3" data-tour="properties">
+          <BoardHeaderRight
+            variant="pill"
+            onShareClick={openShare}
+            onToggleTimeline={toggleTimeline}
+            onToggleComments={toggleInbox}
+            commentsOpen={showInbox}
+            timelineOpen={showTimeTravel}
+            commentUnread={unreadCount(comments, commentMarks, myAuthorId)}
+            onExpand={canEdit ? expandRight : undefined}
+          />
+        </aside>
+      ))}
 
       {/* What this product is for is said on the way in, on the auth screen's
           other half, while somebody types their name. There used to be a

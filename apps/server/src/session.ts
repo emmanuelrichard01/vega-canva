@@ -12,9 +12,10 @@ import { nanoid } from 'nanoid';
  * 1. **Presence you can trust**: In `onAuthenticate`, the server binds the
  *    connection user id to a verified cryptographic claim rather than minting
  *    and discarding an ephemeral id.
- * 2. **Fair rate-limiting and quotas**: Associates upload limits with the
- *    user's session rather than their raw IP address, preventing corporate
- *    NAT or shared Wi-Fi networks from starving multiple users.
+ * 2. **Quotas per person as well as per address**: uploads are charged to the
+ *    session and to the client address, and the stricter decides. The session
+ *    alone cannot be the key, because the server mints a new one for any
+ *    request without a cookie.
  * 3. **Abuse traceability**: Enables banning or throttling a specific user
  *    session if abuse occurs.
  * 4. **Graceful account migration**: When an anonymous user eventually signs

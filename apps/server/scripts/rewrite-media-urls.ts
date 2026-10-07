@@ -30,18 +30,15 @@
  * ages them out within a session anyway.
  */
 
-import { Pool } from 'pg';
 import * as Y from 'yjs';
+import { readDatabaseConfig } from '../src/config';
+import { createPool } from '../src/pool';
 
 const apply = process.argv.includes('--apply');
 
-const pool = new Pool({
-  user: process.env.POSTGRES_USER || 'canva_user',
-  password: process.env.POSTGRES_PASSWORD || 'canva_password',
-  host: process.env.POSTGRES_HOST || 'localhost',
-  port: Number(process.env.POSTGRES_PORT || 5432),
-  database: process.env.POSTGRES_DB || 'vega_canva',
-});
+// Read strictly: a missing credential is an error unless NODE_ENV=development,
+// so this never rewrites boards through the published development password.
+const pool = createPool({ ...readDatabaseConfig(), poolMax: 2 });
 
 const BUCKET = process.env.S3_BUCKET || 'vega-canva-media';
 

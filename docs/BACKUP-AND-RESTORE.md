@@ -76,7 +76,10 @@ mechanism into an actual backup.
 That was chosen deliberately to start backing up without waiting on a console
 visit, and it costs the isolation described below: anything that purges media
 takes the backups with it, and the credentials the *server* holds can delete
-them. §1a of the checklist carries the migration to a scoped bucket.
+them. **Move it.** §1a of the checklist carries the migration to a scoped
+bucket. (The media route only serves objects recorded in `media_refs`, so
+the dumps cannot be downloaded through the API, but that is no substitute for
+the isolation.)
 
 ### Setting it up
 
@@ -146,9 +149,16 @@ psql "$LIVE_DATABASE_URL" -f one.sql
 - **Media lives in R2, not in the database.** `media_refs` rows restore, but
   if the object behind one was deleted the board shows a missing image.
   Restoring a room the reaper collected needs the objects back too.
-- **Disconnect everyone from the affected board first.** A live client holds
-  the document in memory and will write it back over your restore on its next
-  save. Restore, then have people reload.
+- **Restoring a snapshot does not undo a deletion on its own.** Yjs merges
+  by struct identity, and every client that opened the board keeps a copy in
+  IndexedDB. A client holding the post-incident state reconnects and syncs its
+  deletions straight back over the restored snapshot; disconnecting people
+  and asking them to reload is not enough, because reloading reads the same
+  local copy. To recover a board reliably, restore it **under a new room id**:
+  insert a `rooms` row and a `room_snapshots` row for a fresh id (ten
+  characters of the nanoid alphabet) holding the restored `state`, and share
+  the new link. Clients keep their local copies per room id, so nobody holds
+  a stale copy of the new one. The old room can then be deleted or left.
 
 ---
 

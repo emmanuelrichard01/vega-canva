@@ -58,6 +58,8 @@ export interface LiveTransform {
   height?: number;
   rotation?: number;
   cornerRadius?: number;
+  /** A shape's parametric fields mid-drag (skew, rim, notch and so on), merged over its stored geometry. */
+  geometry?: Partial<import('./schema').ShapeGeometry>;
   typography?: import('./schema').Typography;
   resize?: import('./schema').TextResize;
 }
@@ -81,6 +83,11 @@ class LiveTransformStore {
 
   get(id: string): LiveTransform | undefined {
     return this.transforms.get(id);
+  }
+
+  /** Every live entry, for overlays that react to whatever is being dragged. */
+  entries(): IterableIterator<[string, LiveTransform]> {
+    return this.transforms.entries();
   }
 
   /**
@@ -162,6 +169,11 @@ class LiveTransformStore {
         this.listeners.delete(id);
       }
     };
+  }
+
+  /** The ids currently mid-gesture. */
+  ids(): string[] {
+    return Array.from(this.transforms.keys());
   }
 
   subscribeGlobal(listener: Listener): () => void {

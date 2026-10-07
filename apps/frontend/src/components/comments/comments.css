@@ -1,0 +1,414 @@
+/*
+ * Comments on the board: pins, the thread card and the new-comment composer.
+ *
+ * A pin is furniture on the canvas, so it takes the board's cursor and sits
+ * under the chrome. A thread is a focused, transient surface, so it is
+ * portaled above the chrome and takes the overlay elevation. Elevation is
+ * declared once per surface: the cards carry a shadow and no border.
+ */
+
+.cmt-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 40;
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------- Pin */
+
+.cmt-pin-anchor {
+  position: absolute;
+  pointer-events: auto;
+  /* The pin's tail is its bottom-left corner, which is what points at the
+     anchored spot. */
+  transform: translate(0, -100%);
+  z-index: 50;
+}
+
+.cmt-pin-anchor[data-open='true'] {
+  z-index: 100;
+}
+
+.cmt-pin {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 3px 9px 3px 3px;
+  border: 0;
+  border-radius: 14px 14px 14px 3px;
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-md);
+  font: 600 var(--text-sm) / 1 var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  cursor: var(--cursor-arrow, default);
+  transition: transform var(--motion-hover), box-shadow var(--motion-hover), opacity var(--motion-hover);
+}
+
+.cmt-pin:hover {
+  box-shadow: var(--shadow-float);
+}
+
+.cmt-pin[data-open='true'] {
+  box-shadow: 0 0 0 2px var(--text-primary), var(--shadow-float);
+}
+
+.cmt-pin[data-resolved='true'] {
+  opacity: 0.55;
+}
+
+.cmt-pin:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.cmt-pin__unread {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--surface-elevated);
+}
+
+/* A mention is the one thing on a pin that asks for you by name, so it takes
+   the accent; plain unread stays ink. */
+.cmt-pin__unread[data-for-me='true'] {
+  background: var(--accent);
+}
+
+/* ------------------------------------------------------------- Avatar */
+
+.cmt-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font: 700 9px / 1 var(--font-sans);
+  letter-spacing: 0.02em;
+}
+
+.cmt-avatar--sm {
+  width: 20px;
+  height: 20px;
+  font-size: 8px;
+}
+
+/* --------------------------------------------------------------- Card */
+
+.cmt-card {
+  position: fixed;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  width: 336px;
+  max-height: min(480px, calc(100vh - 32px));
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text-primary);
+  font: 400 var(--text-base) / 1.5 var(--font-sans);
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cmt-card {
+    animation: cmt-in 160ms var(--ease-settle);
+  }
+}
+
+@keyframes cmt-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.cmt-card__head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 44px;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--border-divider);
+  flex-shrink: 0;
+}
+
+.cmt-card__title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmt-card__title span {
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.cmt-card__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.cmt-card__foot {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--border-divider);
+  flex-shrink: 0;
+}
+
+.cmt-card__foot > .cmt-grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.cmt-readonly {
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--border-divider);
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+}
+
+/* ------------------------------------------------------------ Buttons */
+
+.cmt-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.cmt-icon-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.cmt-icon-btn:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+  background: transparent;
+}
+
+.cmt-icon-btn[aria-pressed='true'] {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.cmt-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font: 600 var(--text-sm) / 1 var(--font-sans);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.cmt-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* The one filled control in a composer: posting. Ink, not the accent — the
+   accent is reserved for armed and selected states. */
+.cmt-btn--primary {
+  background: var(--text-primary);
+  color: var(--surface-primary);
+}
+
+.cmt-btn--primary:hover {
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  opacity: 0.9;
+}
+
+.cmt-btn--primary:disabled {
+  background: var(--surface-secondary);
+  color: var(--text-disabled);
+  cursor: default;
+  opacity: 1;
+}
+
+.cmt-icon-btn:focus-visible,
+.cmt-btn:focus-visible,
+.cmt-reaction:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+/* ------------------------------------------------------------ Message */
+
+.cmt-msg {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  column-gap: 10px;
+  padding: 8px 14px;
+}
+
+.cmt-msg + .cmt-msg {
+  padding-top: 10px;
+}
+
+.cmt-msg__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  margin-bottom: 2px;
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+.cmt-msg__name {
+  color: var(--text-primary);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmt-msg__text {
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.cmt-msg__actions {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-hover);
+}
+
+.cmt-msg:hover .cmt-msg__actions,
+.cmt-msg:focus-within .cmt-msg__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.cmt-msg__actions .cmt-icon-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.cmt-msg__edit-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+/* ---------------------------------------------------------- Reactions */
+
+.cmt-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.cmt-reaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-divider);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: 600 var(--text-xs) / 1 var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background var(--motion-hover), border-color var(--motion-hover);
+}
+
+.cmt-reaction:hover {
+  background: var(--surface-hover);
+}
+
+.cmt-reaction[aria-pressed='true'] {
+  background: var(--surface-active);
+  border-color: transparent;
+  color: var(--text-primary);
+}
+
+.cmt-reaction__emoji {
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* ----------------------------------------------------------- Composer */
+
+.cmt-composer {
+  position: fixed;
+  z-index: 200;
+  width: 300px;
+  padding: 10px;
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-overlay);
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cmt-composer {
+    animation: cmt-in 160ms var(--ease-settle);
+  }
+}
+
+.cmt-composer__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.cmt-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.cmt-kbd {
+  font: 500 var(--text-xs) / 1 var(--font-sans);
+  color: var(--text-tertiary);
+}

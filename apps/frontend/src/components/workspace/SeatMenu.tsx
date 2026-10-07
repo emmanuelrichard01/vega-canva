@@ -65,6 +65,10 @@ interface Props<T extends string> {
   onLock: () => void;
   /** The full sheet. */
   sheet: React.ReactNode;
+  /** Above the row: a switch between the tools one seat carries. */
+  header?: React.ReactNode;
+  /** After the common few, behind a rule: tools the seat carries beside its own. */
+  trailing?: React.ReactNode;
 }
 
 export function SeatMenu<T extends string>({
@@ -76,6 +80,8 @@ export function SeatMenu<T extends string>({
   locked,
   onLock,
   sheet,
+  header,
+  trailing,
 }: Props<T>) {
   const [expanded, setExpanded] = useState(false);
 
@@ -95,6 +101,7 @@ export function SeatMenu<T extends string>({
 
   return (
     <div className="seat-menu">
+      {header && <div className="seat-menu__header">{header}</div>}
       {expanded && <div className="seat-menu__sheet">{sheet}</div>}
 
       <div className="seat-menu__row" onKeyDown={onRowKey}>
@@ -120,6 +127,12 @@ export function SeatMenu<T extends string>({
           })}
         </div>
 
+        {trailing && (
+          <>
+            <span className="seat-menu__rule" aria-hidden="true" />
+            <div className="seat-menu__quick">{trailing}</div>
+          </>
+        )}
         <span className="seat-menu__rule" aria-hidden="true" />
         <button
           type="button"

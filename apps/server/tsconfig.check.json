@@ -1,0 +1,14 @@
+{
+  // Typecheck everything the build config leaves out: tests, maintenance
+  // scripts and tool config. `bundler` resolution matches how Vitest and tsx
+  // load these files; the build itself stays on tsconfig.json.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "vitest.config.ts"],
+  "exclude": []
+}

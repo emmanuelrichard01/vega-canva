@@ -33,6 +33,12 @@ export interface ExportOptions {
    * disagree about what "this frame" means.
    */
   frameId?: string;
+  /**
+   * Embed fonts installed on this device into an SVG. Off unless the person
+   * chose it: a local font is theirs to share. Uploaded board fonts are always
+   * embedded.
+   */
+  embedLocalFonts?: boolean;
 }
 
 export interface Exporter {

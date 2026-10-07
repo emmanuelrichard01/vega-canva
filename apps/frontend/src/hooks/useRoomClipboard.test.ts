@@ -44,11 +44,19 @@ vi.mock('../engine/CameraSystem', () => ({
 }));
 
 const mockGroups: Record<string, any> = {};
+// The hook reads the live document from the store when an action runs.
+let mockObjects: Record<string, AnyNode> = {};
 vi.mock('./useStore', () => ({
   useStore: {
-    getState: () => ({ groups: mockGroups }),
+    getState: () => ({ groups: mockGroups, objects: mockObjects }),
   },
 }));
+
+/** Seed the store's document, then mount the hook against it. */
+function useSeededClipboard(objects: Record<string, AnyNode>, options: Parameters<typeof useRoomClipboard>[0]) {
+  mockObjects = objects;
+  return useRoomClipboard(options);
+}
 
 const { useRoomClipboard } = await import('./useRoomClipboard');
 
@@ -79,8 +87,7 @@ describe('useRoomClipboard', () => {
       } as AnyNode,
     };
 
-    const clipboard = useRoomClipboard({
-      diagramObjects,
+    const clipboard = useSeededClipboard(diagramObjects, {
       selectionRef,
       setSelectedIds,
     });
@@ -111,8 +118,7 @@ describe('useRoomClipboard', () => {
       pin1: { id: 'pin1', type: 'comment', x: 0, y: 0, width: 10, height: 10 } as AnyNode,
     };
 
-    const clipboard = useRoomClipboard({
-      diagramObjects,
+    const clipboard = useSeededClipboard(diagramObjects, {
       selectionRef,
       setSelectedIds: vi.fn(),
     });
@@ -124,10 +130,9 @@ describe('useRoomClipboard', () => {
   });
 
   it('says nothing was taken when the selection holds nothing copyable', () => {
-    const clipboard = useRoomClipboard({
-      diagramObjects: {
-        pin1: { id: 'pin1', type: 'comment', x: 0, y: 0, width: 10, height: 10 } as AnyNode,
-      },
+    const clipboard = useSeededClipboard({
+      pin1: { id: 'pin1', type: 'comment', x: 0, y: 0, width: 10, height: 10 } as AnyNode,
+    }, {
       selectionRef: { current: ['pin1'] },
       setSelectedIds: vi.fn(),
     });
@@ -140,8 +145,7 @@ describe('useRoomClipboard', () => {
     const setSelectedIds = vi.fn();
     const diagramObjects: Record<string, AnyNode> = {};
 
-    const clipboard = useRoomClipboard({
-      diagramObjects,
+    const clipboard = useSeededClipboard(diagramObjects, {
       selectionRef,
       setSelectedIds,
     });
@@ -171,8 +175,7 @@ describe('useRoomClipboard', () => {
     const setSelectedIds = vi.fn();
     const diagramObjects: Record<string, AnyNode> = {};
 
-    const clipboard = useRoomClipboard({
-      diagramObjects,
+    const clipboard = useSeededClipboard(diagramObjects, {
       selectionRef,
       setSelectedIds,
     });

@@ -27,6 +27,24 @@
  */
 
 import type { Point } from '../model/schema';
+import {
+  applySpans,
+  hasExplicitTracks,
+  resolveTracks,
+  type GridPadding,
+  type GridSpan,
+  type GridTrack,
+} from './gridTracks';
+
+export type { GridPadding, GridSpan, GridTrack } from './gridTracks';
+
+/** How content sits in its module on one axis. `stretch` fills it. */
+export type CellAlignAxis = 'start' | 'center' | 'end' | 'stretch';
+
+export interface CellAlign {
+  x: CellAlignAxis;
+  y: CellAlignAxis;
+}
 
 export type GridKind =
   | 'columns'
@@ -64,8 +82,33 @@ export interface GridSpec {
   /** Space between tracks. One value each way, because they are read separately. */
   gutterX: number;
   gutterY: number;
-  /** Inset from the spec's own box, applied on all four sides. */
+  /** Inset from the spec's own box, applied on all four sides. Superseded by `padding` when that is present. */
   margin: number;
+  /** Inset from the spec's own box, per side. Absent means `margin` on every side. */
+  padding?: GridPadding;
+  /**
+   * Explicit track sizes, for `columns` and `modular`. Absent on an axis
+   * means even tracks, jittered by `variation`; present means exactly these
+   * sizes, and `variation` no longer applies on that axis.
+   */
+  tracks?: { cols?: GridTrack[]; rows?: GridTrack[] };
+  /**
+   * Modules that reach across several tracks, keyed by their anchor's
+   * `row:col`. `modular` only (and `columns` across its one row).
+   */
+  spans?: Record<string, GridSpan>;
+  /**
+   * How content placed in a module sits in it. Absent is `stretch` on both
+   * axes: the content takes the module's box.
+   */
+  contentAlign?: CellAlign;
+  /**
+   * `hug`: rows grow to fit the tallest content in them, and the grid's
+   * height follows. The reflow measures the content and writes the row sizes
+   * into `tracks.rows`, so every reader lays out the same grid without
+   * measuring anything. Absent is `fixed`.
+   */
+  sizing?: 'fixed' | 'hug';
   /**
    * How far the kind is allowed to depart from a uniform grid, 0 to 1.
    *
@@ -109,6 +152,15 @@ export interface GridSpec {
 }
 
 export interface GridCell {
+  /**
+   * The module's stable identity, when the kind gives it one.
+   *
+   * Content in a module is bound to this number, so it must not change when
+   * an unrelated module is merged or split. The regular kinds set it to the
+   * anchor's row-major position; kinds that leave it absent are identified by
+   * their position in the list.
+   */
+  index?: number;
   x: number;
   y: number;
   width: number;
@@ -256,14 +308,21 @@ export function rng(seed: number): () => number {
   };
 }
 
-/** The spec's box, less its margin. Every kind lays out inside this. */
+/** The padding a spec lays out inside, per side. */
+export function paddingOf(spec: Pick<GridSpec, 'margin' | 'padding'>): GridPadding {
+  if (spec.padding) return spec.padding;
+  const m = Math.max(0, spec.margin || 0);
+  return { top: m, right: m, bottom: m, left: m };
+}
+
+/** The spec's box, less its padding. Every kind lays out inside this. */
 function inner(spec: GridSpec) {
-  const m = Math.max(0, spec.margin);
+  const p = paddingOf(spec);
   return {
-    x: spec.x + m,
-    y: spec.y + m,
-    width: Math.max(0, spec.width - m * 2),
-    height: Math.max(0, spec.height - m * 2),
+    x: spec.x + p.left,
+    y: spec.y + p.top,
+    width: Math.max(0, spec.width - p.left - p.right),
+    height: Math.max(0, spec.height - p.top - p.bottom),
   };
 }
 
@@ -358,43 +417,60 @@ function weigh(cells: Omit<GridCell, 'weight'>[]): GridCell[] {
 /** The golden ratio. Named because  refers to it four times in six lines. */
 const PHI = 1.618033988749895;
 
-function columns(spec: GridSpec): Omit<GridCell, 'weight'>[] {
-  const box = inner(spec);
-  // Uneven at any variation above zero: a fluid measure is a real editorial
-  // device, and the slider used to do nothing at all on this kind.
-  const cols = jitteredTracks(box.width, spec.columns, spec.gutterX, spec.variation, rng(spec.seed));
-  return cols.map((col, i) => ({
-    x: box.x + col.offset,
-    y: box.y,
-    width: col.size,
-    height: box.height,
-    row: 0,
-    col: i,
-  }));
+/**
+ * The tracks on one axis: explicit sizes when the spec has them, otherwise
+ * even tracks jittered by `variation` (a fluid measure is a real editorial
+ * device, and the slider would otherwise do nothing on the regular kinds).
+ */
+function axisTracks(
+  total: number,
+  count: number,
+  gutter: number,
+  explicit: readonly GridTrack[] | undefined,
+  variation: number,
+  next: () => number
+): { offset: number; size: number }[] {
+  if (hasExplicitTracks(explicit)) return resolveTracks(total, count, gutter, explicit);
+  return jitteredTracks(total, count, gutter, variation, next);
 }
 
-function modular(spec: GridSpec): Omit<GridCell, 'weight'>[] {
+/**
+ * The regular grid both `columns` and `modular` draw: tracks on each axis,
+ * then spans. A module's identity is its anchor's row-major position, so
+ * merging or splitting one module never renumbers another.
+ */
+function regular(spec: GridSpec, nRows: number): Omit<GridCell, 'weight'>[] {
   const box = inner(spec);
+  const nCols = Math.max(1, Math.floor(spec.columns));
   // One generator for both axes, so a given seed gives a given grid -- two
   // would make the columns depend on how many rows there happened to be.
   const next = rng(spec.seed);
-  const cols = jitteredTracks(box.width, spec.columns, spec.gutterX, spec.variation, next);
-  const rows = jitteredTracks(box.height, spec.rows, spec.gutterY, spec.variation, next);
+  const cols = axisTracks(box.width, nCols, spec.gutterX, spec.tracks?.cols, spec.variation, next);
+  const rows = axisTracks(box.height, nRows, spec.gutterY, spec.tracks?.rows, spec.variation, next);
 
-  const out: Omit<GridCell, 'weight'>[] = [];
-  rows.forEach((row, r) => {
-    cols.forEach((col, c) => {
-      out.push({
-        x: box.x + col.offset,
-        y: box.y + row.offset,
-        width: col.size,
-        height: row.size,
-        row: r,
-        col: c,
-      });
-    });
+  return applySpans(nRows, nCols, spec.spans).map(({ row, col, rows: rs, cols: cs }) => {
+    const first = cols[col];
+    const last = cols[col + cs - 1];
+    const top = rows[row];
+    const bottom = rows[row + rs - 1];
+    return {
+      index: row * nCols + col,
+      x: box.x + first.offset,
+      y: box.y + top.offset,
+      width: last.offset + last.size - first.offset,
+      height: bottom.offset + bottom.size - top.offset,
+      row,
+      col,
+    };
   });
-  return out;
+}
+
+function columns(spec: GridSpec): Omit<GridCell, 'weight'>[] {
+  return regular(spec, 1);
+}
+
+function modular(spec: GridSpec): Omit<GridCell, 'weight'>[] {
+  return regular(spec, Math.max(1, Math.floor(spec.rows)));
 }
 
 /**

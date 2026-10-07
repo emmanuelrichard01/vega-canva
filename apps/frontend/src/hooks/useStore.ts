@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { groupsMap, normalizeNode, objectsMap, observeGroups, observeNodes, provider, scheduleMigration, updateNode } from '../engine/document';
+import { applyNodePatches, groupsMap, normalizeNode, objectsMap, observeGroups, observeNodes, provider, scheduleMigration } from '../engine/document';
+import { storageGet, storageSet } from '../utils/safeStorage';
 import type { GroupRecord } from '../engine/model/groupTree';
 import { STICKY_THEMES, type AnyNode, type StickyTheme } from '../engine/model/schema';
 import { sceneGraph } from '../engine/SceneGraph';
@@ -47,9 +48,14 @@ interface StoreState {
    */
   lastChangedIds: string[];
   lastRemovedIds: string[];
+  /**
+   * Whether the change that produced the current `version` was made by this
+   * client. Automatic upkeep reacts to its own client's edits immediately and
+   * leaves other people's to the elected writer (see `engine/document/election`).
+   */
+  lastChangeLocal: boolean;
   isReplaying: boolean;
   setIsReplaying: (val: boolean) => void;
-  setObjects: (objects: Record<string, AnyNode>) => void;
   /**
    * Show a Time Travel snapshot on the canvas, or `null` to return to live.
    *
@@ -320,28 +326,23 @@ interface StoreState {
   setEnteredGroupId: (id: string | null) => void;
 }
 
+// Through `safeStorage`: these run while this module is first evaluated, before
+// any error boundary exists, so a blocked or full store must not throw here.
 const loadNumberPref = (key: string, fallback: number, min: number, max: number) => {
-  if (typeof window === 'undefined' || !window.localStorage) return fallback;
-  const stored = Number(window.localStorage.getItem(key));
+  const stored = Number(storageGet(key));
   if (!Number.isFinite(stored) || stored === 0) return fallback;
   return Math.min(max, Math.max(min, stored));
 };
 
 const loadBoolPref = (key: string, fallback: boolean) => {
-  if (typeof window === 'undefined' || !window.localStorage) return fallback;
-  const stored = window.localStorage.getItem(key);
+  const stored = storageGet(key);
   return stored === null ? fallback : stored === 'true';
 };
 
-const loadStringPref = (key: string, fallback: string = ''): string => {
-  if (typeof window === 'undefined' || !window.localStorage) return fallback;
-  return window.localStorage.getItem(key) ?? fallback;
-};
+const loadStringPref = (key: string, fallback: string = ''): string => storageGet(key) ?? fallback;
 
 const setStoragePref = (key: string, value: string) => {
-  if (typeof window !== 'undefined' && window.localStorage) {
-    window.localStorage.setItem(key, value);
-  }
+  storageSet(key, value);
 };
 
 /**
@@ -363,9 +364,9 @@ export const useStore = create<StoreState>((set) => ({
   version: 0,
   lastChangedIds: [],
   lastRemovedIds: [],
+  lastChangeLocal: true,
   isReplaying: false,
   setIsReplaying: (val) => set({ isReplaying: val }),
-  setObjects: (objects) => set({ objects }),
   applyReplaySnapshot: (snapshot, changedIds) => {
     const previous = useStore.getState().objects;
 
@@ -382,11 +383,15 @@ export const useStore = create<StoreState>((set) => ({
         if (!live[id]) sceneGraph.removeNode(id);
       });
       Object.entries(live).forEach(([id, node]) => sceneGraph.upsertNode(id, node));
+      // Groups too: their observer stands down during replay, so changes that
+      // arrived meanwhile are only picked up here.
       set((state) => ({
         objects: live,
+        groups: Object.fromEntries(groupsMap.entries()),
         version: state.version + 1,
         lastChangedIds: Object.keys(live),
         lastRemovedIds: Object.keys(previous).filter((id) => !live[id]),
+        lastChangeLocal: false,
         isReplaying: false,
       }));
       return;
@@ -432,6 +437,7 @@ export const useStore = create<StoreState>((set) => ({
       version: state.version + 1,
       lastChangedIds: touched,
       lastRemovedIds: removed,
+      lastChangeLocal: false,
       isReplaying: true,
     }));
   },
@@ -677,15 +683,16 @@ export const useStore = create<StoreState>((set) => ({
   restoreLayout: () => {
     const { objects, layoutSnapshot } = useStore.getState();
     if (!layoutSnapshot) return;
-    // Through the canonical write path, not straight into the Y.Map, so the
-    // restore is one undo step and carries proper `updatedAt` stamps — and so
-    // every collaborator watching sees the board snap back together.
+    // One transaction through the canonical write path: one undo step, one
+    // broadcast, one store update, however many objects move back.
+    const patches: Array<{ id: string; changes: Record<string, unknown> }> = [];
     Object.entries(layoutSnapshot).forEach(([id, before]) => {
       const now = objects[id];
       if (!now) return; // deleted since; nothing to put back
       if (Math.abs(now.x - before.x) <= 1 && Math.abs(now.y - before.y) <= 1) return;
-      updateNode(id, { x: before.x, y: before.y, rotation: before.rotation });
+      patches.push({ id, changes: { x: before.x, y: before.y, rotation: before.rotation } });
     });
+    applyNodePatches(patches);
   },
   clearLayoutSnapshot: () => set({ layoutSnapshot: null }),
   layoutDriftCount: () => {
@@ -778,12 +785,9 @@ function readCanonical(id: string): AnyNode | null {
 /**
  * Connect the document to the store and the scene graph.
  *
- * This is the *only* observer of `objectsMap`. There used to be a second one
- * in the sync module running the same parent-walk and calling
- * `sceneGraph.upsertNode` for the same node, so every edit was processed
- * twice and emitted two `ObjectMoved`/`ObjectModified` events — doubling
- * spatial-index churn and the full-map rebuild in `useVisibleSet` on every
- * drag and physics frame.
+ * Built on `observeNodes`, the one observer of the live `objectsMap`. Each
+ * transaction normalises only the nodes it changed; the shallow copy of
+ * `objects` is what gives zustand selectors a new reference to compare.
  *
  * Safe to call more than once (StrictMode double-invokes effects); any
  * previous subscription is torn down first.
@@ -815,7 +819,7 @@ export const initSyncBridge = () => {
     useStore.setState({ groups });
   });
 
-  bridgeDisposer = observeNodes(({ changed, removed }) => {
+  bridgeDisposer = observeNodes(({ changed, removed, local }) => {
     // Time Travel drives the store directly from replayed snapshots; live
     // document traffic must not fight it for control of the canvas.
     if (useStore.getState().isReplaying) return;
@@ -840,6 +844,7 @@ export const initSyncBridge = () => {
         version: state.version + 1,
         lastChangedIds: [...changed],
         lastRemovedIds: [...removed],
+        lastChangeLocal: local,
       };
     });
   });

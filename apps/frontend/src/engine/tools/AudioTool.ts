@@ -4,7 +4,7 @@ import { localAuthor, roomId } from '../document';
 import { presenceManager } from '../presence/PresenceManager';
 import { meterLevel, rmsLevel, isSilent } from '../model/audioLevel';
 import { calculateOptimalAudioWidth, resampleWaveform } from '../model/audioPlayback';
-import { mediaUploadUrl } from '../../utils/endpoints';
+import { mediaUploadUrl, roomRequestHeaders } from '../../utils/endpoints';
 import { queueOfflineMedia } from '../../utils/offlineMediaQueue';
 import { localSrcFor, registerLocalMedia, releaseLocalMedia } from '../../utils/pendingMedia';
 
@@ -408,6 +408,7 @@ export class AudioTool implements Tool {
 
         const res = await fetch(mediaUploadUrl(roomId), {
           method: 'POST',
+          headers: roomRequestHeaders(),
           body: formData,
         });
         if (res.ok) {

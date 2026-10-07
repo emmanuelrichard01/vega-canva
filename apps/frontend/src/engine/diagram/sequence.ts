@@ -290,7 +290,8 @@ export function parseSequence(source: string): SeqParseResult {
     }
 
     // `Note over A,B: text` / `Note right of A: text`
-    const note = /^note\s+(left of|right of|over)\s+([^:]+):\s*(.*)$/i.exec(text);
+    // The target cannot start with whitespace, so `\s+` and it never share a run.
+    const note = /^note\s+(left of|right of|over)\s+([^:\s][^:]*):\s*(.*)$/i.exec(text);
     if (note) {
       const placement = note[1].toLowerCase().startsWith('left')
         ? 'left'

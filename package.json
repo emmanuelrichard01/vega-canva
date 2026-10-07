@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Real-time collaborative infinite canvas",
   "private": true,
+  "engines": {
+    "node": ">=22.12"
+  },
   "workspaces": [
     "apps/*"
   ],
@@ -10,7 +13,8 @@
     "dev": "npm run dev --workspaces",
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces",
-    "lint": "npm run lint -w apps/frontend",
+    "lint": "npm run lint -w apps/frontend && npm run lint:server",
+    "lint:server": "oxlint apps/server/src apps/server/scripts",
     "postinstall": "node scripts/ensure-esbuild.js"
   },
   "devDependencies": {

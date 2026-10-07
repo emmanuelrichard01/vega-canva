@@ -62,6 +62,15 @@ function bump(): void {
 }
 
 /**
+ * Announce that faces were registered outside `requestFont`, such as an
+ * uploaded font added through the `FontFace` API. Text measured against the
+ * fallback is laid out again.
+ */
+export function fontsArrived(): void {
+  bump();
+}
+
+/**
  * Faces already asked for, so we ask once.
  *
  * Two reasons. `FontSelector` calls this on every hover, and re-entering the

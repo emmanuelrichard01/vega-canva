@@ -64,6 +64,11 @@ export class SpatialIndex {
   /**
    * Instantly retrieve all SceneNodes intersecting the given bounds.
    */
+  /** Number of indexed nodes. */
+  get size(): number {
+    return this.itemMap.size;
+  }
+
   query(bounds: { minX: number, minY: number, maxX: number, maxY: number }): AnyNode[] {
     return this.tree.search(bounds).map(item => item.node);
   }

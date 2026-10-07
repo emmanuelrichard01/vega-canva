@@ -7,6 +7,8 @@ import { roughLoop, seedFor } from '../../../engine/model/rough';
 import { loopPath } from '../../../engine/model/freehandLoop';
 import { shadowProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
 import { useFillProps } from './useFillProps';
+import { useDarkTheme } from './useDarkTheme';
+import { brushPaint } from '../../../engine/tools/brushes';
 
 interface Props {
   node: PathNode;
@@ -22,6 +24,7 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
   // stroked — in both cases a second stroke changes the shape rather than the
   // shadow. `supportsShadowSpread` is therefore false for paths.
   const shadow = shadowProps(node.appearance);
+  const dark = useDarkTheme();
 
   if (node.geometry.kind === 'freehand') {
     // perfect-freehand produces a filled outline polygon, not a stroked line,
@@ -103,8 +106,10 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
      * from freehand strokes entirely.
      */
     const ink = strokeColor(node.appearance) ?? DEFAULT_INK;
+    // A closed loop is filled only when it has a fill. Without one the
+    // fallback is the ink, which would turn every drawn circle into a disc.
     const interior =
-      node.geometry.closed && node.geometry.points.length > 2
+      node.geometry.closed && node.geometry.points.length > 2 && node.appearance?.fill?.length
         ? loopPath(node.geometry.points)
         : '';
 
@@ -126,6 +131,7 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
         <Path
           data={node.geometry.svgPath}
           fill={ink}
+          {...brushPaint(node.geometry.brush, dark)}
           {...(interior ? null : shadow)}
           hitStrokeWidth={Math.max(20, node.geometry.strokeSize)}
         />
@@ -144,7 +150,9 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
   return (
     <Path
       data={contourData(node.geometry)}
-      {...pathFill}
+      // No fill means no fill: the paint fallback is the ink, which would
+      // flood the area under every open pen path.
+      {...(hasFill ? pathFill : { fillEnabled: false })}
       {...shadow}
       stroke={stroke}
       strokeWidth={sw}

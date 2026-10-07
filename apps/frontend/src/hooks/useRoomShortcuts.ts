@@ -26,6 +26,8 @@ export interface RoomShortcutsOptions {
    * exists to open.
    */
   openExport?: (fromSelection: boolean) => void;
+  /** Mod+\: shrink both side panels to their pills, or bring them back. */
+  togglePanelsCollapsed?: () => void;
 }
 
 /**
@@ -36,7 +38,7 @@ export interface RoomShortcutsOptions {
  * - Zoom in / out / fit / reset (Cmd/Ctrl + +/-, bare +/-, 0, !)
  * - Tool hotkeys (from TOOL_FOR_KEY map)
  * - Export the selection (Cmd/Ctrl + Shift + E)
- * - Help (?), Toggle UI (\)
+ * - Help (?), Toggle UI (\), side panels to pills and back (Mod+\)
  * - Panel dismissals on Escape
  */
 export function useRoomShortcuts({
@@ -52,6 +54,7 @@ export function useRoomShortcuts({
   activeTool,
   setActiveTool,
   openExport,
+  togglePanelsCollapsed,
 }: RoomShortcutsOptions) {
   /**
    * The armed tool, told to the lock and the key-hold.
@@ -128,6 +131,10 @@ export function useRoomShortcuts({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      // A key pressed inside an open dialog or menu belongs to it: tool letters
+      // must not re-arm the board behind a modal.
+      const inside = (e.target as { closest?: (s: string) => unknown } | null)?.closest;
+      if (typeof inside === 'function' && inside.call(e.target, '[role="dialog"], [role="menu"]')) return;
 
       const hasModifier = e.ctrlKey || e.metaKey;
 
@@ -169,6 +176,12 @@ export function useRoomShortcuts({
       if (hasModifier && e.shiftKey && e.key.toLowerCase() === 'e' && openExport) {
         e.preventDefault();
         openExport(selectedIds.length > 0);
+        return;
+      }
+
+      if (hasModifier && !e.shiftKey && !e.altKey && e.code === 'Backslash' && togglePanelsCollapsed) {
+        e.preventDefault();
+        togglePanelsCollapsed();
         return;
       }
 
@@ -222,6 +235,14 @@ export function useRoomShortcuts({
       if (hasModifier && (e.key === '1' || e.key === '!')) {
         e.preventDefault();
         editor.zoomToFit();
+        return;
+      }
+
+      // Alt+Shift+V opens View under the board's name (see `WorkspaceShell`).
+      // Shift+V alone is Flip vertical, as in Figma.
+      if (e.altKey && e.shiftKey && !hasModifier && e.code === 'KeyV') {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('vega:open-view-menu'));
         return;
       }
 
@@ -362,5 +383,5 @@ export function useRoomShortcuts({
         window.removeEventListener('legacy_tool_change', handleToolChange);
       }
     };
-  }, [selectTool, setSelectedIds, setShowCommandPalette, setShowHelp, setIsUiVisible, selectedIds, openExport, activeTool]);
+  }, [selectTool, setSelectedIds, setShowCommandPalette, setShowHelp, setIsUiVisible, selectedIds, openExport, activeTool, togglePanelsCollapsed]);
 }

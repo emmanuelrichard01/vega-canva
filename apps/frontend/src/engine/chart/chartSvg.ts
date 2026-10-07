@@ -10,6 +10,7 @@ import { contrastInk } from '../model/color';
 import { rectRing, roughLoop, roughPolyline, seedFor, type SketchLevel } from '../model/rough';
 import { currentChartInk, type ChartInk } from './chartInk';
 import { hachure, SKETCH_FONT, SKETCH_FONT_SCALE } from './chartSketch';
+import { attr, escapeXml, num } from '../export/markup';
 
 /**
  * The second painter.
@@ -20,26 +21,15 @@ import { hachure, SKETCH_FONT, SKETCH_FONT_SCALE } from './chartSketch';
  * one in the exported file, because there is one set of rectangles and both
  * painters are handed it.
  *
- * The rule is worth stating sharply because this file did not exist for two
- * commits, and in that window `SVGExporter` had no `case 'chart'` at all — so
- * a chart exported as **nothing**, silently, in a format that had no way to
- * say so. A missing painter is the same class of fault as a missing renderer:
- * a capability the document declares and one of its consumers ignores.
+ * Every string interpolated below goes through `attr`/`escapeXml`. The data
+ * sheet injects this markup into the page, so a colour or label that reached it
+ * unescaped would run as script in the app, not just in an exported file.
  *
  * Sketch comes out identical too, and for free: `roughLoop` and
  * `roughPolyline` already return SVG path data, seeded from the node id, so
  * the hand that drew the bars on the canvas is the hand in the file rather
  * than another draw from the same distribution.
  */
-
-/** Enough of the exporter's escaping to be safe on its own. */
-function esc(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
 
 const FONT = 'Inter, system-ui, -apple-system, sans-serif';
 
@@ -71,7 +61,7 @@ function label(
   // layout's `y` is a top edge, so the baseline is one cap-height down and
   // 0.8em is the reliable approximation of that.
   const ty = y + fontSize * 0.8;
-  return `<text x="${tx}" y="${ty}" text-anchor="${anchor}" font-family="${esc(font)}" font-size="${fontSize}" font-weight="${weight}" fill="${fill}">${esc(text)}</text>`;
+  return `<text x="${tx}" y="${ty}" text-anchor="${attr(anchor)}" font-family="${attr(font)}" font-size="${fontSize}" font-weight="${attr(weight)}" fill="${attr(fill)}">${escapeXml(text)}</text>`;
 }
 
 /**
@@ -175,8 +165,8 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
   /** A chrome rule: straight when clean, drawn by hand when sketched. */
   const rule = (x1: number, y1: number, x2: number, y2: number, n: number, width: number, opacity = 1) =>
     sketch
-      ? `<path d="${roughPolyline([{ x: x1, y: y1 }, { x: x2, y: y2 }], { seed: seed + 900 + n * 7, level: width > 1 ? sketch : 'light', closed: false })}" fill="none" stroke="${ink.chrome}" stroke-width="${width}" stroke-linecap="round" opacity="${opacity}" />`
-      : `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${ink.chrome}" stroke-width="${width}"${opacity < 1 ? ` opacity="${opacity}"` : ''} />`;
+      ? `<path d="${roughPolyline([{ x: x1, y: y1 }, { x: x2, y: y2 }], { seed: seed + 900 + n * 7, level: width > 1 ? sketch : 'light', closed: false })}" fill="none" stroke="${attr(ink.chrome)}" stroke-width="${width}" stroke-linecap="round" opacity="${opacity}" />`
+      : `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${attr(ink.chrome)}" stroke-width="${width}"${opacity < 1 ? ` opacity="${opacity}"` : ''} />`;
 
   layout.gridLines.forEach((g, i) => out.push(rule(g.x1, g.y1, g.x2, g.y2, i, 1, 0.35)));
   // The vertical axis, at the horizontal one's weight — see `zeroRule`.
@@ -198,12 +188,12 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
    */
   for (const spoke of layout.spokes) {
     out.push(
-      `<line x1="${spoke.x1}" y1="${spoke.y1}" x2="${spoke.x2}" y2="${spoke.y2}" stroke="${ink.chrome}" stroke-width="1" opacity="0.35" />`
+      `<line x1="${spoke.x1}" y1="${spoke.y1}" x2="${spoke.x2}" y2="${spoke.y2}" stroke="${attr(ink.chrome)}" stroke-width="1" opacity="0.35" />`
     );
   }
   for (const ring of layout.rings) {
     out.push(
-      `<polygon points="${ring.points.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="${ink.chrome}" stroke-width="1" opacity="0.3" />`
+      `<polygon points="${ring.points.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="${attr(ink.chrome)}" stroke-width="1" opacity="0.3" />`
     );
   }
 
@@ -211,7 +201,7 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
     const tb = layout.toleranceBand;
     out.push(
       `<rect x="${layout.plot.x}" y="${tb.y1}" width="${layout.plot.width}" height="${Math.max(1, tb.y2 - tb.y1)}" ` +
-        `fill="${tb.color}" fill-opacity="${TOLERANCE_FILL_OPACITY}" />`
+        `fill="${attr(tb.color)}" fill-opacity="${TOLERANCE_FILL_OPACITY}" />`
     );
   }
 
@@ -224,13 +214,13 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
       );
       if (b.rounded === false) {
         // A heat cell's colour *is* its value, so it stays solid.
-        out.push(`<path d="${d}" fill="${b.color}" stroke="${b.color}" stroke-width="1.4" opacity="${0.92 * op}" />`);
+        out.push(`<path d="${d}" fill="${attr(b.color)}" stroke="${attr(b.color)}" stroke-width="1.4" opacity="${num(0.92 * op)}" />`);
       } else {
-        out.push(`<path d="${d}" fill="${b.color}" fill-opacity="${0.16 * op}" stroke="none" />`);
+        out.push(`<path d="${d}" fill="${attr(b.color)}" fill-opacity="${num(0.16 * op)}" stroke="none" />`);
         out.push(
-          `<path d="${hachure(b, seed + i * 17)}" fill="none" stroke="${b.color}" stroke-width="1.1" stroke-linecap="round" opacity="${0.85 * op}" />`
+          `<path d="${hachure(b, seed + i * 17)}" fill="none" stroke="${attr(b.color)}" stroke-width="1.1" stroke-linecap="round" opacity="${num(0.85 * op)}" />`
         );
-        out.push(`<path d="${d}" fill="none" stroke="${b.color}" stroke-width="1.6" stroke-linejoin="round" opacity="${op}" />`);
+        out.push(`<path d="${d}" fill="none" stroke="${attr(b.color)}" stroke-width="1.6" stroke-linejoin="round" opacity="${num(op)}" />`);
       }
     } else {
       const r =
@@ -241,7 +231,7 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
           : 0;
       const rx = r > 0 ? ` rx="${r}"` : '';
       out.push(
-        `<rect x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}"${rx} fill="${b.color}"${op < 1 ? ` fill-opacity="${op}"` : ''} />`
+        `<rect x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}"${rx} fill="${attr(b.color)}"${op < 1 ? ` fill-opacity="${num(op)}"` : ''} />`
       );
     }
   });
@@ -262,19 +252,19 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
     if (!a.gradient) {
       // The panel's fill opacity, which the board already honoured — the
       // export hard-coded 0.22, so a 60% area drew at 22% in the file.
-      out.push(`<polygon points="${points}" fill="${a.color}" opacity="${options.areaOpacity ?? 0.22}" />`);
+      out.push(`<polygon points="${points}" fill="${attr(a.color)}" opacity="${num(options.areaOpacity ?? 0.22)}" />`);
       return;
     }
     const id = `${options.id}-areafill-${i}`;
     const top = layout.plot.y;
     const bottom = layout.baseline?.y1 ?? layout.plot.y + layout.plot.height;
     out.push(
-      `<defs><linearGradient id="${id}" x1="0" y1="${top}" x2="0" y2="${bottom}" gradientUnits="userSpaceOnUse">` +
-        `<stop offset="0" stop-color="${a.color}" />` +
+      `<defs><linearGradient id="${attr(id)}" x1="0" y1="${top}" x2="0" y2="${bottom}" gradientUnits="userSpaceOnUse">` +
+        `<stop offset="0" stop-color="${attr(a.color)}" />` +
         `<stop offset="1" stop-color="rgba(0,0,0,0.02)" />` +
         `</linearGradient></defs>`
     );
-    out.push(`<polygon points="${points}" fill="url(#${id})" opacity="0.45" />`);
+    out.push(`<polygon points="${points}" fill="url(#${attr(id)})" opacity="0.45" />`);
   });
 
   layout.runs.forEach((r, i) => {
@@ -286,38 +276,38 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
         : r.style === 'dotted'
         ? ' stroke-dasharray="2 3"'
         : '';
-    const runOp = r.opacity !== undefined && r.opacity < 1 ? ` opacity="${r.opacity}"` : '';
+    const runOp = r.opacity !== undefined && r.opacity < 1 ? ` opacity="${num(r.opacity)}"` : '';
     if (sketch) {
       const d = roughPolyline(r.points, { seed: seed + i * 31, level: sketch, closed: false });
       out.push(
-        `<path d="${d}" fill="none" stroke="${r.color}" stroke-width="${strokeW}" stroke-linecap="round" stroke-linejoin="round"${runOp} />`
+        `<path d="${d}" fill="none" stroke="${attr(r.color)}" stroke-width="${num(strokeW)}" stroke-linecap="round" stroke-linejoin="round"${runOp} />`
       );
     } else {
       out.push(
-        `<polyline points="${r.points.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="${r.color}" stroke-width="${strokeW}"${dash} stroke-linecap="round" stroke-linejoin="round"${runOp} />`
+        `<polyline points="${r.points.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="${attr(r.color)}" stroke-width="${num(strokeW)}"${dash} stroke-linecap="round" stroke-linejoin="round"${runOp} />`
       );
     }
   });
 
   for (const d of layout.dots) {
     if (d.shape === 'ring' || d.shape === 'hollow') {
-      out.push(`<circle cx="${d.x}" cy="${d.y}" r="${d.radius}" fill="none" stroke="${d.color}" stroke-width="2" />`);
+      out.push(`<circle cx="${d.x}" cy="${d.y}" r="${d.radius}" fill="none" stroke="${attr(d.color)}" stroke-width="2" />`);
     } else if (d.shape === 'square') {
-      out.push(`<rect x="${d.x - d.radius}" y="${d.y - d.radius}" width="${d.radius * 2}" height="${d.radius * 2}" fill="${d.color}" />`);
+      out.push(`<rect x="${d.x - d.radius}" y="${d.y - d.radius}" width="${d.radius * 2}" height="${d.radius * 2}" fill="${attr(d.color)}" />`);
     } else {
-      out.push(`<circle cx="${d.x}" cy="${d.y}" r="${d.radius}" fill="${d.color}" />`);
+      out.push(`<circle cx="${d.x}" cy="${d.y}" r="${d.radius}" fill="${attr(d.color)}" />`);
     }
   }
 
   for (const s of layout.slices) {
     out.push(
-      `<path d="${slicePath(s.cx, s.cy, s.outerRadius, s.innerRadius, s.startAngle, s.endAngle)}" fill="${s.color}" stroke="${ink.sliceEdge}" stroke-width="1.5" fill-rule="evenodd" />`
+      `<path d="${slicePath(s.cx, s.cy, s.outerRadius, s.innerRadius, s.startAngle, s.endAngle)}" fill="${attr(s.color)}" stroke="${attr(ink.sliceEdge)}" stroke-width="1.5" fill-rule="evenodd" />`
     );
   }
 
   for (const b of layout.waterfallBridges ?? []) {
     out.push(
-      `<line x1="${b.x1}" y1="${b.y1}" x2="${b.x2}" y2="${b.y2}" stroke="${ink.chrome}" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.65" />`
+      `<line x1="${b.x1}" y1="${b.y1}" x2="${b.x2}" y2="${b.y2}" stroke="${attr(ink.chrome)}" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.65" />`
     );
   }
 
@@ -330,32 +320,32 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
   if (layout.trendline) {
     const tl = layout.trendline;
     out.push(
-      `<line x1="${tl.line[0].x}" y1="${tl.line[0].y}" x2="${tl.line[1].x}" y2="${tl.line[1].y}" stroke="${ink.derived}" stroke-width="1.8" stroke-dasharray="6 4" opacity="0.9" />`
+      `<line x1="${tl.line[0].x}" y1="${tl.line[0].y}" x2="${tl.line[1].x}" y2="${tl.line[1].y}" stroke="${attr(ink.derived)}" stroke-width="1.8" stroke-dasharray="6 4" opacity="0.9" />`
     );
   }
 
   if (layout.kdeCurve) {
     out.push(
-      `<polyline points="${layout.kdeCurve.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="${ink.derived}" stroke-width="2.2" opacity="0.9" />`
+      `<polyline points="${layout.kdeCurve.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="${attr(ink.derived)}" stroke-width="2.2" opacity="0.9" />`
     );
   }
 
   for (const sl of layout.streamlines ?? []) {
     out.push(
-      `<polyline points="${sl.points.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="${ink.derived}" stroke-width="1.8" opacity="0.85" />`
+      `<polyline points="${sl.points.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="${attr(ink.derived)}" stroke-width="1.8" opacity="0.85" />`
     );
     out.push(
-      `<circle cx="${sl.seed.x}" cy="${sl.seed.y}" r="4" fill="${ink.feature}" stroke="${ink.sliceEdge}" stroke-width="1.5" />`
+      `<circle cx="${sl.seed.x}" cy="${sl.seed.y}" r="4" fill="${attr(ink.feature)}" stroke="${attr(ink.sliceEdge)}" stroke-width="1.5" />`
     );
   }
 
   if (layout.donutMetric) {
     const dm = layout.donutMetric;
     out.push(
-      `<text x="${dm.x}" y="${dm.y - 4}" text-anchor="middle" font-size="9" font-weight="600" fill="${ink.chrome}">${dm.label}</text>`
+      `<text x="${dm.x}" y="${dm.y - 4}" text-anchor="middle" font-size="9" font-weight="600" fill="${attr(ink.chrome)}">${escapeXml(dm.label)}</text>`
     );
     out.push(
-      `<text x="${dm.x}" y="${dm.y + 11}" text-anchor="middle" font-size="12" font-weight="700" fill="${ink.ink}">${dm.value}</text>`
+      `<text x="${dm.x}" y="${dm.y + 11}" text-anchor="middle" font-size="12" font-weight="700" fill="${attr(ink.ink)}">${escapeXml(dm.value)}</text>`
     );
   }
 
@@ -377,7 +367,7 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
     const right = layout.plot.x + layout.plot.width;
     const bottom = layout.plot.y + layout.plot.height;
     const edge = (y: number) =>
-      `<line x1="${layout.plot.x}" y1="${y}" x2="${right}" y2="${y}" stroke="${tb.color}" stroke-width="1.25" stroke-dasharray="4 3" opacity="0.9" />`;
+      `<line x1="${layout.plot.x}" y1="${y}" x2="${right}" y2="${y}" stroke="${attr(tb.color)}" stroke-width="1.25" stroke-dasharray="4 3" opacity="0.9" />`;
     if (!tb.cropped || tb.y1 > layout.plot.y + 0.5) out.push(edge(tb.y1));
     if (!tb.cropped || tb.y2 < bottom - 0.5) out.push(edge(tb.y2));
     if (tb.label) {
@@ -389,7 +379,7 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
   if (layout.reference) {
     const r = layout.reference;
     out.push(
-      `<line x1="${r.x1}" y1="${r.y1}" x2="${r.x2}" y2="${r.y2}" stroke="${r.color}" stroke-width="1.5"${r.dashed ? ' stroke-dasharray="5 4"' : ''} />`
+      `<line x1="${r.x1}" y1="${r.y1}" x2="${r.x2}" y2="${r.y2}" stroke="${attr(r.color)}" stroke-width="1.5"${r.dashed ? ' stroke-dasharray="5 4"' : ''} />`
     );
     if (r.label) {
       out.push(lab(r.label.text, r.label.x, r.label.y, r.label.width, r.label.align, r.label.fontSize, r.color, '600'));
@@ -415,10 +405,20 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
   if (layout.yAxisTitle) {
     const ya = layout.yAxisTitle;
     out.push(
-      `<text x="${ya.x}" y="${ya.y}" transform="rotate(-90 ${ya.x} ${ya.y})" text-anchor="middle" font-family="${esc(font)}" font-size="${ya.fontSize * scale}" font-weight="600" fill="${ink.chrome}">${esc(ya.text)}</text>`
+      `<text x="${ya.x}" y="${ya.y}" transform="rotate(-90 ${ya.x} ${ya.y})" text-anchor="middle" font-family="${attr(font)}" font-size="${ya.fontSize * scale}" font-weight="600" fill="${attr(ink.chrome)}">${escapeXml(ya.text)}</text>`
     );
   }
   for (const l of [...layout.axisLabels, ...layout.categoryLabels]) {
+    if (l.rotation) {
+      // Anchored at the right end of the top edge and turned about it, which
+      // is how the canvas draws a turned category name.
+      const ax = num(l.x + l.width);
+      const ay = num(l.y);
+      out.push(
+        `<text x="${ax}" y="${num(l.y + l.fontSize * scale * 0.8)}" transform="rotate(${num(l.rotation)} ${ax} ${ay})" text-anchor="end" font-family="${attr(font)}" font-size="${num(l.fontSize * scale)}" font-weight="400" fill="${attr(onInk(l.on, ink.chrome))}">${escapeXml(l.text)}</text>`
+      );
+      continue;
+    }
     // A name inside a tile — a treemap's, a heat table's — reads against the
     // tile, like a value label does.
     out.push(lab(l.text, l.x, l.y, l.width, l.align, l.fontSize, onInk(l.on, ink.chrome)));
@@ -442,15 +442,15 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
     // y1 at the bottom and y2 at the top, so offset zero is the low end --
     // the same way up as the surface it describes.
     out.push(
-      `<defs><linearGradient id="${id}" x1="0" y1="${bar.y + bar.height}" x2="0" y2="${bar.y}" gradientUnits="userSpaceOnUse">` +
+      `<defs><linearGradient id="${attr(id)}" x1="0" y1="${bar.y + bar.height}" x2="0" y2="${bar.y}" gradientUnits="userSpaceOnUse">` +
         bar.stops
-          .map((stop) => `<stop offset="${stop.offset}" stop-color="${stop.color}" />`)
+          .map((stop) => `<stop offset="${stop.offset}" stop-color="${attr(stop.color)}" />`)
           .join('') +
         `</linearGradient></defs>`
     );
     out.push(
       `<rect x="${bar.x}" y="${bar.y}" width="${bar.width}" height="${bar.height}" rx="2" ` +
-        `fill="url(#${id})" stroke="${ink.chrome}" stroke-width="0.5" />`
+        `fill="url(#${attr(id)})" stroke="${attr(ink.chrome)}" stroke-width="0.5" />`
     );
     for (const tick of bar.ticks) {
       out.push(lab(tick.text, bar.textX, tick.y, 0, 'left', bar.fontSize, ink.ink));
@@ -458,10 +458,13 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
   }
 
   for (const e of layout.legend) {
+    // A hidden series only reaches the legend while the chart is selected on
+    // the board; an export never asks for it. Drawn faded for the preview.
+    const faded = e.hidden ? ' opacity="0.4"' : '';
     out.push(
-      `<rect x="${e.x}" y="${e.y}" width="${e.swatch}" height="${e.swatch}" rx="2" fill="${e.color}" />`
+      `<rect x="${e.x}" y="${e.y}" width="${e.swatch}" height="${e.swatch}" rx="2" fill="${attr(e.color)}"${faded} />`
     );
-    out.push(lab(e.label, e.textX, e.y - 1, 0, 'left', e.fontSize, ink.ink));
+    out.push(lab(e.label, e.textX, e.y - 1, 0, 'left', e.fontSize, e.hidden ? ink.chrome : ink.ink));
   }
 
   return out.join('');

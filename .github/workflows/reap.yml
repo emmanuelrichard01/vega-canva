@@ -1,13 +1,29 @@
 name: Storage Reaper
 
+# Finds rooms inactive past the retention threshold, and the media they own.
+#
+# Modes:
+# - Manual run (workflow_dispatch): dry run unless `dry_run` is unticked.
+# - Scheduled run: dry run, unless the repository variable
+#   `REAPER_SCHEDULE_MODE` is set to `apply`. A schedule never deletes data
+#   until someone has decided it should.
+#
+# Configuration (repository secrets):
+# - `REAPER_DATABASE_URL`: a Postgres connection string for a role that can
+#   delete rows. Not `BACKUP_DATABASE_URL`, which should stay read-only.
+# - `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` (the R2_*
+#   equivalents are accepted).
+# With `REAPER_DATABASE_URL` unset the job reports that it is not configured
+# and exits cleanly, so an unconfigured fork does not fail every week.
+
 on:
   schedule:
-    # Run every Sunday at 03:00 UTC
+    # Every Sunday at 03:00 UTC.
     - cron: '0 3 * * 0'
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Perform dry run inspection without deleting data'
+        description: 'Report what would be deleted, without deleting it'
         required: true
         type: boolean
         default: true
@@ -17,41 +33,77 @@ on:
         type: string
         default: '90'
 
+permissions:
+  contents: read
+
+concurrency:
+  group: storage-reaper
+  cancel-in-progress: false
+
 jobs:
   reap:
-    name: Reap Inactive Rooms & Media
+    name: Reap inactive rooms and media
     runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v4
+    env:
+      REAPER_DATABASE_URL: ${{ secrets.REAPER_DATABASE_URL }}
 
-      - uses: actions/setup-node@v4
+    steps:
+      - name: Check configuration
+        id: config
+        run: |
+          if [ -z "$REAPER_DATABASE_URL" ]; then
+            echo "::warning::REAPER_DATABASE_URL is not set; the storage reaper is not configured. Nothing was inspected."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v5
+        if: steps.config.outputs.configured == 'true'
+
+      - uses: actions/setup-node@v5
+        if: steps.config.outputs.configured == 'true'
         with:
-          node-version: '24'
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies
+        if: steps.config.outputs.configured == 'true'
         run: npm ci
 
-      - name: Run Reaper
+      - name: Choose mode
+        if: steps.config.outputs.configured == 'true'
+        id: mode
+        env:
+          EVENT: ${{ github.event_name }}
+          DISPATCH_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          SCHEDULE_MODE: ${{ vars.REAPER_SCHEDULE_MODE }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ "$DISPATCH_DRY_RUN" = "false" ]; then mode=apply; else mode=dry-run; fi
+          elif [ "$SCHEDULE_MODE" = "apply" ]; then
+            mode=apply
+          else
+            mode=dry-run
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "Reaper mode: $mode ($EVENT)"
+
+      - name: Run reaper
+        if: steps.config.outputs.configured == 'true'
         working-directory: apps/server
         env:
-          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
-          POSTGRES_PORT: ${{ secrets.POSTGRES_PORT || '5432' }}
-          POSTGRES_DB: ${{ secrets.POSTGRES_DB || 'vega_canva' }}
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-          POSTGRES_SSL: ${{ secrets.POSTGRES_SSL || 'true' }}
+          # readMaintenanceConfig takes the URL as is; sslmode=require in it turns TLS on.
+          DATABASE_URL: ${{ secrets.REAPER_DATABASE_URL }}
           S3_ENDPOINT: ${{ secrets.S3_ENDPOINT || secrets.R2_ENDPOINT }}
           S3_BUCKET: ${{ secrets.S3_BUCKET || 'vega-canva-media' }}
           S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY || secrets.R2_ACCESS_KEY_ID }}
           S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY || secrets.R2_SECRET_ACCESS_KEY }}
           ROOM_TTL_DAYS: ${{ github.event.inputs.days || '90' }}
         run: |
-          if [ "${{ github.event.inputs.dry_run }}" = "false" ]; then
-            echo "Executing destructive reap..."
+          if [ "${{ steps.mode.outputs.mode }}" = "apply" ]; then
             npm run reap:apply
           else
-            echo "Executing dry-run reap inspection..."
             npm run reap
           fi

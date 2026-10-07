@@ -1,5 +1,24 @@
 # Handoff
 
+## Current state (2026-10-05)
+
+- **Tests run.** Vitest 4.1 starts on this machine because the root
+  `package.json` overrides `esbuild` with `esbuild-wasm` (see
+  `scripts/ensure-esbuild.js`). `npm test -w apps/frontend` and
+  `npm test -w apps/server` both pass. Any section below that says Vitest
+  cannot start, or that describes running tests through a Node shim, predates
+  that fix and is history, not instructions.
+- **CI** (`.github/workflows/checks.yml`) lints, typechecks, tests and builds
+  both workspaces, and audits runtime dependencies. Node 24 everywhere
+  (`.nvmrc`, the server Dockerfile, CI).
+- A full-codebase audit on 2026-10-05 drove a round of fixes across the
+  server, sync layer, renderer, engines and UI. `git log` from that date
+  records what changed.
+
+The rest of this file is the session log it has always been. Read it for
+context, not as a description of the current code: where it disagrees with
+the code or with `docs/`, the code wins.
+
 Written so the next session can start cold. Read this, then `DESIGN.md` if you
 are touching anything visual, then `docs/CANVAS-SPEC.md`.
 
@@ -13,11 +32,8 @@ time, where the work stopped, and what is next.
 >
 > **The last session added tables, six chart kinds and table examples,
 > rebuilt the data sheet, and turned focus from amber to ink — see
-> §5a-0-bf.** None of it was seen in a browser, and **no Vitest suite could
-> start** (`spawn UNKNOWN`, in the sandbox and out of it), so its contracts
-> are held by `npm run build` and by Node scripts that import the engine
-> directly. Run both suites before building on it: they are the first real
-> test of about a third of that work.
+> §5a-0-bf.** None of it was seen in a browser. When it was written no Vitest suite could
+> start here; both suites now run and pass (see *Current state* above).
 >
 > **The session before rebuilt the shape set from the geometry up — see
 > §5a-0-be.** Two lessons worth carrying out of it. The first is the oldest one

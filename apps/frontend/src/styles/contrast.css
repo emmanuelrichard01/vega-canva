@@ -1,0 +1,138 @@
+/* =========================================
+   INCREASE CONTRAST
+   -----------------------------------------
+   Applied when the root carries `data-contrast="more"` (see
+   engine/ui/contrast.ts, which follows `prefers-contrast: more` unless the
+   person has pinned a choice).
+
+   Tokens only. Every component already paints from these roles, so
+   re-declaring them here strengthens every surface at once and no component
+   has to know this mode exists.
+
+   Targets, each asserted by contrast.test.ts:
+   - Text: primary and secondary >= 7:1 on every app surface; tertiary >= 7:1
+     on the primary surface and >= 4.5:1 everywhere.
+   - Dividers, control borders and the focus ring (non-text indicators,
+     WCAG 1.4.11): >= 3:1 against the surfaces they sit on.
+   - Glass becomes opaque: a translucent panel's contrast depends on the board
+     behind it, which is the opposite of a guarantee.
+
+   The theme class lives on <body> while the attribute is on <html>, so the
+   dark overrides are scoped `[data-contrast] .dark-theme`. Composed tokens
+   (`--focus-ring-color: var(--text-secondary)` and the like) are re-declared
+   alongside the roles they read, because a var() resolves where it is declared.
+   ========================================= */
+
+/* The resting edge of a field (stepper, select, colour chip). Transparent in
+   the standard theme, where a field reads by its fill; a 3:1 hairline under
+   increased contrast, where a fill alone is not a visible boundary.
+   Components draw `border: 1px solid var(--control-border)` at rest. */
+:root {
+  --control-border: transparent;
+}
+
+:root[data-contrast='more'] {
+  --text-primary: #111827;
+  --text-secondary: #374151;
+  --text-tertiary: #4B5563;
+  --text-disabled: #6B7280;
+  /* amber-800: 7.1:1 on white, where amber-700 is 5:1. */
+  --text-accent: #92400E;
+
+  --surface-hover: rgba(0, 0, 0, 0.07);
+  --surface-active: rgba(0, 0, 0, 0.14);
+
+  --border-divider: #868C96;
+  --border-strong: #5B6270;
+  --border-focus: #111827;
+  --control-border: var(--border-strong);
+  --canvas-dot: rgba(0, 0, 0, 0.2);
+
+  --glass-surface: var(--gray-000);
+  --glass-filter: none;
+  --glass-edge: transparent;
+  --glass-cast: 0 0 0 1px #5B6270;
+  --shadow-float: 0 0 0 1px #5B6270;
+  --shadow-overlay: 0 0 0 1px #5B6270;
+
+  /* Selection keeps its colour and gains weight: the hairline that marks a
+     selected row or tile is drawn at full strength instead of a tint, so the
+     state reads without relying on hue. */
+  --accent-quiet: color-mix(in srgb, var(--brand-orange) 24%, transparent);
+  --accent-line: var(--text-accent);
+
+  --status-online: #047857;
+  --status-offline: #B91C1C;
+  --status-danger: #B91C1C;
+  --status-syncing: #B45309;
+  --status-warning: #92400E;
+
+  --focus-ring-color: var(--text-primary);
+  --focus-field-color: var(--text-secondary);
+  --focus-ring-width: 3px;
+  --hover-outline: var(--text-primary);
+}
+
+:root[data-contrast='more'] .dark-theme {
+  --text-primary: #FFFFFF;
+  --text-secondary: #E4E4E7;
+  --text-tertiary: #B8B8C0;
+  --text-disabled: #A1A1AA;
+  --text-accent: var(--brand-orange);
+
+  --surface-hover: rgba(255, 255, 255, 0.1);
+  --surface-active: rgba(255, 255, 255, 0.18);
+
+  --border-divider: #7A7A83;
+  --border-strong: #9A9AA3;
+  --border-focus: #FFFFFF;
+  --control-border: var(--border-strong);
+  --canvas-dot: rgba(255, 255, 255, 0.18);
+
+  --glass-surface: var(--zinc-900);
+  --glass-filter: none;
+  --glass-edge: transparent;
+  --glass-cast: 0 0 0 1px #9A9AA3;
+  --shadow-float: 0 0 0 1px #9A9AA3;
+  --shadow-overlay: 0 0 0 1px #9A9AA3;
+
+  --accent-quiet: color-mix(in srgb, var(--brand-orange) 30%, transparent);
+  --accent-line: var(--text-accent);
+
+  --status-online: #34D399;
+  --status-offline: #F87171;
+  --status-danger: #F87171;
+  --status-syncing: #FCD34D;
+  --status-warning: #FCD34D;
+
+  --focus-ring-color: var(--text-primary);
+  --focus-field-color: var(--text-secondary);
+  --focus-ring-width: 3px;
+  --hover-outline: var(--text-primary);
+}
+
+/* Forced colours: the OS owns the palette, and it removes box-shadows, which
+   is what the app's focus ring is drawn with. Hand the ring to an outline in
+   the system highlight so keyboard focus never disappears. */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+
+/* The setting itself, as it appears on a settings surface. */
+.contrast-setting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+}
+.contrast-setting__label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+.contrast-setting__note {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}

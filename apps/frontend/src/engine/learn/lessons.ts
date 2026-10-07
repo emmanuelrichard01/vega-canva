@@ -355,6 +355,17 @@ export const LESSONS: readonly Lesson[] = [
     ],
   },
   {
+    id: 'table-cells',
+    trigger: { on: 'tool', tools: ['table'] },
+    title: 'A table is a small spreadsheet',
+    gist: 'The cells take formulas and pasted blocks, so the numbers on the board can do sums rather than sit there.',
+    steps: [
+      { act: 'Drag out a table, then double-click it', gives: 'Its cells, open to type in' },
+      { act: 'Start a cell with =, like =SUM(B2:B5)', gives: 'A total that recalculates as the numbers change' },
+      { act: 'Paste a block copied from Excel or Sheets', gives: 'Real rows and columns, not one cell of text' },
+    ],
+  },
+  {
     id: 'comment-thread',
     trigger: { on: 'tool', tools: ['comment'] },
     title: 'Comments are pinned to the work',

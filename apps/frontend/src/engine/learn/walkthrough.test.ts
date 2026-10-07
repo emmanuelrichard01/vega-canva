@@ -133,6 +133,9 @@ describe('a walkthrough refers to a lesson rather than restating it', () => {
         'grid-content',
         'image-reframe',
         'offline',
+        // Same reason as `chart-data`: a cell editor session and a paste from
+        // another program, neither of which leaves a fact in the document.
+        'table-cells',
         'text-box',
         'text-to-path',
         'voice-note',

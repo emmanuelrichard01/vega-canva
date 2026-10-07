@@ -6,6 +6,7 @@ import { previewColorOf, previewPointsOf } from '../model/previewPaint';
 import {
   BRAND, BRAND_INK, HAIRLINE, HUE, INK, INK_FAINT, INK_MID, INK_SOFT, INK_STRONG,
   layer, PAPER, PAPER_SOFT, RULE, SIGNAL_OK, strokeOf, contrast, TINT, chart, plot,
+  frame, hue, link, sticky as kitSticky,
 } from './templateKit';
 import { SCIENCE_TEMPLATES } from './scienceTemplates';
 import { TABLE_TEMPLATES } from './tableTemplates';
@@ -122,21 +123,16 @@ export interface Template {
   build: (limit?: number) => NewNodeInput[];
 }
 
-/** Shorthand builders, so the layouts below read as layout and not as plumbing. */
-const sticky = (x: number, y: number, text: string, theme: StickyTheme = 'yellow'): NewNodeInput => ({
-  id: nanoid(),
-  type: 'sticky',
-  x,
-  y,
-  width: 180,
-  height: 180,
-  text,
-  theme,
-  fontSize: 16,
-  reactions: {},
-  tags: [],
-  pinned: false,
-});
+/**
+ * Shorthand builders, so the layouts below read as layout and not as plumbing.
+ *
+ * `frame`, `link` and `hue` come from `templateKit`. `sticky` is the kit's at
+ * this file's larger type size. `box` stays local on purpose: these boards size
+ * their labels by box width and take a literal fill, where the kit's takes a
+ * tint name.
+ */
+const sticky = (x: number, y: number, text: string, theme: StickyTheme = 'yellow'): NewNodeInput =>
+  kitSticky(x, y, text, theme, { fontSize: 16 });
 
 const box = (
   x: number,
@@ -232,46 +228,6 @@ const label = (
   };
 };
 
-
-const frame = (x: number, y: number, width: number, height: number, title: string): NewNodeInput => ({
-  id: nanoid(),
-  type: 'frame',
-  x,
-  y,
-  width,
-  height,
-  title,
-});
-
-const link = (
-  fromId: string,
-  toId: string,
-  extra: Record<string, unknown> = {}
-): NewNodeInput => ({
-  id: nanoid(),
-  type: 'connector',
-  // Derived from the route on the first render; these only seed the box.
-  x: 0,
-  y: 0,
-  width: 1,
-  height: 1,
-  from: { nodeId: fromId, port: 'auto' },
-  to: { nodeId: toId, port: 'auto' },
-  routing: 'orthogonal',
-  endEnd: 'arrow',
-  appearance: { stroke: { color: HUE.slate, width: 2, cap: 'round' } },
-  ...extra,
-});
-
-/**
- * A ring of hues, evenly spaced.
- *
- * HSL rather than a fixed palette: the showcase boards need hundreds of
- * colours that stay related, and interpolating a list of eight would give
- * banding exactly where the eye is most likely to look for structure.
- */
-const hue = (t: number, saturation = 68, lightness = 62): string =>
-  `hsl(${Math.round(((t % 1) + 1) % 1 * 360)}, ${saturation}%, ${lightness}%)`;
 
 const BASE_TEMPLATES: Template[] = [
   {

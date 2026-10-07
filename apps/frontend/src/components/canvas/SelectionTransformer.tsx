@@ -27,6 +27,8 @@ import { claimCursor } from '../../engine/cursor/cursorOverride';
 import { RotateZones } from './RotateZones';
 import { layoutCode, measureCharWidth } from '../../engine/code/codeLayout';
 import { CODE_FONT } from '../../engine/code/codeThemes';
+import { canvasChromeContrast, useContrast } from '../../engine/ui/contrast';
+import { chromeSurfaceColor } from '../../engine/interaction/chromeHalo';
 
 interface Props {
   selectedIds: string[];
@@ -171,6 +173,32 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     railVeil.getMoveSnapshot,
   );
   const chromeOpacity = useChromeFade(moving);
+
+  /**
+   * Enhanced contrast: heavier lines and a surface-coloured halo under the
+   * border and handles, so the selection reads over busy board content.
+   * Konva draws the border itself, so the halo is a zero-offset shadow in the
+   * surface colour on its "back" shape and on each handle.
+   */
+  const { enhanced } = useContrast();
+  const { strokeScale, halo } = canvasChromeContrast(enhanced);
+  const haloRef = useRef({ halo, surface: '' });
+  haloRef.current = { halo, surface: halo ? chromeSurfaceColor() : '' };
+  useEffect(() => {
+    const tr = trRef.current;
+    if (!tr) return;
+    const back = tr.findOne('.back') as Konva.Shape | undefined;
+    if (back) {
+      back.shadowEnabled(halo);
+      back.shadowColor(haloRef.current.surface || 'transparent');
+      back.shadowBlur(halo ? 4 : 0);
+      back.shadowOpacity(1);
+      back.shadowOffset({ x: 0, y: 0 });
+      back.shadowForStrokeEnabled(true);
+    }
+    tr.forceUpdate();
+    tr.getLayer()?.batchDraw();
+  }, [halo, selectedIds]);
   /** Live dimensions (e.g. 240 × 180) or angle (e.g. 45°) HUD badge while transforming. */
   const [liveBadge, setLiveBadge] = useState<{ text: string; x: number; y: number } | null>(null);
 
@@ -900,10 +928,12 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
    * a height, but they are not the size of anything the user selected, and a
    * number under a group of objects reads as a claim about each of them.
    */
+  // A multi-selection says how many it holds as well as how big it is, so a
+  // marquee that caught one object too many is visible before anything moves.
   const restingBadge =
-    !transforming && selectionBounds && selectedIds.length === 1
+    !transforming && selectionBounds && selectedIds.length >= 1
       ? {
-          text: `${Math.round(selectionBounds.bounds.width)} × ${Math.round(selectionBounds.bounds.height)}`,
+          text: `${selectedIds.length > 1 ? `${selectedIds.length} objects · ` : ''}${Math.round(selectionBounds.bounds.width)} × ${Math.round(selectionBounds.bounds.height)}`,
           x: selectionBounds.bounds.x + selectionBounds.bounds.width / 2,
           // Below the box, clear of the bottom handles and their padding.
           y: selectionBounds.bounds.y + selectionBounds.bounds.height + BADGE_DROP / (stageRef.current?.scaleX() || 1),
@@ -991,9 +1021,9 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
       // something is a continuation of hovering it rather than a new colour
       // appearing. The old 2px sky was heavier than the objects it framed.
       borderStroke={ACCENT}
-      borderStrokeWidth={1}
+      borderStrokeWidth={strokeScale}
       anchorStroke={ACCENT}
-      anchorStrokeWidth={1}
+      anchorStrokeWidth={strokeScale}
       anchorFill={HANDLE_FILL}
       anchorSize={9}
       /**
@@ -1002,13 +1032,15 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
        * identical asks the user to remember which is which; shaping each one
        * like its job means they do not have to.
        */
-      /**
-       * Corners and edges are drawn differently, because they *do* different
-       * things: a corner scales both axes, an edge scales one. Making them
-       * identical asks the user to remember which is which; shaping each one
-       * like its job means they do not have to.
-       */
       anchorStyleFunc={(anchor) => {
+        const { halo: withHalo, surface } = haloRef.current;
+        anchor.shadowEnabled(withHalo);
+        if (withHalo) {
+          anchor.shadowColor(surface);
+          anchor.shadowBlur(4);
+          anchor.shadowOpacity(1);
+          anchor.shadowOffset({ x: 0, y: 0 });
+        }
         const name = anchor.name().split(' ')[0];
         if (CORNERS.has(name)) {
           anchor.cornerRadius(2.5);
