@@ -94,6 +94,14 @@ export class SelectTool implements Tool {
     marqueeActivity.set(false);
   }
 
+  /** A marquee interrupted by a pinch or a long-press selects nothing. */
+  onCancel(ctx: ToolContext) {
+    if (!this.isMarquee) return;
+    this.isMarquee = false;
+    marqueeActivity.set(false);
+    ctx.setOverlayState?.(null);
+  }
+
   renderOverlay(ctx: ToolContext, overlayState: any) {
     if (overlayState?.type === 'marquee') {
       const zoom = ctx.camera.zoom || 1;

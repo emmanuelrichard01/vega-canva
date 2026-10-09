@@ -60,9 +60,16 @@ export interface Box {
  */
 export const ROTATE_REACH = 26;
 
+/**
+ * The reach on a coarse pointer: the corner's 44px resize target takes the
+ * first 22px, so the ring that turns the object starts there and is a
+ * finger's width deep.
+ */
+export const TOUCH_ROTATE_REACH = 50;
+
 /** The reach in world units, for the zoom the board is currently at. */
-export function reachAt(zoom: number): number {
-  return ROTATE_REACH / Math.max(zoom, 0.0001);
+export function reachAt(zoom: number, coarse = false): number {
+  return (coarse ? TOUCH_ROTATE_REACH : ROTATE_REACH) / Math.max(zoom, 0.0001);
 }
 
 /**
@@ -272,8 +279,14 @@ export const HANDLE_REACH = 8;
 /** Below this on-screen size the ring shrinks so the resize handles stay reachable. */
 export const SMALL_OBJECT = 24;
 
+/** The touch resize target's reach from its corner (half of 44px). */
+export const TOUCH_HANDLE_REACH = 22;
+/** Ring depth on a coarse pointer, in screen px. */
+export const TOUCH_RING_DEPTH = 26;
+
 /** Inner and outer radius (screen px) of a corner's quarter ring. */
-export function ringRadii(screenMinSide: number): { inner: number; outer: number } {
+export function ringRadii(screenMinSide: number, coarse = false): { inner: number; outer: number } {
+  if (coarse) return { inner: TOUCH_HANDLE_REACH, outer: TOUCH_HANDLE_REACH + TOUCH_RING_DEPTH };
   const small = screenMinSide < SMALL_OBJECT;
   const inner = small ? HANDLE_REACH + 2 : HANDLE_REACH;
   return { inner, outer: inner + (small ? RING_DEPTH / 2 : RING_DEPTH) };
@@ -289,11 +302,12 @@ export function inCornerRing(
   outward: { sx: number; sy: number },
   point: Point,
   zoom: number,
-  screenMinSide: number
+  screenMinSide: number,
+  coarse = false
 ): boolean {
   const dx = (point.x - corner.x) * zoom;
   const dy = (point.y - corner.y) * zoom;
-  const { inner, outer } = ringRadii(screenMinSide);
+  const { inner, outer } = ringRadii(screenMinSide, coarse);
   const d = Math.hypot(dx, dy);
   // Quarter: both components on the outward side, or one outward and one tiny.
   const okX = dx * outward.sx >= -inner * 0.5;

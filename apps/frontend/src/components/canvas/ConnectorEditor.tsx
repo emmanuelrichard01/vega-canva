@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Circle, Group, Line, Rect } from 'react-konva';
 import type Konva from 'konva';
+import { touchHitPad } from '../../engine/ui/device';
 import { updateNode } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import {
@@ -143,6 +144,8 @@ export const ConnectorEditor: React.FC<Props> = ({ node, stageScale }) => {
         fill={bound ? ACCENT : '#FFFFFF'}
         stroke={ACCENT}
         strokeWidth={1.5 / stageScale}
+        // A full touch target on a finger; unchanged under a mouse.
+        hitStrokeWidth={touchHitPad(HANDLE) / stageScale || undefined}
         draggable
         name={EXPORT_CHROME}
         onDragStart={() => {
@@ -324,6 +327,7 @@ const SegmentHandles: React.FC<{
         fill="#FFFFFF"
         stroke={ACCENT}
         strokeWidth={1.5 / stageScale}
+        hitStrokeWidth={touchHitPad(short * stageScale) / stageScale || undefined}
         draggable
         name={EXPORT_CHROME}
         dragBoundFunc={function (this: Konva.Node, pos) {

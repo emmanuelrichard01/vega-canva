@@ -15,6 +15,12 @@ export interface Tool {
   onPointerDown(ctx: ToolContext, e: any): void;
   onPointerMove(ctx: ToolContext, e: any): void;
   onPointerUp(ctx: ToolContext, e: any): void;
+  /**
+   * Abandon the press in progress without finishing it — a second finger
+   * landing, or a long-press turning into a menu. A tool without it has the
+   * press ended with `onPointerUp` instead.
+   */
+  onCancel?(ctx: ToolContext): void;
   onKeyDown?(ctx: ToolContext, e: KeyboardEvent): void;
   onKeyUp?(ctx: ToolContext, e: KeyboardEvent): void;
   

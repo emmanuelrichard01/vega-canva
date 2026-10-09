@@ -7,10 +7,13 @@ import { AppErrorBoundary } from './components/ui/AppErrorBoundary';
 import { initFrontendObservability } from './utils/observability';
 import { reloadForNewVersion } from './components/ui/chunkError';
 import { initContrast } from './engine/ui/contrast';
+import { installDeviceSignal } from './engine/ui/device';
 
 initFrontendObservability();
 // Before the first render, so nothing paints at the wrong contrast.
 initContrast();
+// `data-pointer` and `data-device` on <html>, before the first paint too.
+installDeviceSignal();
 
 /**
  * A lazy chunk that will not load, usually because a deploy replaced it while

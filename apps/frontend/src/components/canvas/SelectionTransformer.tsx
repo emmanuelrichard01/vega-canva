@@ -34,6 +34,7 @@ import { hud } from '../../engine/ui/hud';
 import { normaliseDegrees, onSnapAngle } from '../../engine/ui/hudFormat';
 import { rotatedBounds } from '../../engine/ui/hudPlace';
 import { clientToWorld } from '../../engine/interaction/clientToWorld';
+import { touchHitPad } from '../../engine/ui/device';
 
 interface Props {
   selectedIds: string[];
@@ -1131,8 +1132,18 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
           anchor.shadowOffset({ x: 0, y: 0 });
         }
         const name = anchor.name().split(' ')[0];
+        /**
+         * On a finger, each handle hits as a full 44px target while it still
+         * draws at its compact size: the hit stroke reaches past the visual
+         * by half the difference on every side. A mouse keeps Konva's default.
+         */
+        const hitFor = (visual: number) => {
+          const pad = touchHitPad(visual);
+          anchor.hitStrokeWidth(pad > 0 ? pad : 'auto');
+        };
         if (CORNERS.has(name)) {
           anchor.cornerRadius(2.5);
+          hitFor(anchor.width());
           return;
         }
         // Edge midpoints: a short bar lying along the edge it belongs to, so
@@ -1143,6 +1154,7 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
         anchor.offsetX(anchor.width() / 2);
         anchor.offsetY(anchor.height() / 2);
         anchor.cornerRadius(3);
+        hitFor(Math.min(anchor.width(), anchor.height()));
       }}
       padding={4}
       rotationSnaps={[0, 45, 90, 135, 180, 225, 270, 315]}

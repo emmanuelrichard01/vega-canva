@@ -2,20 +2,27 @@ import { useState, useEffect, useRef } from 'react';
 import { cameraSystem } from '../engine/CameraSystem';
 import { presenceManager } from '../engine/presence/PresenceManager';
 import { engineEvents } from '../engine/EventBus';
+import { GestureRecognizer, type GestureEffect, type GestureInput } from '../engine/interaction/gestures';
 
 export interface CanvasNavigationOptions {
   containerRef: React.RefObject<HTMLDivElement | null>;
   stageRef: React.RefObject<any>;
+  /** Abandon the tool's press in progress (a second finger, a long-press). */
   onCancelInteractions?: () => void;
+  /** A long-press at this client point: open the context menu there. */
+  onLongPress?: (clientX: number, clientY: number) => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }
 
 export function useCanvasNavigation({
   containerRef,
   onCancelInteractions,
+  onLongPress,
+  onUndo,
+  onRedo,
 }: CanvasNavigationOptions) {
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
-  const pinchRef = useRef<{ dist: number; midX: number; midY: number } | null>(null);
-  const isMultiTouchRef = useRef(false);
 
   // ResizeObserver for canvas dimensions with SSR/Node environment guard
   useEffect(() => {
@@ -136,50 +143,139 @@ export function useCanvasNavigation({
     };
   }, [containerRef]);
 
-  const touchMetrics = (touches: TouchList) => {
-    const [a, b] = [touches[0], touches[1]];
-    const dx = b.clientX - a.clientX;
-    const dy = b.clientY - a.clientY;
-    return {
-      dist: Math.hypot(dx, dy) || 1,
-      midX: (a.clientX + b.clientX) / 2,
-      midY: (a.clientY + b.clientY) / 2,
+  /**
+   * Touch and pen gestures, through the pure recogniser.
+   *
+   * Read from the container's pointer events in the capture phase, which the
+   * browser fires before the touch events the stage listens to — so by the
+   * time the stage hears a `touchstart`, `touchMayDriveTool` already knows
+   * whether that contact belongs to the tool, the camera or a resting palm.
+   * Mouse pointers are ignored by the recogniser, so none of this runs on a
+   * desktop.
+   */
+  const recognizerRef = useRef<GestureRecognizer | null>(null);
+  if (!recognizerRef.current) recognizerRef.current = new GestureRecognizer();
+  const lastPointerTypeRef = useRef<string>('mouse');
+  const callbacksRef = useRef({ onCancelInteractions, onLongPress, onUndo, onRedo });
+  callbacksRef.current = { onCancelInteractions, onLongPress, onUndo, onRedo };
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const g = recognizerRef.current!;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    /** Camera anchors are stage-relative; the stage is inset by the rulers and header. */
+    const stageOrigin = () => {
+      const rect = el.querySelector('.konvajs-content')?.getBoundingClientRect();
+      return { left: rect?.left ?? 0, top: rect?.top ?? 0 };
     };
-  };
 
-  const handleTouchStartNative = (e: React.TouchEvent) => {
-    if (e.touches.length >= 2) {
-      isMultiTouchRef.current = true;
-      pinchRef.current = touchMetrics(e.touches as unknown as TouchList);
-      onCancelInteractions?.();
+    const apply = (effects: GestureEffect[]) => {
+      for (const fx of effects) {
+        switch (fx.type) {
+          case 'cancel-primary':
+            callbacksRef.current.onCancelInteractions?.();
+            break;
+          case 'camera': {
+            const o = stageOrigin();
+            if (fx.panX || fx.panY) cameraSystem.panBy(fx.panX, fx.panY);
+            if (fx.scale !== 1) cameraSystem.zoomBy(fx.scale, fx.cx - o.left, fx.cy - o.top, true);
+            break;
+          }
+          case 'long-press':
+            callbacksRef.current.onLongPress?.(fx.x, fx.y);
+            break;
+          case 'undo':
+            callbacksRef.current.onUndo?.();
+            break;
+          case 'redo':
+            callbacksRef.current.onRedo?.();
+            break;
+          // Double-tap is served by the stage's own `dbltap` handlers (edit
+          // text, a sticky or a label; enter a group). The recogniser only
+          // has to keep it from counting as anything else.
+          default:
+            break;
+        }
+      }
+    };
+
+    const schedule = () => {
+      clearTimeout(timer);
+      const due = g.nextDeadline();
+      if (due === null) return;
+      timer = setTimeout(() => {
+        apply(g.tick(performance.now()));
+      }, Math.max(0, due - performance.now()));
+    };
+
+    const feed = (kind: GestureInput['kind']) => (e: PointerEvent) => {
+      if (e.pointerType === 'mouse') {
+        lastPointerTypeRef.current = 'mouse';
+        return;
+      }
+      if (kind === 'down') {
+        lastPointerTypeRef.current = e.pointerType;
+        // Only contacts that land on the board start or join a gesture; a tap
+        // on a DOM overlay inside the container is that overlay's.
+        const board = el.querySelector('.konvajs-content');
+        const onBoard = !!board && !!e.target && board.contains(e.target as Node);
+        if (!onBoard && !g.navigating) return;
+      }
+      const effects = g.handle({ kind, id: e.pointerId, pointerType: e.pointerType, x: e.clientX, y: e.clientY, t: performance.now() });
+      if (g.navigating && e.cancelable && kind === 'move') e.preventDefault();
+      apply(effects);
+      schedule();
+    };
+
+    const down = feed('down');
+    const move = feed('move');
+    const up = feed('up');
+    const cancel = feed('cancel');
+    el.addEventListener('pointerdown', down, true);
+    // Moves and releases are heard on the window: a finger that slides off the
+    // board mid-pinch must still lift.
+    window.addEventListener('pointermove', move, true);
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('pointercancel', cancel, true);
+    return () => {
+      clearTimeout(timer);
+      el.removeEventListener('pointerdown', down, true);
+      window.removeEventListener('pointermove', move, true);
+      window.removeEventListener('pointerup', up, true);
+      window.removeEventListener('pointercancel', cancel, true);
+      g.reset();
+    };
+  }, [containerRef]);
+
+  /**
+   * May this stage event reach the active tool?
+   *
+   * Mouse events always may: that is the desktop, and the pen on platforms
+   * that deliver it as a mouse. A touch event may when the recogniser gave the
+   * contact to the tool — one finger — or when a stylus is drawing and the
+   * event carries it (`touchType === 'stylus'`, which is how iPadOS delivers
+   * Apple Pencil). A pinch, a pan and a resting palm never reach the tool.
+   */
+  const touchMayDriveTool = (evt: Event | undefined): boolean => {
+    if (!evt || typeof evt.type !== 'string' || !evt.type.startsWith('touch')) return true;
+    const owner = recognizerRef.current!.owner;
+    if (owner === 'touch') return true;
+    if (owner !== 'pen') return false;
+    if (evt.type === 'touchmove' || evt.type === 'touchend' || evt.type === 'touchcancel') return true;
+    const changed = (evt as TouchEvent).changedTouches;
+    if (!changed) return false;
+    for (let i = 0; i < changed.length; i++) {
+      if ((changed[i] as Touch & { touchType?: string }).touchType === 'stylus') return true;
     }
-  };
-
-  const handleTouchMoveNative = (e: React.TouchEvent) => {
-    if (e.touches.length < 2 || !pinchRef.current) return;
-    e.preventDefault();
-
-    const next = touchMetrics(e.touches as unknown as TouchList);
-    const prev = pinchRef.current;
-
-    cameraSystem.zoomBy(next.dist / prev.dist, next.midX, next.midY, true);
-    cameraSystem.panBy(next.midX - prev.midX, next.midY - prev.midY);
-
-    pinchRef.current = next;
-  };
-
-  const handleTouchEndNative = (e: React.TouchEvent) => {
-    if (e.touches.length < 2) {
-      pinchRef.current = null;
-      if (e.touches.length === 0) isMultiTouchRef.current = false;
-    }
+    return false;
   };
 
   return {
     dimensions,
-    isMultiTouchRef,
-    handleTouchStartNative,
-    handleTouchMoveNative,
-    handleTouchEndNative,
+    touchMayDriveTool,
+    /** The kind of pointer that last went down: 'mouse', 'touch' or 'pen'. */
+    lastPointerTypeRef,
   };
 }

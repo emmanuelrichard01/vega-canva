@@ -886,19 +886,41 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     return tm;
   }, []);
 
-  const {
-    dimensions,
-    isMultiTouchRef,
-    handleTouchStartNative,
-    handleTouchMoveNative,
-    handleTouchEndNative,
-  } = useCanvasNavigation({
+  /** Set below, once the stage's context-menu resolver exists. */
+  const openMenuAtRef = useRef<(target: Konva.Node | null, clientX: number, clientY: number) => void>(() => {});
+
+  const { dimensions, touchMayDriveTool, lastPointerTypeRef } = useCanvasNavigation({
     containerRef,
     stageRef,
+    /**
+     * A second finger or a long-press takes over: the one-finger action stops
+     * where it is rather than finishing. Tools that can abandon a press do; a
+     * drag or a resize already under way is stopped in place.
+     */
     onCancelInteractions: () => {
+      const stage = stageRef.current as Konva.Stage | null;
       pressActiveRef.current = false;
-      toolManager.handlePointerUp({ target: { getStage: () => stageRef.current } });
+      toolManager.cancelGesture({ target: { getStage: () => stage } });
       setOverlayState(null);
+      presenceManager.updateActivity(null);
+      stage?.find((n: Konva.Node) => n.isDragging()).forEach((n) => n.stopDrag());
+      stage?.find('Transformer').forEach((t) => {
+        const tr = t as Konva.Transformer;
+        if (tr.isTransforming()) tr.stopTransform();
+      });
+    },
+    onLongPress: (clientX, clientY) => {
+      const stage = stageRef.current as Konva.Stage | null;
+      if (!stage) return;
+      const rect = stage.container().getBoundingClientRect();
+      const hit = stage.getIntersection({ x: clientX - rect.left, y: clientY - rect.top });
+      openMenuAtRef.current(hit, clientX, clientY);
+    },
+    onUndo: () => {
+      if (canEditRef.current) editor.undo();
+    },
+    onRedo: () => {
+      if (canEditRef.current) editor.redo();
     },
   });
 
@@ -929,8 +951,8 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   }, [toolManager]);
 
   const handleStageClick = (e: any) => {
-    // A pinch in progress owns the viewport; tools must not also fire.
-    if (isMultiTouchRef.current) return;
+    // A pinch, a pan or a resting palm owns this touch; the tool must not fire.
+    if (!touchMayDriveTool(e?.evt)) return;
     pressActiveRef.current = true;
     // Holding Space pans whatever tool is active (the Figma/Photoshop
     // convention), through a dedicated HandTool so the active tool never sees
@@ -985,7 +1007,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   };
 
   const handleMouseMoveExt = (e: any) => {
-    if (isMultiTouchRef.current) return;
+    if (!touchMayDriveTool(e?.evt)) return;
     // The container's own mousemove already publishes the cursor for a mouse;
     // a touch drag fires no mousemove, so it is published from here.
     if (typeof e?.evt?.type === 'string' && e.evt.type.startsWith('touch')) handleMouseMove();
@@ -1020,7 +1042,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   };
 
   const handleMouseUp = (e: any) => {
-    if (isMultiTouchRef.current) return;
+    if (!touchMayDriveTool(e?.evt)) return;
     const hadPress = pressActiveRef.current;
     pressActiveRef.current = false;
     if (spacePanActiveRef.current) {
@@ -1106,6 +1128,63 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     };
   }, []);
 
+  /**
+   * The board's own menu, for whatever is under (clientX, clientY).
+   *
+   * Right-click and long-press both arrive here, with the shape the stage
+   * resolved under the pointer.
+   */
+  openMenuAtRef.current = (target, clientX, clientY) => {
+    /**
+     * Walk up until an ancestor carries a node id.
+     *
+     * A press lands on whatever leaf is under it — a `Path`, a `Text`, one
+     * stroke of a sketch — and only the object's outermost `Group` carries
+     * the id. Checking the target and one parent covered the simple
+     * renderers and missed anything nested deeper, which is every sketched
+     * shape and every labelled line.
+     */
+    let cursor: { id?: () => string; getParent?: () => unknown } | null = target as typeof cursor;
+    let underPointer: string | null = null;
+    for (let depth = 0; cursor && depth < 8; depth++) {
+      const id = cursor.id?.();
+      if (id && objects[id]) {
+        underPointer = id;
+        break;
+      }
+      cursor = (cursor.getParent?.() ?? null) as typeof cursor;
+    }
+    // Right-clicking something outside the current selection selects it
+    // first, which is what every editor does — acting on a hidden
+    // selection is how a menu deletes the wrong thing.
+    /**
+     * Right-clicking one member of a group targets the whole group.
+     *
+     * The left-click path already does this; the menu did not, so a
+     * grouped flowchart right-clicked on one of its boxes offered actions
+     * for that box alone. Grouping is the clearest signal a person can
+     * give that a set of objects is one thing — it is the answer to "how
+     * does the canvas know this is a diagram" — so the menu has to read
+     * it the same way selection does.
+     */
+    const grouped = (id: string): string[] =>
+      selectionWithin(
+        Object.keys(objects),
+        objects as Record<string, { id: string; parentId?: string }>,
+        groups,
+        id,
+        enteredGroupRef.current
+      );
+
+    const ids = underPointer
+      ? selectedIds.includes(underPointer)
+        ? selectedIds
+        : grouped(underPointer)
+      : [];
+    if (underPointer && !selectedIds.includes(underPointer)) setSelectedIds?.(ids);
+    onRequestContextMenu?.({ x: clientX, y: clientY, ids });
+  };
+
   // Remote cursors and selections are DOM overlays (RemoteCursors,
   // PresenceRenderer). The local pointer is the OS one.
 
@@ -1120,14 +1199,20 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       // The dot field is a CSS background on this element, so switching it off
       // is one attribute rather than a second painting path.
       data-grid={showGrid ? 'on' : 'off'}
-      style={{ touchAction: 'none', ...boardBackgroundStyle(boardBackground) }}
+      // The board owns every touch: no browser pan, pinch or double-tap zoom,
+      // no rubber-band, and no text-selection callout or magnifier on a long
+      // press — that press opens our menu instead.
+      style={{
+        touchAction: 'none',
+        overscrollBehavior: 'none',
+        WebkitTouchCallout: 'none',
+        WebkitUserSelect: 'none',
+        WebkitTapHighlightColor: 'transparent',
+        ...boardBackgroundStyle(boardBackground),
+      }}
       ref={containerRef}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
-      onTouchStart={handleTouchStartNative}
-      onTouchMove={handleTouchMoveNative}
-      onTouchEnd={handleTouchEndNative}
-      onTouchCancel={handleTouchEndNative}
     >
       {/* Our pointer art, installed as real CSS cursors. It renders nothing:
           a drawn element is composited with the page and is a frame behind the
@@ -1179,55 +1264,11 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
          */
         onContextMenu={(e) => {
           e.evt.preventDefault();
-          /**
-           * Walk up until an ancestor carries a node id.
-           *
-           * A click lands on whatever leaf is under it — a `Path`, a `Text`, one
-           * stroke of a sketch — and only the object's outermost `Group` carries
-           * the id. Checking the target and one parent covered the simple
-           * renderers and missed anything nested deeper, which is every sketched
-           * shape and every labelled line: right-clicking one gave the
-           * empty-board menu while plainly being on top of an object.
-           */
-          let cursor: { id?: () => string; getParent?: () => unknown } | null = e.target;
-          let underPointer: string | null = null;
-          for (let depth = 0; cursor && depth < 8; depth++) {
-            const id = cursor.id?.();
-            if (id && objects[id]) {
-              underPointer = id;
-              break;
-            }
-            cursor = (cursor.getParent?.() ?? null) as typeof cursor;
-          }
-          // Right-clicking something outside the current selection selects it
-          // first, which is what every editor does — acting on a hidden
-          // selection is how a menu deletes the wrong thing.
-          /**
-           * Right-clicking one member of a group targets the whole group.
-           *
-           * The left-click path already does this; the menu did not, so a
-           * grouped flowchart right-clicked on one of its boxes offered actions
-           * for that box alone. Grouping is the clearest signal a person can
-           * give that a set of objects is one thing — it is the answer to "how
-           * does the canvas know this is a diagram" — so the menu has to read
-           * it the same way selection does.
-           */
-          const grouped = (id: string): string[] =>
-            selectionWithin(
-              Object.keys(objects),
-              objects as Record<string, { id: string; parentId?: string }>,
-              groups,
-              id,
-              enteredGroupRef.current
-            );
-
-          const ids = underPointer
-            ? selectedIds.includes(underPointer)
-              ? selectedIds
-              : grouped(underPointer)
-            : [];
-          if (underPointer && !selectedIds.includes(underPointer)) setSelectedIds?.(ids);
-          onRequestContextMenu?.({ x: e.evt.clientX, y: e.evt.clientY, ids });
+          // A finger asks for the menu by long-pressing, which the gesture
+          // recogniser already answered; Android's own long-press
+          // `contextmenu` would open it a second time.
+          if (lastPointerTypeRef.current === 'touch') return;
+          openMenuAtRef.current(e.target, e.evt.clientX, e.evt.clientY);
         }}
         draggable={false} // Disable Konva dragging. We will pan manually, or let Spacebar trigger pan in mouse events.
       >

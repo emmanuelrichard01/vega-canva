@@ -18,6 +18,7 @@ import { editorKeyIntent } from './nodeEditorKeys';
 import type { Typography } from '../../engine/model/schema';
 import { domTextStyle } from './renderers/shared';
 import { lineLabelWorld } from '../../engine/model/lineLabel';
+import { isCoarse, keyboardLift } from '../../engine/ui/device';
 
 interface Props {
   node: TextBearingNode;
@@ -148,6 +149,34 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit }) => {
     engineEvents.on('CameraChanged', onCameraChange);
     return () => engineEvents.off('CameraChanged', onCameraChange);
   }, []);
+
+  /**
+   * Keep the editor above the on-screen keyboard.
+   *
+   * The keyboard shrinks the visual viewport, not the layout one, so nothing
+   * else notices it. When it would cover the box being typed into, the board
+   * is panned up by just enough — the object moves, and the editor, which
+   * follows the camera, moves with it. Coarse pointers only: a desktop has no
+   * on-screen keyboard and its visual viewport only changes with the window.
+   */
+  useEffect(() => {
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    if (!vv || !isCoarse()) return;
+    const avoid = () => {
+      const box = textareaRef.current?.getBoundingClientRect();
+      if (!box) return;
+      const lift = keyboardLift(box, vv.offsetTop, vv.offsetTop + vv.height);
+      if (lift > 0) cameraSystem.panBy(0, -lift);
+    };
+    vv.addEventListener('resize', avoid);
+    vv.addEventListener('scroll', avoid);
+    // The keyboard may already be up when editing moves to another object.
+    avoid();
+    return () => {
+      vv.removeEventListener('resize', avoid);
+      vv.removeEventListener('scroll', avoid);
+    };
+  }, [node.id]);
 
   const zoom = cameraSystem.zoom;
 

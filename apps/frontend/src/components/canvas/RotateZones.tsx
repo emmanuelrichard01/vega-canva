@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import Konva from 'konva';
 import { Arc, Circle, Group, Line, Rect } from 'react-konva';
 import { cameraSystem } from '../../engine/CameraSystem';
+import { isCoarse } from '../../engine/ui/device';
 import { engineEvents } from '../../engine/EventBus';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { claimCursor } from '../../engine/cursor/cursorOverride';
@@ -326,7 +327,9 @@ export const RotateZones: React.FC<Props> = ({
   const busy = gesture.current !== null;
   if (!busy && (transforming || box.width <= 0 || box.height <= 0)) return null;
 
-  const reach = reachAt(zoom);
+  // A finger gets the larger ring, outside the 44px corner target.
+  const coarse = isCoarse();
+  const reach = reachAt(zoom, coarse);
   const zones = rotateZones(box, reach);
   const centre = centreOf(box);
 
@@ -344,7 +347,7 @@ export const RotateZones: React.FC<Props> = ({
     if (!p) return null;
     const world = cameraSystem.screenToWorld(p.x, p.y);
     const local = intoFrame(centre, world, rotation);
-    return inCornerRing(cornerPts[i], CORNER_SIGNS[i], local, zoom, screenMin) ? world : null;
+    return inCornerRing(cornerPts[i], CORNER_SIGNS[i], local, zoom, screenMin, coarse) ? world : null;
   };
 
   /**

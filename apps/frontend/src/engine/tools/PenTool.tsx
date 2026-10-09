@@ -331,6 +331,10 @@ export class PenTool implements Tool {
     if (useStore.getState().penKeepSelected) ctx.editor.select(id);
   }
 
+  onCancel(ctx: ToolContext) {
+    this.abandon(ctx);
+  }
+
   onDeactivate(ctx: ToolContext) {
     this.abandon(ctx);
   }

@@ -119,6 +119,15 @@ export class ToolManager {
     this.getActiveTool()?.onPointerUp(this.context, e);
   }
 
+  /** End the press in progress without committing it, where the tool can. */
+  cancelGesture(e: any) {
+    if (!this.pressed) return;
+    this.pressed = false;
+    const tool = this.getActiveTool();
+    if (tool?.onCancel) tool.onCancel(this.context);
+    else tool?.onPointerUp(this.context, e);
+  }
+
   handleKeyDown(e: KeyboardEvent) {
     this.getActiveTool()?.onKeyDown?.(this.context, e);
   }

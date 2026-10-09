@@ -44,6 +44,7 @@
 import { portPoint, type Box, type ConnectorEnd, type Point, type Port } from './connector';
 import { anchorFromPoint, normalizeAnchor } from './connectorAnchor';
 import { attachOnOutline, nearestOnOutline, pointInPolygon, rotatePoint } from './shapePerimeter';
+import { touchTolerance } from '../ui/device';
 
 /**
  * How close the pointer must be to an edge midpoint before it snaps, in screen px.
@@ -191,7 +192,8 @@ export function bindingAt(
   candidates: readonly BindCandidate[],
   { scale, excludeId = null }: BindOptions
 ): ConnectorEnd {
-  const portTolerance = PORT_SNAP_SCREEN * scale;
+  // A fingertip covers more than a cursor does: the port catches it from further.
+  const portTolerance = touchTolerance(PORT_SNAP_SCREEN) * scale;
   const edgeBand = EDGE_BAND_SCREEN * scale;
 
   /**

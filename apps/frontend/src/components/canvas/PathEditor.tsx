@@ -1,5 +1,6 @@
 import React, { useSyncExternalStore } from 'react';
 import type Konva from 'konva';
+import { touchHitPad } from '../../engine/ui/device';
 import { Arc, Circle, Group, Line, Path, Rect, Text } from 'react-konva';
 import { deleteNode, updateNode } from '../../engine/document';
 import { useStore } from '../../hooks/useStore';
@@ -564,7 +565,7 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
           x={hx}
           y={hy}
           radius={HANDLE_RADIUS * scale}
-          hitStrokeWidth={HANDLE_RADIUS * 4 * scale}
+          hitStrokeWidth={Math.max(HANDLE_RADIUS * 4, touchHitPad(HANDLE_RADIUS * 2)) * scale}
           fill={isActive ? ACCENT : '#FFFFFF'}
           stroke={ACCENT}
           strokeWidth={scale * 1.5}
@@ -679,7 +680,7 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
                 y={a.y - size / 2}
                 width={size}
                 height={size}
-                hitStrokeWidth={size * 1.5}
+                hitStrokeWidth={Math.max(size * 1.5, touchHitPad(ANCHOR_SIZE) * scale)}
                 fill={isPicked ? ACCENT : '#FFFFFF'}
                 stroke={isPicked ? '#FFFFFF' : ACCENT}
                 strokeWidth={scale * (isPicked ? 1.5 : 1.25)}

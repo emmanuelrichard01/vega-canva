@@ -61,80 +61,95 @@ describe('useCanvasNavigation', () => {
     setDimensionsMock.mockClear();
   });
 
-  it('initializes default dimensions and sets up handlers', () => {
+  it('initializes default dimensions and exposes the touch gate', () => {
     const container = {
       current: {
         clientWidth: 1024,
         clientHeight: 768,
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
+        querySelector: () => null,
       } as unknown as HTMLDivElement,
     };
-    const stage = { current: null };
-    const onCancel = vi.fn();
-
-    const { dimensions, isMultiTouchRef, handleTouchStartNative, handleTouchEndNative } =
-      useCanvasNavigation({
-        containerRef: container,
-        stageRef: stage,
-        onCancelInteractions: onCancel,
-      });
+    const { dimensions, touchMayDriveTool, lastPointerTypeRef } = useCanvasNavigation({
+      containerRef: container,
+      stageRef: { current: null },
+    });
 
     expect(dimensions).toEqual({ width: 800, height: 600 });
-    expect(isMultiTouchRef.current).toBe(false);
-    expect(typeof handleTouchStartNative).toBe('function');
-    expect(typeof handleTouchEndNative).toBe('function');
+    expect(lastPointerTypeRef.current).toBe('mouse');
+    // Mouse events are never gated: the desktop path is untouched.
+    expect(touchMayDriveTool({ type: 'mousedown' } as Event)).toBe(true);
+    // A touch nobody has claimed is not the tool's.
+    expect(touchMayDriveTool({ type: 'touchstart' } as Event)).toBe(false);
   });
 
-  it('triggers onCancelInteractions when multi-touch pinch starts', () => {
-    const container = { current: null };
-    const stage = { current: null };
-    const onCancel = vi.fn();
+  /** A container whose board contains every target, with real listener lists. */
+  function touchRig() {
+    const el = new MockEventTarget() as MockEventTarget & { querySelector: () => unknown; clientWidth: number; clientHeight: number };
+    el.clientWidth = 800;
+    el.clientHeight = 600;
+    el.querySelector = () => ({ contains: () => true, getBoundingClientRect: () => ({ left: 0, top: 0 }) });
+    const win = (globalThis as any).window as MockEventTarget;
+    const send = (target: MockEventTarget, type: string, id: number, x: number, y: number) =>
+      target.dispatchEvent({ type, pointerId: id, pointerType: 'touch', clientX: x, clientY: y, target: {}, cancelable: false });
+    return {
+      el,
+      down: (id: number, x: number, y: number) => send(el, 'pointerdown', id, x, y),
+      move: (id: number, x: number, y: number) => send(win, 'pointermove', id, x, y),
+      up: (id: number, x: number, y: number) => send(win, 'pointerup', id, x, y),
+    };
+  }
 
-    const { isMultiTouchRef, handleTouchStartNative } = useCanvasNavigation({
-      containerRef: container,
-      stageRef: stage,
+  it('gives one finger to the tool and cancels it when a second lands', () => {
+    const rig = touchRig();
+    const onCancel = vi.fn();
+    const { touchMayDriveTool } = useCanvasNavigation({
+      containerRef: { current: rig.el as unknown as HTMLDivElement },
+      stageRef: { current: null },
       onCancelInteractions: onCancel,
     });
 
-    const mockMultiTouch = {
-      touches: [
-        { clientX: 100, clientY: 100 },
-        { clientX: 200, clientY: 200 },
-      ],
-    } as unknown as React.TouchEvent;
-
-    handleTouchStartNative(mockMultiTouch);
-    expect(isMultiTouchRef.current).toBe(true);
-    expect(onCancel).toHaveBeenCalled();
+    rig.down(1, 100, 100);
+    expect(touchMayDriveTool({ type: 'touchstart' } as Event)).toBe(true);
+    rig.down(2, 200, 100);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(touchMayDriveTool({ type: 'touchmove' } as Event)).toBe(false);
+    rig.up(1, 100, 100);
+    rig.up(2, 200, 100);
   });
 
-  it('resets multi-touch on finger release', () => {
-    const container = { current: null };
-    const stage = { current: null };
-    const onCancel = vi.fn();
+  it('pinch-zooms the camera around the fingers', () => {
+    const rig = touchRig();
+    const zoomBy = vi.spyOn(cameraSystem, 'zoomBy');
+    useCanvasNavigation({ containerRef: { current: rig.el as unknown as HTMLDivElement }, stageRef: { current: null } });
 
-    const { isMultiTouchRef, handleTouchStartNative, handleTouchEndNative } =
-      useCanvasNavigation({
-        containerRef: container,
-        stageRef: stage,
-        onCancelInteractions: onCancel,
-      });
+    rig.down(1, 100, 100);
+    rig.down(2, 200, 100);
+    rig.move(1, 80, 100);
+    rig.move(2, 220, 100);
+    rig.move(1, 60, 100);
+    rig.move(2, 240, 100);
+    expect(zoomBy).toHaveBeenCalled();
+    expect(cameraSystem.zoom).toBeGreaterThan(1);
+    rig.up(1, 60, 100);
+    rig.up(2, 240, 100);
+    zoomBy.mockRestore();
+  });
 
-    handleTouchStartNative({
-      touches: [
-        { clientX: 100, clientY: 100 },
-        { clientX: 200, clientY: 200 },
-      ],
-    } as unknown as React.TouchEvent);
-
-    expect(isMultiTouchRef.current).toBe(true);
-
-    handleTouchEndNative({
-      touches: [],
-    } as unknown as React.TouchEvent);
-
-    expect(isMultiTouchRef.current).toBe(false);
+  it('turns a quick two-finger tap into undo', () => {
+    const rig = touchRig();
+    const onUndo = vi.fn();
+    useCanvasNavigation({
+      containerRef: { current: rig.el as unknown as HTMLDivElement },
+      stageRef: { current: null },
+      onUndo,
+    });
+    rig.down(1, 100, 100);
+    rig.down(2, 200, 100);
+    rig.up(1, 100, 100);
+    rig.up(2, 200, 100);
+    expect(onUndo).toHaveBeenCalledTimes(1);
   });
 
   it('prevents browser tab zooming on Ctrl+Wheel anywhere in window and zooms camera', () => {

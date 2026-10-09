@@ -12,6 +12,7 @@ import { liveTransformStore } from '../../../engine/model/liveTransformStore';
 import { useCameraZoom } from '../../../engine/useCameraZoom';
 import { keyBelongsToFocus } from '../../../engine/interaction/keyTarget';
 import { useStore } from '../../../hooks/useStore';
+import { TOUCH_TARGET, isCoarse, touchHitPad } from '../../../engine/ui/device';
 
 /**
  * Board chrome for grids: the drop highlight while something is dragged over
@@ -232,6 +233,8 @@ export const GridEditOverlay: React.FC<{ node: GridNode; cells: readonly StyledC
             fill={isDark() ? '#111827' : '#FFFFFF'}
             stroke={ink(0.9)}
             strokeWidth={1.5 * s}
+            // A full touch target on a finger, drawn at its compact size.
+            hitStrokeWidth={touchHitPad(HANDLE) * s || undefined}
             draggable
             onMouseDown={stop}
             onTouchStart={stop}
@@ -484,7 +487,8 @@ const BorderHandle: React.FC<{
   onMove: (delta: number) => void;
   onEnd: (delta: number) => void;
 }> = ({ axis, at, cross, length, scale, onMove, onEnd }) => {
-  const thickness = 8 * scale;
+  // Invisible, so on a finger it can simply be a full touch target wide.
+  const thickness = (isCoarse() ? TOUCH_TARGET : 8) * scale;
   const origin = axis === 'cols' ? { x: at - thickness / 2, y: cross } : { x: cross, y: at - thickness / 2 };
   const setCursor = (e: Konva.KonvaEventObject<Event>, cursor: string) => {
     const c = e.target.getStage()?.container();

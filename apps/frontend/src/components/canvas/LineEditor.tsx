@@ -1,6 +1,7 @@
 import React, { useState, useSyncExternalStore } from 'react';
 import { Circle, Group, Line, Rect } from 'react-konva';
 import type Konva from 'konva';
+import { touchHitPad } from '../../engine/ui/device';
 import { updateNode } from '../../engine/document';
 import { editor } from '../../engine/api/EditorAPI';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
@@ -246,6 +247,8 @@ export const LineEditor: React.FC<Props> = ({ node, stageScale }) => {
         fill={isPicked ? ACCENT : '#FFFFFF'}
         stroke={ACCENT}
         strokeWidth={(isPicked ? 2 : 1) / stageScale}
+        // A full touch target on a finger; unchanged under a mouse.
+        hitStrokeWidth={touchHitPad(HANDLE) / stageScale || undefined}
         draggable
         // Chrome, never part of an export.
         name={EXPORT_CHROME}
@@ -306,6 +309,7 @@ export const LineEditor: React.FC<Props> = ({ node, stageScale }) => {
         fill="#FFFFFF"
         stroke={ACCENT}
         strokeWidth={1 / stageScale}
+        hitStrokeWidth={touchHitPad(GHOST_HANDLE) / stageScale || undefined}
         opacity={0.6}
         draggable
         name={EXPORT_CHROME}
@@ -364,6 +368,7 @@ export const LineEditor: React.FC<Props> = ({ node, stageScale }) => {
         fill={curved ? ACCENT : '#FFFFFF'}
         stroke={ACCENT}
         strokeWidth={1 / stageScale}
+        hitStrokeWidth={touchHitPad(BEND_HANDLE) / stageScale || undefined}
         draggable
         name={EXPORT_CHROME}
         onClick={(e: Konva.KonvaEventObject<MouseEvent>) => {
