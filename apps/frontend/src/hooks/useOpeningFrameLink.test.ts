@@ -22,7 +22,7 @@ vi.mock('./useStore', () => ({ useStore: { getState: () => ({ objects }) } }));
 const { useOpeningFrame } = await import('./useOpeningFrame');
 
 const replaceState = vi.fn();
-function openAt(search: string) {
+function useOpenAt(search: string) {
   vi.stubGlobal('window', {
     location: { search, pathname: '/room/abc', hash: '' },
     history: { state: null, replaceState },
@@ -46,7 +46,7 @@ describe('opening on a frame link', () => {
   it('zooms to the named frame and drops the parameter from the address', () => {
     const frame = { id: 'f1', type: 'frame' };
     objects.f1 = frame;
-    openAt('?frame=f1&x=1');
+    useOpenAt('?frame=f1&x=1');
     expect(zoomToNodes).toHaveBeenCalledWith([frame]);
     expect(zoomToFit).not.toHaveBeenCalled();
     expect(replaceState).toHaveBeenCalledWith(null, '', '/room/abc?x=1');
@@ -54,11 +54,11 @@ describe('opening on a frame link', () => {
 
   it('fits the whole board when the frame is gone or is not a frame', () => {
     objects.n1 = { id: 'n1', type: 'shape' };
-    openAt('?frame=missing');
+    useOpenAt('?frame=missing');
     expect(zoomToFit).toHaveBeenCalledTimes(1);
     expect(zoomToNodes).not.toHaveBeenCalled();
     cleanups.splice(0).forEach((c) => c());
-    openAt('?frame=n1');
+    useOpenAt('?frame=n1');
     expect(zoomToNodes).not.toHaveBeenCalled();
   });
 });
