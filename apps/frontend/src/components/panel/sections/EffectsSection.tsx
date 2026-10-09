@@ -1,28 +1,23 @@
 import React from 'react';
-import { Droplets, Minus, MoveHorizontal, MoveVertical, Scan, Sun, SunDim } from 'lucide-react';
+import { Droplets, Eye, EyeOff, Minus, MoveHorizontal, MoveVertical, Scan, Sun, SunDim } from 'lucide-react';
 import { ColorChip, NumberField, Note, PairRow, Row, Section, SegmentedControl } from '../grammar';
 import type { MenuEntry } from '../../menu/menuModel';
-import { DEFAULT_SHADOW_COLOR, type Appearance, type Shadow } from '../../../engine/model/schema';
+import type { Appearance, Shadow } from '../../../engine/model/schema';
 import { fillsInterior } from '../../../engine/model/rough';
 import type { Shared } from '../../../engine/model/selection';
 import {
   DEFAULT_DROP_SHADOW,
+  DEFAULT_INNER_SHADOW,
+  INNER_SHADOW_PRESETS,
   MAX_SHADOW_BLUR,
   MAX_SHADOW_OFFSET,
   MAX_SHADOW_SPREAD,
+  MIN_SHADOW_SPREAD,
   SHADOW_PRESETS,
   SHADOW_STEP,
   presetOf,
+  type ShadowPreset,
 } from '../../../engine/model/dropShadow';
-
-const DEFAULT_INNER_SHADOW: Shadow = {
-  color: DEFAULT_SHADOW_COLOR,
-  blur: 8,
-  offsetX: 0,
-  offsetY: 2,
-  spread: 0,
-  opacity: 0.35,
-};
 
 type EffectId = 'shadow' | 'innerShadow' | 'blur' | 'backdropBlur';
 
@@ -45,6 +40,7 @@ interface EffectsSectionProps {
     supportsShadow?: boolean;
     supportsShadowSpread?: boolean;
     supportsEdgeEffects?: boolean;
+    supportsInteriorEffects?: boolean;
   };
   appearance: Appearance | undefined;
   openShape: boolean;
@@ -56,25 +52,61 @@ interface EffectsSectionProps {
   setInnerShadow: (patch: Partial<Shadow>) => void;
 }
 
-/** The heading of one effect in the list, with its remove control. */
-const EffectHead: React.FC<{ id: EffectId; onRemove: () => void }> = ({ id, onRemove }) => (
-  <div className="pg-effect__head">
-    <span className="pg-effect__icon" aria-hidden="true">{EFFECT_ICONS[id]}</span>
-    <span className="pg-effect__name">{EFFECT_LABELS[id]}</span>
-    <button
-      type="button"
-      className="pg-icon-btn"
-      aria-label={`Remove ${EFFECT_LABELS[id].toLowerCase()}`}
-      data-tooltip="Remove"
-      onClick={onRemove}
-    >
-      <Minus size={14} aria-hidden="true" />
-    </button>
-  </div>
-);
+/** Whether a shadow is shown, across the selection. */
+type Visibility = { hidden: boolean; mixed: boolean };
+
+/**
+ * One effect's line in the list: what it is, a summary while it is hidden,
+ * and its show/hide and remove controls, as a Figma effect row reads.
+ */
+const EffectHead: React.FC<{
+  id: EffectId;
+  summary?: string;
+  visibility?: Visibility;
+  onToggle?: () => void;
+  onRemove: () => void;
+}> = ({ id, summary, visibility, onToggle, onRemove }) => {
+  const name = EFFECT_LABELS[id].toLowerCase();
+  const hidden = Boolean(visibility?.hidden) && !visibility?.mixed;
+  return (
+    <div className="pg-effect__head">
+      <span className="pg-effect__icon" aria-hidden="true">{EFFECT_ICONS[id]}</span>
+      <span className="pg-effect__name">{EFFECT_LABELS[id]}</span>
+      {hidden && summary && <span className="pg-effect__summary">{summary}</span>}
+      {visibility && onToggle && (
+        <button
+          type="button"
+          className="pg-icon-btn"
+          aria-label={hidden ? `Show ${name}` : `Hide ${name}`}
+          aria-pressed={visibility.mixed ? 'mixed' : hidden}
+          data-tooltip={hidden ? 'Show' : 'Hide'}
+          onClick={onToggle}
+        >
+          {hidden ? <EyeOff size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}
+        </button>
+      )}
+      <button
+        type="button"
+        className="pg-icon-btn"
+        aria-label={`Remove ${name}`}
+        data-tooltip="Remove"
+        onClick={onRemove}
+      >
+        <Minus size={14} aria-hidden="true" />
+      </button>
+    </div>
+  );
+};
 
 /** One value of a shadow across the selection: agreed, or mixed. */
-type ShadowRead = (pick: (s: Shadow) => number | string | undefined) => Shared<number | string | undefined>;
+type ShadowRead = (pick: (s: Shadow) => number | string | boolean | undefined) => Shared<number | string | boolean | undefined>;
+
+/** `y 4 · blur 12`: enough to recognise a hidden shadow without opening it. */
+function shadowSummary(s: Shadow): string {
+  const fmt = (n: number) => String(Math.round(n * 10) / 10);
+  const offset = s.offsetX ? `${fmt(s.offsetX)}, ${fmt(s.offsetY)}` : `y ${fmt(s.offsetY)}`;
+  return `${offset} \u00b7 blur ${fmt(s.blur)}`;
+}
 
 /**
  * The fields of one shadow, read across the whole selection.
@@ -84,56 +116,50 @@ type ShadowRead = (pick: (s: Shadow) => number | string | undefined) => Shared<n
  * a number there sets that one property on every object while leaving each
  * one's offset and colour alone.
  *
- * Offset, blur and spread move in half-units and take any typed decimal, so a
- * 0.5px contact shadow is as reachable as a 24px lift. A scrub writes previews
- * and lands as one undo step (see `NumberField`).
+ * Ordered as the shadow is built: a ready-made size, then where it falls,
+ * how soft and how large it is, then its colour. Offset, blur and spread move
+ * in half-units and take any typed decimal, so a 0.5px contact shadow is as
+ * reachable as a 24px lift. Spread runs negative as well, which tucks a long
+ * blur in under the object. A scrub previews on the board and lands as one
+ * undo step (see `NumberField`).
  */
 const ShadowFields: React.FC<{
   name: string;
   shadow: Shadow;
   read: ShadowRead;
   allowSpread: boolean;
-  presets?: boolean;
+  presets: readonly ShadowPreset[];
+  presetHint: string;
   onChange: (patch: Partial<Shadow>) => void;
-}> = ({ name, shadow, read, allowSpread, presets = false, onChange }) => {
+}> = ({ name, shadow, read, allowSpread, presets, presetHint, onChange }) => {
   const value = (pick: (s: Shadow) => number | undefined): number | 'mixed' => {
     const shared = read(pick);
     return shared.mixed ? 'mixed' : ((shared.value as number | undefined) ?? 0);
   };
   const colour = read((s) => s.color);
   const opacity = read((s) => s.opacity ?? 1);
-  const depth = read((s) => presetOf(s) ?? 'custom');
+  const preset = read((s) => presetOf(s, presets) ?? 'custom');
   return (
     <>
-      <ColorChip
-        label={name}
-        value={colour.mixed ? 'mixed' : shadow.color}
-        opacity={opacity.mixed ? 1 : (shadow.opacity ?? 1)}
-        allowNone={false}
-        onChange={(color) => onChange({ color })}
-        onOpacityChange={(o) => onChange({ opacity: o })}
-      />
-      {presets && (
-        <Row label="Depth" hint="A ready-made elevation. The shadow keeps its colour.">
-          <SegmentedControl
-            ariaLabel={`${name} depth`}
-            fill
-            mixed={depth.mixed}
-            value={depth.mixed ? '' : String(depth.value ?? '')}
-            onChange={(id) => {
-              const hit = SHADOW_PRESETS.find((p) => p.id === id);
-              if (!hit) return;
-              const { offsetX, offsetY, blur, spread, opacity: o } = hit.shadow;
-              onChange({ offsetX, offsetY, blur, spread, opacity: o });
-            }}
-            segments={SHADOW_PRESETS.map((p) => ({
-              value: p.id,
-              label: p.label,
-              hint: `Offset ${p.shadow.offsetY}, blur ${p.shadow.blur}, ${Math.round((p.shadow.opacity ?? 1) * 100)}%`,
-            }))}
-          />
-        </Row>
-      )}
+      <Row label="Size" hint={presetHint}>
+        <SegmentedControl
+          ariaLabel={`${name} size`}
+          fill
+          mixed={preset.mixed}
+          value={preset.mixed ? '' : String(preset.value ?? '')}
+          onChange={(id) => {
+            const hit = presets.find((p) => p.id === id);
+            if (!hit) return;
+            const { offsetX, offsetY, blur, spread, opacity: o } = hit.shadow;
+            onChange({ offsetX, offsetY, blur, spread: allowSpread ? spread : 0, opacity: o });
+          }}
+          segments={presets.map((p) => ({
+            value: p.id,
+            label: p.label,
+            hint: `${shadowSummary(p.shadow)}, ${Math.round((p.shadow.opacity ?? 1) * 100)}%`,
+          }))}
+        />
+      </Row>
       <PairRow>
         <NumberField
           label={`${name} offset X`}
@@ -173,7 +199,7 @@ const ShadowFields: React.FC<{
             glyph="S"
             unit="px"
             step={SHADOW_STEP}
-            min={0}
+            min={MIN_SHADOW_SPREAD}
             max={MAX_SHADOW_SPREAD}
             value={value((s) => s.spread)}
             onChange={(v) => onChange({ spread: v })}
@@ -182,6 +208,14 @@ const ShadowFields: React.FC<{
           <span aria-hidden />
         )}
       </PairRow>
+      <ColorChip
+        label={`${name} colour`}
+        value={colour.mixed ? 'mixed' : shadow.color}
+        opacity={opacity.mixed ? 1 : (shadow.opacity ?? 1)}
+        allowNone={false}
+        onChange={(color) => onChange({ color })}
+        onOpacityChange={(o) => onChange({ opacity: o })}
+      />
     </>
   );
 };
@@ -206,13 +240,15 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
   if (!appearance) return null;
 
   const penShaded = Boolean(appearance.sketch) && !fillsInterior(appearance.fillStyle);
-  const edge = Boolean(capabilities.supportsEdgeEffects) && !openShape;
+  const interior = Boolean(capabilities.supportsInteriorEffects) && !openShape;
 
   const available: Record<EffectId, boolean> = {
     shadow: Boolean(capabilities.supportsShadow),
-    innerShadow: edge && !penShaded,
+    // Only a type whose renderer draws them: a chart or a table takes the
+    // sketch block through `supportsEdgeEffects` and draws neither of these.
+    innerShadow: interior && !penShaded,
     blur: !hasConnector && !hasImage,
-    backdropBlur: !hasConnector && edge,
+    backdropBlur: !hasConnector && interior,
   };
   // Present when *any* selected object has it, so a selection where only some
   // objects carry a shadow shows it, with Mixed where they differ, rather than
@@ -251,6 +287,20 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
     onSelect: () => add(id),
   }));
 
+  /** Shown, hidden, or both across the selection, for a shadow field. */
+  const visibilityOf = (pick: (a: Appearance) => Shadow | undefined): Visibility => {
+    const shared = sharedPaint((a) => {
+      const s = pick(a);
+      return s ? s.visible === false : undefined;
+    });
+    return { hidden: Boolean(shared.value), mixed: shared.mixed };
+  };
+  const dropVisibility = visibilityOf((a) => a.shadow);
+  const innerVisibility = visibilityOf((a) => a.innerShadow);
+  // A mixed selection is shown by one click, so nothing stays hidden by surprise.
+  const toggle = (v: Visibility, set: (patch: Partial<Shadow>) => void) => () =>
+    set({ visible: v.hidden || v.mixed ? true : false });
+
   const blur = sharedPaint((a) => a.blur ?? 0);
   const backdrop = sharedPaint((a) => a.backdropBlur ?? 0);
 
@@ -263,10 +313,27 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
       onAdd={addable.length === 1 ? () => add(addable[0]) : undefined}
       addLabel={addable.length === 1 ? `Add ${EFFECT_LABELS[addable[0]].toLowerCase()}` : 'Add an effect'}
     >
-      {applied.map((id) => (
-        <div key={id} className="pg-effect">
-          <EffectHead id={id} onRemove={() => remove(id)} />
-          {id === 'shadow' && (
+      {applied.map((id) => {
+        const shadowLike = id === 'shadow' || id === 'innerShadow';
+        const visibility = id === 'shadow' ? dropVisibility : id === 'innerShadow' ? innerVisibility : undefined;
+        const hidden = Boolean(visibility?.hidden) && !visibility?.mixed;
+        const own = id === 'shadow' ? appearance.shadow : id === 'innerShadow' ? appearance.innerShadow : undefined;
+        return (
+        <div key={id} className={`pg-effect${hidden ? ' pg-effect--hidden' : ''}`}>
+          <EffectHead
+            id={id}
+            summary={own ? shadowSummary(own) : undefined}
+            visibility={shadowLike ? visibility : undefined}
+            onToggle={
+              id === 'shadow'
+                ? toggle(dropVisibility, setShadow)
+                : id === 'innerShadow'
+                  ? toggle(innerVisibility, setInnerShadow)
+                  : undefined
+            }
+            onRemove={() => remove(id)}
+          />
+          {id === 'shadow' && !hidden && (
             <ShadowFields
               name="Drop shadow"
               shadow={appearance.shadow ?? DEFAULT_DROP_SHADOW}
@@ -274,11 +341,12 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
               // Spread grows the whole silhouette, so a line takes it as well
               // as a closed shape does.
               allowSpread={Boolean(capabilities.supportsShadowSpread)}
-              presets
+              presets={SHADOW_PRESETS}
+              presetHint="A ready-made elevation. The shadow keeps its colour."
               onChange={setShadow}
             />
           )}
-          {id === 'innerShadow' && (
+          {id === 'innerShadow' && !hidden && (
             penShaded ? (
               <Note>
                 Inner shadow needs an inside. Pen shading leaves the shape open, so set the fill to Solid to see it.
@@ -289,6 +357,8 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
                 shadow={appearance.innerShadow ?? DEFAULT_INNER_SHADOW}
                 read={(pick) => sharedPaint((a) => (a.innerShadow ? pick(a.innerShadow) : undefined))}
                 allowSpread
+                presets={INNER_SHADOW_PRESETS}
+                presetHint="A ready-made inset. The shadow keeps its colour."
                 onChange={setInnerShadow}
               />
             )
@@ -321,7 +391,8 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
             </>
           )}
         </div>
-      ))}
+        );
+      })}
     </Section>
   );
 };

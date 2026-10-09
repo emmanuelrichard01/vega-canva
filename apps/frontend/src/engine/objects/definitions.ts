@@ -24,6 +24,8 @@ objectRegistry.register({
     // `shadowSpreadProps`.
     supportsShadowSpread: true,
     supportsEdgeEffects: true,
+    // The one type whose renderer draws an inner shadow and a background blur.
+    supportsInteriorEffects: true,
     // Shapes carry an optional centered text label (double-click to edit).
     supportsTypography: true,
   },

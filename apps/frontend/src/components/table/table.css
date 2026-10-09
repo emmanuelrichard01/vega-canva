@@ -972,3 +972,16 @@
 :root[data-contrast='more'] .tbled-menu { box-shadow: var(--shadow-float); }
 :root[data-contrast='more'] .tbled-bar__viewonly { box-shadow: inset 0 0 0 1px var(--border-strong); color: var(--text-primary); }
 :root[data-contrast='more'] .tbled__refbox { border-width: calc(2.5px * var(--inv, 1)); }
+
+/* On a finger, each resize edge is a 44px target; the visible line stays 2px
+   and centred on the edge. `data-pointer` comes from engine/ui/device.ts. */
+[data-pointer='coarse'] .tbled__resize {
+  right: calc(-22px * var(--inv, 1));
+  width: calc(44px * var(--inv, 1));
+}
+[data-pointer='coarse'] .tbled__resize::after { left: calc(21px * var(--inv, 1)); }
+[data-pointer='coarse'] .tbled__rowresize {
+  bottom: calc(-22px * var(--inv, 1));
+  height: calc(44px * var(--inv, 1));
+}
+[data-pointer='coarse'] .tbled__rowresize::after { top: calc(21px * var(--inv, 1)); }

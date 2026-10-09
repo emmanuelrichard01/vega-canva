@@ -48,8 +48,8 @@ import { linkToSvg } from '../link/linkSvg';
 import { iconToSvg, preloadIcons } from '../icons/iconSvg';
 import { cornerRadiiOf, fitRadii, isPerCorner, roundedRectPath } from '../model/cornerRadii';
 import { attr, escapeXml, num } from './markup';
-import { dropShadowFilter, shadowFilterId, shadowRegion, withDropShadow } from './svgShadow';
-import { castsShadow, colorHasAlpha, inkOf, needsKnockout } from '../model/dropShadow';
+import { dropShadowFilter, innerShadowMarkup, shadowFilterId, shadowRegion, withDropShadow, type ShadowSilhouetteMarkup } from './svgShadow';
+import { castsShadow, colorHasAlpha, grownRadii, inkOf, innerShadowInset, needsKnockout } from '../model/dropShadow';
 import { commentPin, pinOutline } from './commentPins';
 import { abortError } from './abort';
 
@@ -419,7 +419,10 @@ function shapeInk(node: ShapeNode, ctx: Ctx, level: SketchLevel | undefined): st
       if (isPerCorner(node.appearance.cornerRadius)) {
         return `<path d="${roundedRectPath(x, y, w, h, fitRadii(cornerRadiiOf(node.appearance.cornerRadius), w, h))}" ${paint}${rot} />`;
       }
-      return `<rect x="${num(x)}" y="${num(y)}" width="${num(w)}" height="${num(h)}" rx="${num(cornerRadiiOf(node.appearance.cornerRadius)[0])}" ${paint}${rot} />`;
+      // Fitted, so a radius past half the short side stays a circular corner,
+      // as the canvas draws it. SVG would clamp `rx` and `ry` separately and
+      // draw an elliptical one.
+      return `<rect x="${num(x)}" y="${num(y)}" width="${num(w)}" height="${num(h)}" rx="${num(fitRadii(cornerRadiiOf(node.appearance.cornerRadius), w, h)[0])}" ${paint}${rot} />`;
     case 'ellipse':
       return `<ellipse cx="${num(x + w / 2)}" cy="${num(y + h / 2)}" rx="${num(w / 2)}" ry="${num(h / 2)}" ${paint}${rot} />`;
     case 'line':
@@ -438,19 +441,72 @@ function shapeInk(node: ShapeNode, ctx: Ctx, level: SketchLevel | undefined): st
   }
 }
 
-/** A shape: its ink with the drop shadow `ShapeRenderer` casts, then its label. */
+/**
+ * A crisp rectangle's or ellipse's outline grown by `grow` on every side, as
+ * path data in board units before the node's transform; null for any other
+ * kind. A rounded corner grows to `radius + grow` and a square one stays
+ * square, which is what the canvas's mitred spread draws.
+ */
+function grownOutline(node: ShapeNode, grow: number): string | null {
+  const { x, y, width: w, height: h } = node;
+  if (node.geometry.kind === 'rect') {
+    const radii = grownRadii(fitRadii(cornerRadiiOf(node.appearance.cornerRadius), w, h), w, h, grow);
+    return roundedRectPath(x - grow, y - grow, Math.max(0, w + grow * 2), Math.max(0, h + grow * 2), radii);
+  }
+  if (node.geometry.kind === 'ellipse') {
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    const rx = Math.max(0, w / 2 + grow);
+    const ry = Math.max(0, h / 2 + grow);
+    return `M ${num(cx - rx)} ${num(cy)} A ${num(rx)} ${num(ry)} 0 1 0 ${num(cx + rx)} ${num(cy)} A ${num(rx)} ${num(ry)} 0 1 0 ${num(cx - rx)} ${num(cy)} Z`;
+  }
+  return null;
+}
+
+/** How far a shape's stroke reaches past its outline: half a centred stroke, all of an outside one. */
+function strokeOutset(node: ShapeNode): number {
+  const s = node.appearance.stroke;
+  if (!s || !s.color || s.color === 'transparent' || !(s.width > 0)) return 0;
+  const align = s.align ?? 'center';
+  return align === 'inside' ? 0 : align === 'outside' ? s.width : s.width / 2;
+}
+
+/** A shape: its ink with the inner and drop shadows `ShapeRenderer` draws, then its label. */
 function shapeMarkup(node: ShapeNode, ctx: Ctx): string {
   const level = ctx.level(node);
   const open = isOpenShape(node.geometry.kind);
   let ink = shapeInk(node, ctx, level);
-  if (castsShadow(node.appearance?.shadow)) {
+  // The inner shadow, over the fill and off the stroke, for a crisp closed shape.
+  if (!level && !open && castsShadow(node.appearance?.innerShadow)) {
+    const kind = node.geometry.kind;
+    const hole = contourData(translatePath(shapeToPath(node), node.x, node.y));
+    const s = node.appearance.stroke;
+    const stroked = Boolean(s?.color && s.color !== 'transparent' && s.width > 0);
+    ink += innerShadowMarkup(node, hole, {
+      transform: rotationTransform(node),
+      inset: innerShadowInset(s, stroked),
+      rule: kind === 'rect' || kind === 'ellipse' ? 'nonzero' : 'evenodd',
+    });
+  }
+  const shadow = node.appearance?.shadow;
+  if (castsShadow(shadow)) {
     const read = inkOf(node.appearance, { absentFill: !level, stroked: open || undefined });
     // A run has no interior, whatever fill it happens to carry.
     const used = open ? { ...read, filled: false, fillOpaque: false } : read;
     const shaded = !open && level && !fillsInterior(node.appearance?.fillStyle);
+    // A filled crisp box or ellipse with spread casts from its grown outline,
+    // so a rounded corner grows round rather than by a square morphology.
+    let silhouette: ShadowSilhouetteMarkup | undefined;
+    if (!level && !open && read.filled && (shadow.spread ?? 0) !== 0) {
+      const outset = strokeOutset(node);
+      const d = grownOutline(node, outset + (shadow.spread ?? 0));
+      const hole = grownOutline(node, outset);
+      if (d && hole) silhouette = { d, hole, transform: rotationTransform(node) };
+    }
     ink = withDropShadow(node, ink, {
       knockout: needsKnockout(shaded ? { ...used, fillOpaque: false } : used),
       inkPad: (node.appearance.stroke?.width ?? 0) * 6 + 16,
+      silhouette,
     });
   }
   if (open) return ink + lineLabelMarkup(node, plateFor(node, ctx.objects, ctx.ground));
@@ -752,9 +808,15 @@ function nodeMarkup(node: AnyNode, ctx: Ctx): string {
       if (!node.src) return '';
       // The inlined bytes when they could be read, else the original reference.
       const href = ctx.images?.get(node.src) ?? node.src;
+      // Rounded corners clip the picture, and so the shadow it casts, as on the canvas.
+      const radii = fitRadii(cornerRadiiOf(node.appearance?.cornerRadius), node.width, node.height);
+      const clipId = `ic-${safeId(node.id)}`;
+      const clip = radii.some((r) => r > 0)
+        ? `<defs><clipPath id="${clipId}"><path d="${roundedRectPath(node.x, node.y, node.width, node.height, radii)}" /></clipPath></defs>`
+        : '';
       return withDropShadow(
         node,
-        `<image href="${escapeXml(href)}" x="${num(node.x)}" y="${num(node.y)}" width="${num(node.width)}" height="${num(node.height)}" preserveAspectRatio="xMidYMid slice"${rotationTransform(node)} />`
+        `${clip}<image href="${escapeXml(href)}" x="${num(node.x)}" y="${num(node.y)}" width="${num(node.width)}" height="${num(node.height)}" preserveAspectRatio="xMidYMid slice"${clip ? ` clip-path="url(#${clipId})"` : ''}${rotationTransform(node)} />`
       );
     }
     case 'sticky':

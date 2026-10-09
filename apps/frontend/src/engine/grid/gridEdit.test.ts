@@ -62,6 +62,36 @@ describe('track edits', () => {
     expect(widths[1]).toBeGreaterThanOrEqual(8);
   });
 
+  it('a border drag never writes NaN, zero or negative tracks and keeps the total', () => {
+    const total = (r: ReturnType<typeof withBorderMoved>) =>
+      (r.spec.tracks?.cols ?? []).reduce((a, t) => a + ('fr' in (t as object) ? (t as { fr: number }).fr : 0), 0);
+    const before = currentTrackSizes(grid(), 'cols').reduce((a, b) => a + b, 0);
+    for (const delta of [Infinity, -Infinity, 622, -622, 1e9, 0]) {
+      const recipe = withBorderMoved(grid(), 'cols', 0, delta);
+      for (const t of recipe.spec.tracks?.cols ?? []) {
+        const fr = (t as { fr: number }).fr;
+        expect(Number.isFinite(fr)).toBe(true);
+        expect(fr).toBeGreaterThanOrEqual(1);
+      }
+      const widths = gridCellsOf({ ...grid(), grid: recipe }).filter((c) => c.row === 0).map((c) => c.width);
+      widths.forEach((w) => expect(w).toBeGreaterThan(0));
+      if (recipe.spec.tracks) expect(total(recipe)).toBeGreaterThan(0);
+      expect(widths.reduce((a, b) => a + b, 0)).toBeCloseTo(before, 0);
+    }
+  });
+
+  it('a NaN delta changes nothing', () => {
+    const g = grid();
+    expect(withBorderMoved(g, 'rows', 0, NaN)).toBe(g.grid);
+  });
+
+  it('the recipe survives normalisation after a border drag', () => {
+    const recipe = withBorderMoved(grid(), 'cols', 0, 622);
+    const again = normalizeRecipe(recipe, 300, 200);
+    expect(again.spec.tracks?.cols?.length).toBe(3);
+    expect(again.spec.width).toBe(300);
+  });
+
   it('even tracks removes the explicit sizes', () => {
     const g = { ...grid(), grid: withTrack(grid(), 'cols', 0, { px: 60 }) };
     expect(withEvenTracks(g, 'cols').spec.tracks).toBeUndefined();

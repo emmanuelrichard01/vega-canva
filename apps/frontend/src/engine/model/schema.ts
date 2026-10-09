@@ -262,10 +262,16 @@ export type Shadow = {
   blur: number;
   offsetX: number;
   offsetY: number;
-  /** Outset of the shadow's silhouette, in world units, before the blur. */
+  /**
+   * Outset of the shadow's silhouette, in world units, before the blur. A
+   * negative spread shrinks it. A rounded corner grows to `radius + spread`;
+   * a square corner stays square.
+   */
   spread?: number;
   /** 0..1, applied on top of any alpha in `color`. Absent is fully opaque. */
   opacity?: number;
+  /** `false` keeps the shadow's settings but draws nothing. Absent is shown. */
+  visible?: boolean;
 };
 export type Point = { x: number; y: number };
 

@@ -12,6 +12,7 @@ import { cycleColor, cycleRuns, cycleTotal, piecesBefore } from '../../../engine
 import { highlightPath } from '../../../engine/text/highlight';
 import { useLiveTransform } from '../../../engine/model/liveTransformStore';
 import { useSurfaceTextInk } from '../../../hooks/useSurface';
+import { useTextAsBlocks } from '../../../engine/render/lod';
 import { canvasFontFamily, isMirrored, konvaFontStyle, konvaTextDecoration, shadowProps } from './shared';
 
 interface Props {
@@ -175,6 +176,9 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
   // The default ink follows the surface (frame fill, else the board).
   const surfaceColor = useSurfaceTextInk(node, t.color);
 
+  // Too small on screen to read (lite budget only): each line is a block of ink.
+  const blocks = useTextAsBlocks(t.fontSize);
+
   if (!visible) return null;
 
   const highlight = t.highlight;
@@ -223,6 +227,30 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
     wrap: 'none' as const,
     listening: false,
   };
+
+  if (blocks) {
+    return (
+      <Group>
+        <Rect width={Math.max(node.width, layout.width)} height={Math.max(node.height, layout.height)} fill="transparent" />
+        {layout.lines.map((line, i) =>
+          line.width > 0 ? (
+            <Rect
+              key={i}
+              x={line.x}
+              y={line.y + (line.height - t.fontSize * 0.6) / 2}
+              width={line.width}
+              height={t.fontSize * 0.6}
+              cornerRadius={t.fontSize * 0.15}
+              fill={ink}
+              opacity={0.4}
+              listening={false}
+              perfectDrawEnabled={false}
+            />
+          ) : null
+        )}
+      </Group>
+    );
+  }
 
   return (
     <Group>

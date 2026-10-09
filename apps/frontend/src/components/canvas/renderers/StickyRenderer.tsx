@@ -23,6 +23,7 @@ import { isEmojiLike } from '../../../engine/emoji/emojiText';
 import { openEmojiPicker } from '../../emoji/openEmojiPicker';
 import { STICKY_FONT_FAMILY } from './stickyFit';
 import { stickyFontStyle, stickyText } from './stickyRichLayout';
+import { useTextAsBlocks } from '../../../engine/render/lod';
 import { paperGrain } from './paperGrain';
 
 interface Props {
@@ -229,6 +230,8 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
     checklist: node.checklist,
   });
   const { layout, fontSize } = writing;
+  // Too small on screen to read (lite budget only): each line is a block of ink.
+  const blocks = useTextAsBlocks(fontSize);
   const textTop = box.y + (writing.overflows ? 0 : Math.max(0, (box.height - layout.height) / 2));
 
   const initials = initialsFor(node.author.name);
@@ -377,7 +380,27 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
         </Group>
       )}
 
-      {showText && (
+      {showText && blocks && (
+        <Group listening={false}>
+          {layout.lines.map((line, li) =>
+            line.width > 0 ? (
+              <Rect
+                key={li}
+                x={box.x + line.x}
+                y={textTop + line.y + fontSize * ((STICKY_LINE_HEIGHT - 0.6) / 2)}
+                width={Math.min(line.width, box.width)}
+                height={fontSize * 0.6}
+                cornerRadius={fontSize * 0.15}
+                fill={paper.ink}
+                opacity={0.35}
+                perfectDrawEnabled={false}
+              />
+            ) : null
+          )}
+        </Group>
+      )}
+
+      {showText && !blocks && (
         <Group clipX={box.x - 4} clipY={box.y} clipWidth={box.width + 8} clipHeight={box.height}>
           {layout.lines.map((line, li) => (
             <React.Fragment key={li}>

@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_DROP_SHADOW,
+  DEFAULT_INNER_SHADOW,
+  INNER_SHADOW_PRESETS,
   SHADOW_PRESETS,
   castRegions,
+  castsShadow,
+  grownRadii,
+  innerCastRegions,
+  innerShadowInset,
   colorHasAlpha,
   deviceBox,
   inkOf,
@@ -157,5 +163,68 @@ describe('appearance with no shadow', () => {
   it('reads as opaque ink with nothing to cut', () => {
     const a: Appearance = {};
     expect(needsKnockout(inkOf(a, { absentFill: true }))).toBe(false);
+  });
+});
+
+describe('spread with corner radius', () => {
+  it('grows a rounded corner concentrically, to radius + spread', () => {
+    expect(grownRadii([12, 12, 12, 12], 100, 60, 8)).toEqual([20, 20, 20, 20]);
+  });
+
+  it('keeps a square corner square, per corner', () => {
+    expect(grownRadii([0, 16, 0, 16], 100, 60, 4)).toEqual([0, 20, 0, 20]);
+  });
+
+  it('shrinks with a negative spread and never inverts', () => {
+    expect(grownRadii([6, 6, 6, 6], 100, 60, -10)).toEqual([0, 0, 0, 0]);
+    expect(grownRadii([20, 20, 20, 20], 100, 60, -5)).toEqual([15, 15, 15, 15]);
+  });
+
+  it('fits the grown corners to the grown box, as the canvas fits a pill', () => {
+    // A 100x40 pill (radius 20) grown by 10 is a 120x60 pill: radius 30.
+    const out = grownRadii([20, 20, 20, 20], 100, 40, 10);
+    out.forEach((r) => expect(r).toBeCloseTo(30, 6));
+    // Pushed past the box, every corner scales by the same ratio.
+    const over = grownRadii([40, 40, 40, 40], 100, 40, 10);
+    over.forEach((r) => expect(r).toBeCloseTo(30, 6));
+  });
+});
+
+describe('inner shadow geometry', () => {
+  it('starts at the inner edge of the stroke', () => {
+    expect(innerShadowInset({ width: 4 }, true)).toBe(2);
+    expect(innerShadowInset({ width: 4, align: 'inside' }, true)).toBe(4);
+    expect(innerShadowInset({ width: 4, align: 'outside' }, true)).toBe(0);
+    expect(innerShadowInset({ width: 4 }, false)).toBe(0);
+  });
+
+  it('lands only on the object, and reads enough of the outside to blur and offset into it', () => {
+    const r = innerCastRegions({ x: 100, y: 100, width: 50, height: 40 }, { width: 800, height: 600 }, 8, { x: 0, y: 6 })!;
+    expect(r.out).toEqual({ x: 100, y: 100, width: 50, height: 40 });
+    // Three sigma of an 8px blur is 12, plus 2 for anti-aliasing.
+    expect(r.ink.x).toBe(100 - 14);
+    expect(r.ink.y).toBe(100 - 6 - 14);
+    expect(r.ink.x + r.ink.width).toBeGreaterThanOrEqual(150 + 14);
+    expect(r.ink.y + r.ink.height).toBeGreaterThanOrEqual(140 - 6 + 14);
+  });
+
+  it('clips to the canvas, and gives up off screen', () => {
+    const r = innerCastRegions({ x: -20, y: -20, width: 60, height: 60 }, { width: 100, height: 100 }, 0, { x: 0, y: 0 })!;
+    expect(r.out).toEqual({ x: 0, y: 0, width: 40, height: 40 });
+    expect(innerCastRegions({ x: 200, y: 0, width: 10, height: 10 }, { width: 100, height: 100 }, 4, { x: 0, y: 0 })).toBeNull();
+  });
+});
+
+describe('visibility and presets', () => {
+  it('a hidden shadow keeps its values and casts nothing', () => {
+    expect(castsShadow({ ...DEFAULT_DROP_SHADOW, visible: false })).toBe(false);
+    expect(castsShadow({ ...DEFAULT_DROP_SHADOW, visible: true })).toBe(true);
+    expect(castsShadow(DEFAULT_DROP_SHADOW)).toBe(true);
+  });
+
+  it('matches inner shadows against their own presets, ignoring visibility', () => {
+    expect(presetOf(DEFAULT_INNER_SHADOW, INNER_SHADOW_PRESETS)).toBe('pressed');
+    expect(presetOf({ ...INNER_SHADOW_PRESETS[2].shadow, visible: false }, INNER_SHADOW_PRESETS)).toBe('deep');
+    expect(presetOf(DEFAULT_INNER_SHADOW)).toBeNull();
   });
 });

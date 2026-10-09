@@ -3,6 +3,7 @@ import { CSS_TEXT_TRANSFORM } from '../../../engine/model/textCase';
 import type { Appearance, LineCap, LineJoin, Typography } from '../../../engine/model/schema';
 import { isDottedPattern } from '../../../engine/model/strokeStyle';
 import { fontStack } from '../../../engine/text/fontCatalogue';
+import { castsShadow } from '../../../engine/model/dropShadow';
 
 /**
  * Compose Konva's single `fontStyle` string from the orthogonal weight and
@@ -156,7 +157,7 @@ export function strokeDashProps(
  */
 export function shadowProps(appearance: Appearance | undefined, opts: { flipped?: boolean } = {}): Record<string, unknown> {
   const shadow = appearance?.shadow;
-  if (!shadow || (shadow.opacity ?? 1) <= 0) return {};
+  if (!castsShadow(shadow)) return {};
   return {
     shadowColor: shadow.color,
     shadowBlur: Math.max(0, shadow.blur),

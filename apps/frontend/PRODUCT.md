@@ -194,3 +194,10 @@ Frames are slides: the board can be presented (slide view, presenter view,
 transitions) and exported to PDF. Version history keeps autosaved sessions and
 named versions per board. New users get a welcome, a Get started checklist
 and a tour; none of them blocks the canvas.
+
+## Touch and small screens
+
+Vega works on phones and tablets: pan and pinch, a long-press menu, two and
+three finger undo and redo, pens that ignore a resting palm, and 44px touch
+targets. Phones get a bottom toolbar and sheets; tablets get overlay panels.
+Heavy effects ease off on low-end devices while the canvas moves.

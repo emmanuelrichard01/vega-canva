@@ -28,6 +28,13 @@ export interface ObjectCapabilities {
    * glyphs with no single path at all.
    */
   supportsEdgeEffects?: boolean;
+  /**
+   * Whether this type draws an inner shadow and a background blur: effects
+   * clipped to the object's interior. Separate from `supportsEdgeEffects`,
+   * which a chart and a table declare for their sketch block while drawing
+   * neither, so the panel offered both effects to them and nothing drew them.
+   */
+  supportsInteriorEffects?: boolean;
   supportsReactions?: boolean;
   supportsComments?: boolean;
 }

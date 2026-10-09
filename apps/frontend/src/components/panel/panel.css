@@ -342,9 +342,26 @@
 
 .pg-effect__name {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-primary);
   font-size: var(--text-xs);
   font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A hidden effect keeps its row, quieter, with what it would draw beside it. */
+.pg-effect__summary {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.pg-effect--hidden .pg-effect__name,
+.pg-effect--hidden .pg-effect__icon {
+  color: var(--text-tertiary);
 }
 
 .pg-subsection {

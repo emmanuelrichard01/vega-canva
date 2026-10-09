@@ -87,6 +87,9 @@ import { readMarks } from './engine/comments/readMarks';
 import { anchorPoint, mentionsMe, unreadCount } from './engine/comments/threads';
 import { GroupIsolationBar } from './components/ui/GroupIsolationBar';
 import { IconBrowserHost } from './components/icons/IconBrowserHost';
+import { useDeviceClass, usePhone } from './components/workspace/usePhone';
+import { PhoneContextBar } from './components/workspace/PhoneContextBar';
+import { BottomSheet } from './components/ui/BottomSheet';
 
 /**
  * Whether this page load has already taken the pending backup.
@@ -685,8 +688,18 @@ export default function Room() {
   // them — and become overlays that open on demand. Above it they are always
   // shown, so `panelsOpen` is ignored.
   const { isCompact } = useBreakpoint();
+  /** A phone: the bottom bar, sheets instead of columns, and the compact selection bar. */
+  const phone = usePhone();
+  /**
+   * A tablet's columns are always overlays that open on demand, in landscape
+   * too: they slide over the board rather than standing beside it, and a tap
+   * on the board puts them away. In portrait only one is open at a time.
+   */
+  const tablet = useDeviceClass() === 'tablet';
+  const overlayPanels = isCompact || tablet;
+  const oneColumn = phone || (tablet && isCompact);
   const [panelsOpen, setPanelsOpen] = useState(false);
-  const panelsVisible = !isCompact || panelsOpen;
+  const panelsVisible = !overlayPanels || panelsOpen;
 
   /**
    * Whether each side panel is expanded, and whether the radar is showing.
@@ -994,13 +1007,22 @@ export default function Room() {
   useRegionCycle();
   /** A pill's expand button. On a narrow window the panels float, so show them too. */
   const expandLeft = useCallback(() => {
-    if (isCompact) setPanelsOpen(true);
+    if (overlayPanels) setPanelsOpen(true);
+    // A phone shows one sheet at a time.
+    if (oneColumn) setRightExpanded(false);
     openLayers();
-  }, [isCompact, openLayers]);
+  }, [overlayPanels, oneColumn, setRightExpanded, openLayers]);
   const expandRight = useCallback(() => {
-    if (isCompact) setPanelsOpen(true);
+    if (overlayPanels) setPanelsOpen(true);
+    if (oneColumn) setLeftExpanded(false);
     openProperties();
-  }, [isCompact, openProperties]);
+  }, [overlayPanels, oneColumn, setLeftExpanded, openProperties]);
+  /** A phone's layers or properties sheet, put away. */
+  const closePhoneSheets = useCallback(() => {
+    setPanelsOpen(false);
+    setLeftExpanded(false);
+    setRightExpanded(false);
+  }, [setLeftExpanded, setRightExpanded]);
   /**
    * The grid rail's "Grid settings": the one deliberate way the properties
    * panel opens for a grid. Selecting never does.
@@ -1019,14 +1041,14 @@ export default function Room() {
   }, [expandRight]);
   /** Mod+\: both columns to pills and back, as UI3 does. */
   const togglePanelsCollapsed = useCallback(() => {
-    if (isCompact) {
+    if (overlayPanels) {
       setPanelsOpen((v) => !v);
       return;
     }
     const anyOpen = leftExpanded || (rightExpanded && canEdit);
     setLeftExpanded(!anyOpen);
     setRightExpanded(!anyOpen);
-  }, [isCompact, leftExpanded, rightExpanded, canEdit, setLeftExpanded, setRightExpanded]);
+  }, [overlayPanels, leftExpanded, rightExpanded, canEdit, setLeftExpanded, setRightExpanded]);
   // Keyboard Shortcuts routed through dedicated useRoomShortcuts hook
   useRoomShortcuts({
     selectTool,
@@ -1035,7 +1057,7 @@ export default function Room() {
     setShowCommandPalette,
     setShowHelp,
     setIsUiVisible,
-    isCompact,
+    isCompact: overlayPanels,
     panelsOpen,
     setPanelsOpen,
     activeTool,
@@ -1497,6 +1519,8 @@ export default function Room() {
             tour="layers"
             panelClassName="hierarchy-panel panel-surface"
             panelData={{ 'data-radar-collapsed': !radarOpen }}
+            onClose={closePhoneSheets}
+            sheetLabel="Layers"
             pill={(toggle) => (
               <BoardHeaderLeft
                 variant="pill"
@@ -1536,7 +1560,7 @@ export default function Room() {
               setSelectedId={setSelectedId}
               setSelectedIds={setSelectedIds}
               overrideObjects={timeTravelSnapshot}
-              onCollapse={collapseLeft}
+              onCollapse={phone ? undefined : collapseLeft}
             />
             <PanelWidthHandle />
           </BoardColumn>
@@ -1701,7 +1725,16 @@ export default function Room() {
           of buttons that cannot do anything. The write path refuses them
           regardless -- see `mutations.ts` -- and this is the half that stops
           somebody pressing them and wondering. */}
-      {showContextToolbar && canEdit && !presenting && (
+      {showContextToolbar && canEdit && !presenting && phone && (
+        <PhoneContextBar
+          selectedId={selectedId}
+          selectedIds={selectedIds}
+          menuActions={contextActions}
+          onEdit={expandRight}
+          editing={rightOpen}
+        />
+      )}
+      {showContextToolbar && canEdit && !presenting && !phone && (
         <ObjectContextToolbar
           selectedId={selectedId}
           selectedIds={selectedIds}
@@ -1718,7 +1751,7 @@ export default function Room() {
 
       {/* Scrim — only while the panels float above the canvas, so tapping the
           canvas dismisses them instead of leaving them covering the work. */}
-      {chromeOn && isCompact && panelsOpen && (
+      {chromeOn && overlayPanels && panelsOpen && !phone && (
         <button
           className="panel-scrim"
           aria-label="Close panels"
@@ -1729,7 +1762,7 @@ export default function Room() {
       {/* COMMENT INBOX — every thread in the room, in one list.
           Sits above the Properties panel rather than beside it: both own the
           right-hand column, and two 300px columns leave no canvas. */}
-      {chromeOn && showInbox && (
+      {chromeOn && showInbox && !phone && (
         <LiveCommentInbox
           threads={comments}
           marks={commentMarks}
@@ -1751,6 +1784,34 @@ export default function Room() {
             );
           }}
         />
+      )}
+      {/* On a phone the inbox is a full-height sheet. */}
+      {chromeOn && phone && (
+        <BottomSheet open={showInbox} onClose={() => setShowInbox(false)} label="Comments" headless snaps={['full']} className="phone-comments-sheet">
+          <LiveCommentInbox
+            threads={comments}
+            marks={commentMarks}
+            myAuthorId={myAuthorId}
+            onClose={() => setShowInbox(false)}
+            onOpenThread={(thread) => {
+              // The sheet covers the board; the thread opens on it.
+              setShowInbox(false);
+              const at = anchorPoint(
+                thread,
+                thread.objectId ? liveObjects()[thread.objectId] : null
+              );
+              window.dispatchEvent(
+                new CustomEvent('navigateViewport', {
+                  detail: { x: at.x, y: at.y, zoom: Math.max(cameraSystem.zoom, 0.6) },
+                })
+              );
+              // After the fly-to, so the thread opens where the camera lands.
+              window.dispatchEvent(
+                new CustomEvent('focusCommentThread', { detail: { id: thread.id } })
+              );
+            }}
+          />
+        </BottomSheet>
       )}
 
       {/* CONTEXT INSPECTOR (Right Sidebar)
@@ -1774,6 +1835,10 @@ export default function Room() {
           region={3}
           tour="properties"
           panelClassName="context-inspector panel-surface"
+          onClose={closePhoneSheets}
+          sheetLabel="Properties"
+          sheetSnaps={['peek', 'half', 'full']}
+          sheetInitialSnap="half"
           pill={(toggle) => (
             <BoardHeaderRight
               variant="pill"
@@ -1801,7 +1866,7 @@ export default function Room() {
           <PropertiesPanel
             selectedIds={selectedIds}
             overrideObjects={timeTravelSnapshot}
-            onCollapse={collapseRight}
+            onCollapse={phone ? undefined : collapseRight}
           />
         </BoardColumn>
       )}

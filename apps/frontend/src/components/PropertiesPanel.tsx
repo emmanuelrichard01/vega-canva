@@ -23,7 +23,6 @@ import {
   type Shared,
 } from '../engine/model/selection';
 import {
-  DEFAULT_SHADOW_COLOR,
   DEFAULT_TYPOGRAPHY,
   isOpenShape,
   type AnyNode,
@@ -71,18 +70,9 @@ import { FeatureBoundary } from './ui/FeatureBoundary';
 import { storageGet, storageSet } from '../utils/safeStorage';
 import { useSidewaysOverflowCheck } from './panel/overflowCheck';
 import './panel/panel.css';
-import { DEFAULT_DROP_SHADOW } from '../engine/model/dropShadow';
+import { DEFAULT_DROP_SHADOW, DEFAULT_INNER_SHADOW } from '../engine/model/dropShadow';
 
 const DEFAULT_SHADOW: Shadow = DEFAULT_DROP_SHADOW;
-
-const DEFAULT_INNER_SHADOW: Shadow = {
-  color: DEFAULT_SHADOW_COLOR,
-  blur: 8,
-  offsetX: 0,
-  offsetY: 2,
-  spread: 0,
-  opacity: 0.35,
-};
 
 export const PANEL_WIDTH_KEY = 'vega.panel.width';
 export const PANEL_MIN_W = 240;

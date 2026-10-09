@@ -274,6 +274,10 @@ that is stored in the CRDT.
   dragged point is written back to the cell only after a confirm.
 - **Stickies** render a dog-ear, stamps (the existing `reactions`) and
   checklists.
+- **Shadow.visible** (wave 8). Optional boolean on a shadow; `false` keeps its
+  settings and draws nothing, absent means shown. Spread may now be negative,
+  and a rounded corner grows to `radius + spread`. Inner shadows are offered
+  only where `supportsInteriorEffects` holds.
 
 ### Legacy documents
 

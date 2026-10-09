@@ -246,6 +246,8 @@ export const GridEditOverlay: React.FC<{ node: GridNode; cells: readonly StyledC
               const c = e.target.getStage()?.container();
               if (c) c.style.cursor = '';
             }}
+            // Drag events bubble to the grid's own handlers; keep them here.
+            onDragStart={stop}
             onDragMove={(e) => {
               stop(e);
               const local = e.target.getParent()?.getRelativePointerPosition();
@@ -510,6 +512,10 @@ const BorderHandle: React.FC<{
       onTouchStart={stop}
       onMouseEnter={(e) => setCursor(e, axis === 'cols' ? 'col-resize' : 'row-resize')}
       onMouseLeave={(e) => setCursor(e, '')}
+      // Konva drag events bubble. Without this the grid's own drag handlers
+      // (ObjectRenderer) hear the handle's start, read the handle's position as
+      // the grid's, and leave the whole grid displaced off the board.
+      onDragStart={stop}
       onDragMove={(e) => {
         stop(e);
         const p = e.target.position();

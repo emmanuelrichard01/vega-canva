@@ -109,7 +109,10 @@
       behaviour the canvas had already handled. iOS has ignored it since 10
       for the same reason.
     -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `viewport-fit=cover` lets an installed board reach under the notch and
+         the home indicator; the dock, the phone bar and the sheets keep clear
+         of them with `env(safe-area-inset-*)`. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <!-- Board faces, and only the ones that are not already in the bundle.
 
          This asked for eleven families. Six of them -- Inter, Roboto, Space

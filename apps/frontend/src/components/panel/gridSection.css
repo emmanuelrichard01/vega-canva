@@ -89,6 +89,23 @@
   gap: var(--space-2);
 }
 
+.gsec-place {
+  display: flex;
+  box-sizing: border-box;
+  width: 36px;
+  height: 28px;
+  padding: 3px;
+  border: 1px dashed var(--border-strong, var(--text-tertiary));
+  border-radius: 3px;
+}
+
+.gsec-place__item {
+  width: 10px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--text-primary);
+}
+
 .gsec-align__fill {
   display: flex;
   gap: 4px;

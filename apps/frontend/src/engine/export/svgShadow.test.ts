@@ -137,3 +137,79 @@ describe('SVG export of drop shadows', () => {
     expect(svg).not.toContain('ds-t');
   });
 });
+
+describe('spread, radius and inner shadows in the file', () => {
+  beforeEach(() => {
+    objects = {};
+  });
+
+  const add = (raw: any) => {
+    const node = normalizeNode(raw)!;
+    objects[node.id] = node;
+    return node;
+  };
+  const exportSvg = () => new SVGExporter().export({ format: 'svg', background: 'transparent' } as any);
+  const card = (id: string, appearance: any, cornerRadius: any = 12) => ({
+    id,
+    type: 'shape',
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 60,
+    zIndex: 1,
+    geometry: { kind: 'rect' },
+    appearance: { fill: [{ type: 'solid', color: '#ffffff' }], cornerRadius, ...appearance },
+  });
+
+  it('shrinks the silhouette for a negative spread', () => {
+    const f = dropShadowFilter('a', { ...shadow, spread: -4 }, { x: 0, y: 0, width: 1, height: 1 });
+    expect(f).toMatch(/feMorphology[^>]*operator="erode"[^>]*radius="4"/);
+  });
+
+  it('casts a spread rounded card from a grown rounded outline, not a square morphology', async () => {
+    add(card('c', { shadow: { ...shadow, spread: 8 } }));
+    const svg = await exportSvg();
+    expect(svg).not.toContain('feMorphology');
+    // The 100x60 card grown by 8 on every side, its corners grown 12 -> 20.
+    expect(svg).toContain('<path d="M12 -8');
+    expect(svg).toMatch(/A20 20 0 0 1 108 12/);
+  });
+
+  it('keeps a square corner square when it spreads, per corner', async () => {
+    add(card('p', { shadow: { ...shadow, spread: 4 } }, [0, 16, 0, 16]));
+    const svg = await exportSvg();
+    // Top-left starts at the grown box's corner itself: no arc there.
+    expect(svg).toContain('<path d="M-4 -4');
+    expect(svg).toMatch(/A20 20 0 0 1 104 16/);
+  });
+
+  it('draws a radius past half the short side as a circular corner', async () => {
+    add(card('r', {}, 80));
+    const svg = await exportSvg();
+    expect(svg).toContain('rx="30"');
+  });
+
+  it('exports the inner shadow, clipped to the shape and off its stroke', async () => {
+    add(card('i', { stroke: { color: '#111111', width: 4 }, innerShadow: { ...shadow, spread: 2 } }));
+    const svg = await exportSvg();
+    expect(svg).toContain('<filter id="is-i"');
+    expect(svg).toMatch(/feMorphology in="SourceAlpha" operator="erode" radius="2"/);
+    expect(svg).toContain('tableValues="1 0"');
+    expect(svg).toMatch(/operator="dilate" radius="2"/);
+    expect(svg).toContain('stdDeviation="6"');
+  });
+
+  it('leaves a hidden shadow out of the file', async () => {
+    add(card('h', { shadow: { ...shadow, visible: false }, innerShadow: { ...shadow, visible: false } }));
+    const svg = await exportSvg();
+    expect(svg).not.toContain('ds-h');
+    expect(svg).not.toContain('is-h');
+  });
+
+  it('clips a rounded picture, so its shadow is rounded too', async () => {
+    add({ id: 'img', type: 'image', x: 0, y: 0, width: 80, height: 80, zIndex: 1, src: 'https://example.com/a.png', appearance: { cornerRadius: 16, shadow } });
+    const svg = await exportSvg();
+    expect(svg).toContain('clip-path="url(#ic-img)"');
+    expect(svg).toContain('filter="url(#ds-img)"');
+  });
+});

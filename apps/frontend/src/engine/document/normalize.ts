@@ -537,21 +537,23 @@ const STROKE_ALIGNS = new Set<StrokeAlign>(['center', 'inside', 'outside']);
 function toShadow(raw: unknown): Shadow | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const s = raw as Record<string, unknown>;
-  return {
+  const shadow: Shadow = {
     // Carries its own alpha, unlike `DEFAULT_SHADOW_COLOR`, and deliberately:
     // this is the *read* fallback for a stored shadow that has no colour at
     // all, which predates `Shadow.opacity` existing. Swapping it for the
     // opaque default would darken every legacy shadow that relied on it.
     color: color(s.color, LEGACY_SHADOW_COLOR),
-    // A negative blur or spread is not a smaller shadow; a canvas reads the
-    // first as a very large positive one and the second inverts the stroke
-    // that draws it.
+    // A negative blur is not a smaller shadow; a canvas reads it as a very
+    // large positive one. A negative spread is a smaller silhouette, which
+    // the renderers draw by eroding it, held to the panel's range.
     blur: Math.max(0, num(s.blur, 8)),
     offsetX: num(s.offsetX, 0),
     offsetY: num(s.offsetY, 2),
-    spread: Math.max(0, num(s.spread, 0)),
+    spread: clamp(num(s.spread, 0), -100, 100),
     opacity: clamp(num(s.opacity, 1), 0, 1),
   };
+  if (s.visible === false) shadow.visible = false;
+  return shadow;
 }
 
 /**

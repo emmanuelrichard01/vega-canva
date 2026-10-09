@@ -15,6 +15,27 @@
   server, sync layer, renderer, engines and UI. `git log` from that date
   records what changed.
 
+## Wave 8 (2026-10-09)
+
+- **Panel and music.** Properties panel redesign (288px, resizable 240 to 400),
+  vinyl trigger with tonearm and coast-to-stop (`components/music/spin.ts`),
+  label tint (`engine/music/tint.ts`), voice note HUD, and one playback slot
+  (`engine/model/audioPlayback.ts`).
+- **Grid.** Rail and `GridSection` redesign; `.gs` became `gsec`; "Item
+  placement" replaces "Content"; Edit-cells track drag fixed; selecting a grid
+  never opens the panel.
+- **Shadows.** Zoom scaling, per-corner radii, mitred and negative spread,
+  inner shadow under the stroke, SVG inner shadows, the Effects section, and
+  `Shadow.visible` (the only schema change).
+- **Mobile, three phases.** Touch gestures and `engine/ui/device.ts`; the phone
+  shell (`BottomSheet`, `PhoneToolbar`, `PhoneContextBar`); tablet overlay
+  panels, `styles/device.css`, and the render budget in `engine/render/`.
+  `useRailPlacement` first-placement bug fixed.
+- **Open:** path editor anchors are not touch-draggable; iPad palm rejection
+  relies on `touchType`; shape labels and author chips are not LOD'd; sketch
+  inner shadows are not exported; one shadow of each kind only; some timing
+  tests are flaky under load.
+
 ## Redesign waves 5, 6 and 7 (2026-10-07 to 10-08)
 
 Branch `redesign/wave5-6` (wave 5 committed at 78c4822; waves 6 and 7 landed in

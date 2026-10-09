@@ -28,8 +28,8 @@ import { DEFAULT_SHADOW_COLOR, type Appearance, type Shadow } from './schema';
  */
 
 /** A named shadow, for the panel's preset menu. */
-export interface ShadowPreset {
-  id: 'subtle' | 'medium' | 'lifted';
+export interface ShadowPreset<Id extends string = string> {
+  id: Id;
   label: string;
   shadow: Shadow;
 }
@@ -40,9 +40,11 @@ export interface ShadowPreset {
  *
  * Opacity is tuned to read on the dark board as well as the light one — a
  * 25% black at a 12px blur all but disappears on a near-black canvas, so the
- * larger lifts carry more ink than a light-only scale would.
+ * larger lifts carry more ink than a light-only scale would. The lifted step
+ * pulls its silhouette in by a few units, so the long blur reads as height
+ * rather than as a grey halo spreading past the card's sides.
  */
-export const SHADOW_PRESETS: readonly ShadowPreset[] = [
+export const SHADOW_PRESETS: readonly ShadowPreset<'subtle' | 'medium' | 'lifted'>[] = [
   {
     id: 'subtle',
     label: 'Subtle',
@@ -56,18 +58,47 @@ export const SHADOW_PRESETS: readonly ShadowPreset[] = [
   {
     id: 'lifted',
     label: 'Lifted',
-    shadow: { color: DEFAULT_SHADOW_COLOR, offsetX: 0, offsetY: 12, blur: 28, spread: 0, opacity: 0.28 },
+    shadow: { color: DEFAULT_SHADOW_COLOR, offsetX: 0, offsetY: 12, blur: 28, spread: -4, opacity: 0.3 },
   },
 ];
 
 /** What a new drop shadow starts as: the resting card. */
 export const DEFAULT_DROP_SHADOW: Shadow = SHADOW_PRESETS[1].shadow;
 
-/** The preset a shadow matches exactly, ignoring its colour, or null. */
-export function presetOf(shadow: Shadow | undefined): ShadowPreset['id'] | null {
+/**
+ * Three inner shadows: a soft inset along the top edge, a pressed well, and a
+ * deep recess. Inner shadows read darker than drop shadows at the same
+ * opacity, because they sit on the object's own fill rather than on the board.
+ */
+export const INNER_SHADOW_PRESETS: readonly ShadowPreset<'soft' | 'pressed' | 'deep'>[] = [
+  {
+    id: 'soft',
+    label: 'Soft',
+    shadow: { color: DEFAULT_SHADOW_COLOR, offsetX: 0, offsetY: 1, blur: 4, spread: 0, opacity: 0.2 },
+  },
+  {
+    id: 'pressed',
+    label: 'Pressed',
+    shadow: { color: DEFAULT_SHADOW_COLOR, offsetX: 0, offsetY: 2, blur: 8, spread: 0, opacity: 0.35 },
+  },
+  {
+    id: 'deep',
+    label: 'Deep',
+    shadow: { color: DEFAULT_SHADOW_COLOR, offsetX: 0, offsetY: 4, blur: 16, spread: 2, opacity: 0.4 },
+  },
+];
+
+/** What a new inner shadow starts as: the pressed well. */
+export const DEFAULT_INNER_SHADOW: Shadow = INNER_SHADOW_PRESETS[1].shadow;
+
+/** The preset a shadow matches exactly, ignoring its colour and visibility, or null. */
+export function presetOf<Id extends string = ShadowPreset['id']>(
+  shadow: Shadow | undefined,
+  presets: readonly ShadowPreset<Id>[] = SHADOW_PRESETS as unknown as readonly ShadowPreset<Id>[]
+): Id | null {
   if (!shadow) return null;
   const same = (a: number | undefined, b: number | undefined) => Math.abs((a ?? 0) - (b ?? 0)) < 1e-6;
-  const hit = SHADOW_PRESETS.find(
+  const hit = presets.find(
     ({ shadow: p }) =>
       same(shadow.offsetX, p.offsetX) &&
       same(shadow.offsetY, p.offsetY) &&
@@ -82,6 +113,8 @@ export function presetOf(shadow: Shadow | undefined): ShadowPreset['id'] | null 
 export const SHADOW_STEP = 0.5;
 export const MAX_SHADOW_BLUR = 200;
 export const MAX_SHADOW_SPREAD = 100;
+/** Spread goes negative as far as it goes positive: a shrunk silhouette under a long blur. */
+export const MIN_SHADOW_SPREAD = -MAX_SHADOW_SPREAD;
 export const MAX_SHADOW_OFFSET = 500;
 
 /**
@@ -188,9 +221,82 @@ export function needsKnockout(ink: ShadowInkSummary): boolean {
   return ink.stroked && !ink.strokeOpaque;
 }
 
-/** A shadow worth drawing: present, and not fully transparent. */
+/** A shadow worth drawing: present, shown, and not fully transparent. */
 export function castsShadow(shadow: Shadow | undefined): shadow is Shadow {
-  return Boolean(shadow) && (shadow!.opacity ?? 1) > 0 && shadow!.color !== 'transparent';
+  return Boolean(shadow) && shadow!.visible !== false && (shadow!.opacity ?? 1) > 0 && shadow!.color !== 'transparent';
+}
+
+/**
+ * The corner radii of a rounded rectangle grown by `grow` on every side.
+ *
+ * A rounded corner keeps its centre and gains the growth, so it stays
+ * concentric with the shape: `r + grow`, never below zero. A square corner
+ * stays square, as CSS `box-shadow` and Figma both draw a spread square card:
+ * rounding it by the spread would make a sharp card cast a soft-cornered
+ * shadow. Fitted to the grown box, so a shrunk silhouette cannot invert.
+ */
+export function grownRadii(
+  radii: readonly [number, number, number, number],
+  width: number,
+  height: number,
+  grow: number
+): [number, number, number, number] {
+  const w = Math.max(0, width + grow * 2);
+  const h = Math.max(0, height + grow * 2);
+  const out = radii.map((r) => (r > 0 ? Math.max(0, r + grow) : 0)) as [number, number, number, number];
+  // The same rule as `fitRadii`: scale every corner by the worst edge.
+  const [tl, tr, br, bl] = out;
+  const ratio = Math.min(
+    1,
+    tl + tr > 0 ? w / (tl + tr) : Infinity,
+    bl + br > 0 ? w / (bl + br) : Infinity,
+    tl + bl > 0 ? h / (tl + bl) : Infinity,
+    tr + br > 0 ? h / (tr + br) : Infinity
+  );
+  return out.map((r) => r * ratio) as [number, number, number, number];
+}
+
+/**
+ * How far into an object its inner shadow starts: the inner half of a centred
+ * stroke, all of an inside one, none of an outside one. The shadow is cast by
+ * the stroke's inner edge, as CSS casts an inset shadow from the padding box,
+ * so it never paints over the object's own outline.
+ */
+export function innerShadowInset(stroke: { width: number; align?: string } | undefined, stroked: boolean): number {
+  if (!stroked || !stroke || !(stroke.width > 0)) return 0;
+  const align = stroke.align ?? 'center';
+  if (align === 'outside') return 0;
+  return align === 'inside' ? stroke.width : stroke.width / 2;
+}
+
+/**
+ * The device-pixel rectangles an inner shadow works in.
+ *
+ * `out` is the object's own box on the canvas: an inner shadow never lands
+ * outside it. `ink` is the part of "everything outside the hole" that can
+ * reach `out` once offset and blurred, so it is `out` moved back by the
+ * offset and grown by three sigma.
+ */
+export function innerCastRegions(
+  box: DeviceRect,
+  canvas: { width: number; height: number },
+  blurPx: number,
+  offset: { x: number; y: number }
+): { ink: DeviceRect; out: DeviceRect } | null {
+  const x0 = Math.max(0, Math.floor(box.x));
+  const y0 = Math.max(0, Math.floor(box.y));
+  const x1 = Math.min(canvas.width, Math.ceil(box.x + box.width));
+  const y1 = Math.min(canvas.height, Math.ceil(box.y + box.height));
+  if (x1 <= x0 || y1 <= y0) return null;
+  const reach = Math.ceil(Math.max(0, blurPx) * 1.5) + 2;
+  const out = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+  const ink = {
+    x: Math.floor(out.x - offset.x - reach),
+    y: Math.floor(out.y - offset.y - reach),
+    width: Math.ceil(out.width + reach * 2) + 1,
+    height: Math.ceil(out.height + reach * 2) + 1,
+  };
+  return { ink, out };
 }
 
 /**

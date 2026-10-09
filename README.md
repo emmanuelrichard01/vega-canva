@@ -1442,6 +1442,39 @@ The redesign waves added these surfaces. Names and paths are the ones to grep.
 
 Open items are in `.claude/redesign/HANDOFF-next-session.md` and `HANDOFF.md`.
 
+### Wave 8, shadows, grids and touch devices
+
+- **Properties panel.** 288px by default, resizable 240 to 400
+  (`components/panel/`). One grammar: 32px controls, an 8px rhythm, a 72 to
+  104px label column, animated collapsible sections, a header tile with a lock
+  button. With nothing selected it shows the "Nothing selected" board section.
+  Selecting a grid never opens it.
+- **Music and voice notes.** The vinyl trigger has a tonearm and coasts to a
+  stop (`components/music/spin.ts`); its label is tinted from the station or
+  album art (`engine/music/tint.ts`). The voice note HUD has a 28-bar meter,
+  Enter to keep and key hints. Only one clip plays at a time
+  (`engine/model/audioPlayback.ts`).
+- **Grids.** The rail offers named arrangement tiles, live layout fields and a
+  Grid settings button. `GridSection` was redesigned (class `.gs` renamed
+  `gsec` after a collision; "Item placement" replaces "Content", under Cells).
+  Edit-cells track handles no longer let `dragstart` bubble.
+- **Shadows.** Drop and inner shadows scale with zoom, honour per-corner radii,
+  use a mitred spread, accept negative spread, and the inner shadow draws under
+  the stroke. SVG export covers inner shadows and rounded spread. The Effects
+  section lists shadows with show, hide and remove rows and presets;
+  `Shadow.visible` hides one without losing its settings, and the
+  `supportsInteriorEffects` capability says which objects take an inner shadow.
+- **Touch and small screens.** `engine/ui/device.ts` sets `data-pointer` and
+  `data-device`; `engine/interaction/gestures.ts` handles pan and pinch, a
+  long-press menu, and 2 and 3 finger undo and redo; pens reject palms; touch
+  targets are 44px; the editor follows the on-screen keyboard. Phones get
+  `BottomSheet`, `PhoneToolbar`, `PhoneContextBar`, phone sheets, a compact
+  header and a phone rooms page. Tablets get overlay panels with a scrim
+  (`styles/device.css`, `data-resizing`, `viewport-fit=cover`).
+  `engine/render/` caps DPR, applies level of detail and skips shadows while
+  moving on low-end or touch devices. `useRailPlacement` places the rail
+  correctly on first load.
+
 ### Design system — `index.css`
 
 Two token layers, and only two: **primitives** (raw values, no meaning) and

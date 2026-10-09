@@ -1,9 +1,8 @@
 import React from 'react';
 import { Shape } from 'react-konva';
 import type Konva from 'konva';
-import { withAlpha } from '../../../engine/model/paint';
 import type { Shadow, StrokeAlign } from '../../../engine/model/schema';
-import { castRegions, deviceBox, shadowReach } from '../../../engine/model/dropShadow';
+import { castRegions, deviceBox, innerCastRegions, shadowReach } from '../../../engine/model/dropShadow';
 import { inversePath } from './shapePath2D';
 import { flooredLineWidth } from './hairline';
 
@@ -225,77 +224,98 @@ export const BackdropBlur: React.FC<BackdropProps> = ({ path, width, height, rad
 
 interface InnerShadowProps extends Props {
   shadow: Shadow;
+  /** How far inside the outline the shadow starts: the stroke's inner reach. See `innerShadowInset`. */
+  inset?: number;
+  /** The outline's fill rule, so a shape with holes casts into its body, not its holes. */
+  rule?: CanvasFillRule;
 }
 
 /**
  * A shadow cast inward, as though the shape were a hole.
  *
- * The construction is: clip to the shape, then fill *everything except* the
- * shape with the shadow switched on. The fill itself lands entirely outside
- * the clip and so paints nothing; only its shadow, which falls inward across
- * the edge, survives. This is how a canvas has always drawn an inner shadow,
- * and it is why the effect needs a path rather than a property.
+ * The shadow is cast by everything *outside* the shape, grown inward by the
+ * spread and by the stroke's inner reach, then offset, blurred, and kept only
+ * where it falls inside the shape and inside its stroke. That is CSS's inset
+ * `box-shadow` and Figma's inner shadow: the shadow follows every corner the
+ * outline has, because the hole is the outline, and it sits under the stroke
+ * rather than over it.
  *
- * `spread` grows the hole inward by stroking the same edge, which thickens the
- * region casting the shadow — the same trick the drop shadow's spread uses,
- * pointed the other way. Unlike the fill, that stroke *does* paint inside the
- * clip, so it is drawn in the shadow's own colour rather than in the throwaway
- * black the fill uses: the half of it that lands inside is the solid core of
- * the shadow, and painting it black was a black band with no shadow in it.
+ * Built in device pixels on the drop shadow's scratch pads, for the same
+ * reasons: blur, offset and spread scale with the zoom and the pixel ratio
+ * (a context's `shadowBlur` ignores its transform), and the offset falls in
+ * the screen's frame, so a rotated card's inner shadow still comes from above.
+ *
+ * 1. The `ink` pad is filled, the shape is cut out of it, and the edge is
+ *    grown inward (a stroke) or pulled back (an erasing stroke) by
+ *    `inset + spread`. That is the region casting the shadow.
+ * 2. Its shadow alone is cast onto the `cast` pad, by drawing it far away.
+ * 3. The cast is cut to the shape, and the stroke's inner band is cut out.
+ * 4. The result is laid on the board at the shadow's opacity.
  */
-export const InnerShadow: React.FC<InnerShadowProps> = ({ path, width, height, shadow }) => (
+export const InnerShadow: React.FC<InnerShadowProps> = ({ path, width, height, shadow, inset = 0, rule = 'nonzero' }) => (
   <Shape
     listening={false}
     perfectDrawEnabled={false}
     sceneFunc={(context: Konva.Context) => {
       const ctx = context._context;
-      ctx.save();
-      ctx.clip(path);
+      const target = ctx.canvas;
+      if (!target) return;
+      const m = ctx.getTransform();
+      const sx = Math.hypot(m.a, m.b);
+      const sy = Math.hypot(m.c, m.d);
+      const blurPx = Math.max(0, shadow.blur) * Math.min(sx, sy);
+      const offset = { x: shadow.offsetX * sx, y: shadow.offsetY * sy };
+      const regions = innerCastRegions(deviceBox(m, { x: 0, y: 0, width, height }), target, blurPx, offset);
+      if (!regions) return;
+      const { ink, out } = regions;
 
-      ctx.shadowColor = withAlpha(shadow.color, shadow.opacity);
-      ctx.shadowBlur = Math.max(0, shadow.blur);
-      ctx.shadowOffsetX = shadow.offsetX;
-      ctx.shadowOffsetY = shadow.offsetY;
-      // Any opaque colour: this fill is outside the clip and never appears.
-      // Only its shadow does, and a shadow takes its colour from the context.
-      ctx.fillStyle = '#000000';
-      ctx.fill(inversePath(path, width, height), 'evenodd');
-
-      if (shadow.spread && shadow.spread > 0) {
-        /**
-         * The spread band is drawn in the shadow's own colour, not in black.
-         *
-         * ## The bug
-         *
-         * This was `strokeStyle = '#000000'`, on the same reasoning as the
-         * fill two lines above: *any opaque colour will do, because the ink
-         * lands outside the clip and only its shadow shows.* That is true of
-         * the fill, which is the inverse path and lies entirely outside the
-         * shape. It is false of a **stroke**, which straddles the edge it is
-         * drawn on — so the inner half of a `spread * 2` wide line landed
-         * inside the clip and was painted solid black.
-         *
-         * The symptom was a thick black band hugging the inside of the
-         * outline, with the actual shadow colour nowhere in it, the moment
-         * spread went above zero.
-         *
-         * ## Why the stroke stays rather than being removed
-         *
-         * That inner half is not a mistake to delete — it is exactly where a
-         * spread inner shadow is at full strength. A spread of *n* means the
-         * shadow is solid for *n* units before the blur starts softening it,
-         * which is a band of shadow colour hugging the edge. Painting the band
-         * in `shadow.color` at `shadow.opacity` makes the stroke draw the very
-         * thing it was supposed to be casting, and the blur beyond it comes
-         * from the shadow this same stroke throws further in.
-         *
-         * So the fix is the colour, and the geometry was right all along.
-         */
-        ctx.lineWidth = shadow.spread * 2;
-        ctx.strokeStyle = withAlpha(shadow.color, shadow.opacity);
-        ctx.stroke(path);
+      const inkCtx = pad('ink', ink.width, ink.height);
+      if (!inkCtx) return;
+      inkCtx.fillStyle = '#000000';
+      inkCtx.strokeStyle = '#000000';
+      inkCtx.fillRect(0, 0, ink.width, ink.height);
+      inkCtx.setTransform(m.a, m.b, m.c, m.d, m.e - ink.x, m.f - ink.y);
+      inkCtx.globalCompositeOperation = 'destination-out';
+      inkCtx.fill(path, rule);
+      const grow = inset + (shadow.spread ?? 0);
+      if (grow !== 0) {
+        // A stroke of twice the growth moves the edge by exactly the growth:
+        // inward when it paints, outward when it erases.
+        inkCtx.globalCompositeOperation = grow > 0 ? 'source-over' : 'destination-out';
+        inkCtx.lineWidth = Math.abs(grow) * 2;
+        inkCtx.lineJoin = 'round';
+        inkCtx.stroke(path);
       }
+      inkCtx.globalCompositeOperation = 'source-over';
+      inkCtx.setTransform(1, 0, 0, 1, 0, 0);
 
+      const castCtx = pad('cast', out.width, out.height);
+      if (!castCtx) return;
+      const far = out.width + ink.width + 64;
+      castCtx.shadowColor = shadow.color;
+      castCtx.shadowBlur = blurPx;
+      castCtx.shadowOffsetX = offset.x + far;
+      castCtx.shadowOffsetY = offset.y;
+      castCtx.drawImage(pads.ink!, 0, 0, ink.width, ink.height, ink.x - out.x - far, ink.y - out.y, ink.width, ink.height);
+      castCtx.shadowColor = 'rgba(0, 0, 0, 0)';
+
+      // Inside the shape, and off the stroke that borders it.
+      castCtx.setTransform(m.a, m.b, m.c, m.d, m.e - out.x, m.f - out.y);
+      castCtx.globalCompositeOperation = 'destination-in';
+      castCtx.fill(path, rule);
+      if (inset > 0) {
+        castCtx.globalCompositeOperation = 'destination-out';
+        castCtx.lineWidth = inset * 2;
+        castCtx.lineJoin = 'round';
+        castCtx.stroke(path);
+      }
+      castCtx.globalCompositeOperation = 'source-over';
+      castCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha *= Math.min(1, Math.max(0, shadow.opacity ?? 1));
+      ctx.drawImage(pads.cast!, 0, 0, out.width, out.height, out.x, out.y, out.width, out.height);
       ctx.restore();
     }}
   />
@@ -318,7 +338,8 @@ export interface ShadowStroke {
  * lines, and raster art whose alpha is its own silhouette (a picture).
  */
 export interface ShadowSilhouette {
-  fills?: ReadonlyArray<{ path: Path2D; rule?: CanvasFillRule }>;
+  /** `join` is how spread grows the region's corners; round when absent. */
+  fills?: ReadonlyArray<{ path: Path2D; rule?: CanvasFillRule; join?: CanvasLineJoin }>;
   strokes?: ReadonlyArray<ShadowStroke>;
   /** Paints raster ink in the group's local units. Not grown by spread. */
   raster?: (ctx: CanvasRenderingContext2D) => void;
@@ -337,27 +358,37 @@ export interface LocalBox {
  *
  * Growing is stroking: a line of `2 * grow` centred on a region's edge puts
  * exactly `grow` outside it, whatever the region is, and a stroke widened by
- * `2 * grow` is that stroke dilated by `grow`. It is the construction spread
- * has always used here, applied to the whole silhouette at once.
+ * `2 * grow` is that stroke dilated by `grow`. A fill grows with its own
+ * `join`: mitred for a rectangle, so a square corner stays square and a
+ * rounded one grows to `radius + grow`; round for everything else, which is
+ * the true offset of a curve.
+ *
+ * A negative `grow` erodes: each region loses a band of `|grow|` along its
+ * edge, and each line narrows by twice that.
  */
 export function paintSilhouette(ctx: CanvasRenderingContext2D, ink: ShadowSilhouette, box: LocalBox, grow: number): void {
   ctx.fillStyle = '#000000';
   ctx.strokeStyle = '#000000';
   for (const f of ink.fills ?? []) {
     ctx.fill(f.path, f.rule ?? 'nonzero');
-    if (grow > 0) {
+    if (grow !== 0) {
+      ctx.save();
+      if (grow < 0) ctx.globalCompositeOperation = 'destination-out';
       ctx.setLineDash([]);
-      ctx.lineJoin = 'round';
-      ctx.lineWidth = grow * 2;
+      ctx.lineJoin = f.join ?? 'round';
+      ctx.miterLimit = 10;
+      ctx.lineWidth = Math.abs(grow) * 2;
       ctx.stroke(f.path);
+      ctx.restore();
     }
   }
   for (const s of ink.strokes ?? []) {
-    if (!(s.width > 0) && !(grow > 0)) continue;
+    const width = (s.side ? s.width * 2 : s.width) + grow * 2;
+    if (!(width > 0)) continue;
     ctx.save();
     if (s.side === 'inside') ctx.clip(s.path);
     else if (s.side === 'outside') ctx.clip(inversePath(s.path, box.x + box.width, box.y + box.height), 'evenodd');
-    ctx.lineWidth = (s.side ? s.width * 2 : s.width) + grow * 2;
+    ctx.lineWidth = width;
     ctx.lineCap = s.cap ?? 'butt';
     ctx.lineJoin = s.join ?? 'miter';
     if (s.miterLimit !== undefined) ctx.miterLimit = s.miterLimit;
@@ -448,8 +479,10 @@ export const DropShadow: React.FC<DropShadowProps> = ({ shadow, box, silhouette,
         const m = ctx.getTransform().translate(-x, -y);
         const sx = Math.hypot(m.a, m.b);
         const sy = Math.hypot(m.c, m.d);
-        const spread = Math.max(0, shadow.spread ?? 0);
-        const grown = { x: box.x - spread, y: box.y - spread, width: box.width + spread * 2, height: box.height + spread * 2 };
+        const spread = shadow.spread ?? 0;
+        // A negative spread only shrinks the ink, so the box stays as it is.
+        const outset = Math.max(0, spread);
+        const grown = { x: box.x - outset, y: box.y - outset, width: box.width + outset * 2, height: box.height + outset * 2 };
         const inkBox = deviceBox(m, grown);
         if (inkBox.width < 0.5 && inkBox.height < 0.5) return;
 

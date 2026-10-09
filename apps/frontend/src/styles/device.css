@@ -1,0 +1,69 @@
+/* ===========================================================================
+   DEVICE — what changes for a tablet, and for a board in motion on a lite
+   render budget. `data-device`, `data-gesture` and `data-resizing` are set on
+   <html> by engine/ui/device.ts and engine/render/gestureLite.ts. A desktop
+   with a mouse matches none of these rules.
+   =========================================================================== */
+
+/* While the board moves on a lite budget, the chrome over it stops blurring
+   what is underneath: a backdrop blur over a canvas that changes every frame is
+   recomposited every frame. It comes back the frame the motion stops. */
+:root[data-gesture] body * {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* A rotation or a split-view resize lands in one step instead of animating
+   every column, the dock and the rail to their new places. */
+:root[data-resizing] body * {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* ------------------------------------------------------------- tablet */
+
+/* The columns slide over the board as overlays: their own shadow, above the
+   board's chrome, and clear of the dock at the bottom. */
+:root[data-device='tablet'][data-surface='board'] .hierarchy-panel.panel-surface,
+:root[data-device='tablet'][data-surface='board'] .context-inspector.panel-surface {
+  bottom: calc(var(--dock-h, 88px) + var(--space-4) + env(safe-area-inset-bottom, 0px));
+  z-index: 95;
+  box-shadow: var(--shadow-overlay, var(--shadow-lg));
+}
+
+:root[data-device='tablet'][data-surface='board'] .hierarchy-panel.panel-surface {
+  animation: tablet-column-in-left 220ms var(--ease-settle, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+:root[data-device='tablet'][data-surface='board'] .context-inspector.panel-surface {
+  animation: tablet-column-in-right 220ms var(--ease-settle, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+@keyframes tablet-column-in-left {
+  from { transform: translateX(calc(-100% - var(--space-4))); }
+  to { transform: none; }
+}
+
+@keyframes tablet-column-in-right {
+  from { transform: translateX(100%); }
+  to { transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-device='tablet'][data-surface='board'] .hierarchy-panel.panel-surface,
+  :root[data-device='tablet'][data-surface='board'] .context-inspector.panel-surface {
+    animation: none;
+  }
+}
+
+/* A slightly larger dock for a finger at arm's length. */
+:root[data-device='tablet'] .tool-dock .btn-icon {
+  min-width: 48px;
+  min-height: 48px;
+}
+
+/* The board's edges keep clear of the home indicator and the rounded corners
+   in a standalone window (viewport-fit=cover). */
+:root[data-device='tablet'] .tool-dock {
+  margin-bottom: env(safe-area-inset-bottom, 0px);
+}

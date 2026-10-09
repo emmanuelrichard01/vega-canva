@@ -4,6 +4,8 @@ import { Stage, Layer, Group, Path } from "react-konva";
 import Konva from "konva";
 // Side effect: Konva text measurement cached per font and string. See the module.
 import '../engine/render/konvaTextMeasure';
+import { installRenderBudget } from '../engine/render/gestureLite';
+import '../styles/device.css';
 import { selectionWithin } from '../engine/model/groupTree';
 import { updateNode } from '../engine/document';
 import { useStore } from '../hooks/useStore';
@@ -110,6 +112,9 @@ import { useCanvasShortcuts } from './canvas/useCanvasShortcuts';
 import { toolOverlay, useToolOverlay } from '../engine/tools/toolOverlay';
 import { sortByStacking } from '../engine/model/stacking';
 import { useCameraZoom } from '../engine/useCameraZoom';
+
+// The capped pixel ratio must be in place before the stage creates its canvases.
+installRenderBudget();
 
 interface CanvasProps {
   activeTool: string;

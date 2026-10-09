@@ -6,7 +6,7 @@ import { canvasFontFamily, konvaFontStyle, konvaTextDecoration, strokeColor, str
 import { useFillProps } from './useFillProps';
 import { AlignedStroke, BackdropBlur, DropShadow, InnerShadow, strokeInk, type ShadowSilhouette } from './ShapeEffects';
 import { capSilhouette, mergeSilhouettes, pointsBox, polylinePath, strokeReach } from './shadowInk';
-import { castsShadow, inkOf, needsKnockout, paintDraws } from '../../../engine/model/dropShadow';
+import { castsShadow, inkOf, innerShadowInset, needsKnockout, paintDraws } from '../../../engine/model/dropShadow';
 import { shapePath2D } from './shapePath2D';
 import { shapeToPath } from '../../../engine/model/shapeToPath';
 import { defaultEndAlign } from '../../../engine/model/linePath';
@@ -14,7 +14,7 @@ import { runPoints } from '../../../engine/model/lineEnds';
 import { LABEL_PAD, labelFraction, lineLabelBox, lineStrokeEnds, pointAlongRun } from '../../../engine/model/lineLabel';
 import { capExtentPoints, terminateRun } from '../../../engine/model/connectorEnds';
 import { contourData } from '../../../engine/model/pathGeometry';
-import { shapeFeaturePaths } from '../../../engine/model/shapeOutline';
+import { shapeFeaturePaths, shapeOutline } from '../../../engine/model/shapeOutline';
 import { labelPlated, shapeLabelBox } from '../../../engine/model/shapes/labelBox';
 import { roughLineCaps, roughShape } from '../../../engine/model/roughShape';
 import { featureStrokeWidth, fillsInterior, shadingStrokeWidth, sketchNib } from '../../../engine/model/rough';
@@ -24,7 +24,7 @@ import { readableOnSurface } from '../../../engine/model/color';
 import { useLiveTransform } from '../../../engine/model/liveTransformStore';
 import { fontEpoch } from '../../../engine/text/fontEpoch';
 import { ensureFontLoaded } from '../../../engine/text/measure';
-import { cornerRadiiOf, fitRadii } from '../../../engine/model/cornerRadii';
+import { cornerRadiiOf, fitRadii, roundedRectPath } from '../../../engine/model/cornerRadii';
 
 interface Props {
   node: ShapeNode;
@@ -111,7 +111,9 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
   const open = isOpenShape(node.geometry.kind);
   const align = node.appearance?.stroke?.align ?? 'center';
   const offCentre = !open && align !== 'center' && Boolean(stroke) && sw > 0;
-  const innerShadow = open ? undefined : node.appearance?.innerShadow;
+  // Hidden or fully transparent inner shadows are kept in the document and drawn by nothing.
+  const innerSpec = open ? undefined : node.appearance?.innerShadow;
+  const innerShadow = castsShadow(innerSpec) ? innerSpec : undefined;
   const backdropBlur = open ? 0 : (node.appearance?.backdropBlur ?? 0);
 
   const liveGeometry = liveTransform?.geometry;
@@ -753,7 +755,20 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
      */
     const fitted = fitRadii(cornerRadiiOf(radius), w, h);
     const konvaRadius = fitted.every((r) => r === fitted[0]) ? fitted[0] : fitted;
-    shape = (
+    // Konva also caps every corner at half the shorter side, which a fitted
+    // corner can exceed when its neighbours are small (a 200x40 card with only
+    // its top-left at 40). The outline, the shadows and the export draw the
+    // fitted corner, so the fill draws it too, as a path.
+    const capped = fitted.some((r) => r > Math.min(w, h) / 2 + 1e-6);
+    shape = capped ? (
+      <Path
+        data={roundedRectPath(0, 0, w, h, fitted)}
+        {...rectFill}
+        stroke={primitiveStroke}
+        strokeWidth={sw}
+        {...dashProps}
+      />
+    ) : (
       <Rect
         width={w}
         height={h}
@@ -842,10 +857,13 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
     const s = node.appearance?.stroke;
     const reach = stroke ? strokeReach(sw, align, s?.join ?? 'miter', s?.miterLimit) : 0;
     const kind = node.geometry.kind;
+    // A box outline grows mitred, so spread keeps a square corner square and
+    // takes a rounded one to `radius + spread`, as CSS and Figma do.
+    const growJoin: CanvasLineJoin = shapeOutline(effectiveNode).kind === 'rect' ? 'miter' : 'round';
     crispShadow = {
       box: { x: -reach, y: -reach, width: w + reach * 2, height: h + reach * 2 },
       silhouette: {
-        fills: ink.filled ? [{ path, rule: kind === 'rect' || kind === 'ellipse' ? 'nonzero' : 'evenodd' }] : [],
+        fills: ink.filled ? [{ path, rule: kind === 'rect' || kind === 'ellipse' ? 'nonzero' : 'evenodd', join: growJoin }] : [],
         strokes: stroke
           ? [
               ...strokeInk(path, s ? { ...s, width: sw } : undefined),
@@ -886,7 +904,14 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
         />
       )}
       {path && innerShadow && (
-        <InnerShadow path={path} width={w} height={h} shadow={innerShadow} />
+        <InnerShadow
+          path={path}
+          width={w}
+          height={h}
+          shadow={innerShadow}
+          rule={node.geometry.kind === 'rect' || node.geometry.kind === 'ellipse' ? 'nonzero' : 'evenodd'}
+          inset={innerShadowInset(node.appearance?.stroke ? { ...node.appearance.stroke, width: sw } : undefined, Boolean(stroke))}
+        />
       )}
       {/* A label on an open run rides the middle of the line, on its own plate.
           A line has no interior to centre text in — the shape branch below

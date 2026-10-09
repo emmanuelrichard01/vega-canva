@@ -79,9 +79,13 @@ export function withBorderMoved(node: GridNode, axis: Axis, index: number, delta
   const spec = node.grid.spec;
   const n = trackCount(spec, axis);
   if (index < 0 || index + 1 >= n) return node.grid;
+  // A non-finite delta (a pointer that left the window) moves nothing.
+  if (!Number.isFinite(delta)) return node.grid;
   const sizes = currentTrackSizes(node, axis);
   const pair = sizes[index] + sizes[index + 1];
-  const left = Math.min(pair - min, Math.max(min, sizes[index] + delta));
+  // A pair too small to give each side `min` splits evenly instead of inverting.
+  const floor = Math.min(min, pair / 2);
+  const left = Math.min(pair - floor, Math.max(floor, sizes[index] + delta));
   const tracks: GridTrack[] = sizes.map((s) => ({ fr: Math.max(1, Math.round(s)) }));
   tracks[index] = { fr: Math.max(1, Math.round(left)) };
   tracks[index + 1] = { fr: Math.max(1, Math.round(pair - left)) };

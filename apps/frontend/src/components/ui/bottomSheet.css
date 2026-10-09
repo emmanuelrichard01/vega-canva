@@ -1,0 +1,174 @@
+/* ===========================================================================
+   BOTTOM SHEET — the phone's panel. Rises from the bottom edge, rests on its
+   snaps, and keeps clear of the home indicator. One elevation: the overlay
+   shadow, no border. Tokens only; dark theme is `.dark-theme`.
+   =========================================================================== */
+
+.bsheet-root {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  pointer-events: none;
+}
+
+.bsheet-scrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  background: color-mix(in srgb, var(--brand-ink, #111) 28%, transparent);
+  opacity: 1;
+  transition: opacity 280ms var(--ease-settle);
+}
+
+.dark-theme .bsheet-scrim {
+  background: color-mix(in srgb, var(--surface-canvas) 70%, transparent);
+}
+
+.bsheet-scrim[data-state='entering'],
+.bsheet-scrim[data-state='closing'] {
+  opacity: 0;
+}
+
+.bsheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100% - env(safe-area-inset-top, 0px));
+  min-height: 0;
+  overflow: hidden;
+  pointer-events: auto;
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
+  box-shadow: var(--shadow-overlay);
+  font-family: var(--font-sans);
+  outline: none;
+  transition: height 280ms var(--ease-settle);
+  will-change: height;
+}
+
+.bsheet[data-dragging] {
+  transition: none;
+}
+
+.bsheet[data-state='closing'] {
+  transition-duration: 220ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 1, 1);
+}
+
+.bsheet-root[data-reduced] .bsheet,
+.bsheet-root[data-reduced] .bsheet-scrim {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bsheet,
+  .bsheet-scrim {
+    transition: none;
+  }
+}
+
+/* The grip: the handle and the title row, the one place a drag moves the
+   sheet. Content below scrolls on its own. */
+.bsheet__grip {
+  flex: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+
+.bsheet__handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: inherit;
+}
+
+.bsheet__handle > span {
+  width: 36px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+}
+
+.bsheet__handle:focus-visible {
+  outline: none;
+}
+
+.bsheet__handle:focus-visible > span {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color);
+  outline-offset: 3px;
+}
+
+.bsheet__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: 0 var(--space-2) var(--space-1) var(--space-4);
+}
+
+.bsheet__head[data-hidden] {
+  justify-content: flex-end;
+}
+
+.bsheet__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-md, 15px);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bsheet__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+.bsheet__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.bsheet__close:active {
+  background: var(--surface-active);
+}
+
+.bsheet__close:focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color);
+  outline-offset: -4px;
+}
+
+.bsheet__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}

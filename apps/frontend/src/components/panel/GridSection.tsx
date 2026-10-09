@@ -447,27 +447,6 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
             </PairRow>
           </>
         )}
-        <Row label="Content" hint="Where content sits in its module, and whether it fills it">
-          <div className="gsec-align">
-            <AlignMatrix value={align} onChange={setAlign} />
-            <div className="gsec-align__fill">
-              <IconToggle
-                label={align.x === 'stretch' ? 'Content fills the width' : 'Fill the width'}
-                pressed={align.x === 'stretch'}
-                onClick={() => setAlign({ ...align, x: align.x === 'stretch' ? 'center' : 'stretch' })}
-              >
-                <ArrowLeftRight size={13} />
-              </IconToggle>
-              <IconToggle
-                label={align.y === 'stretch' ? 'Content fills the height' : 'Fill the height'}
-                pressed={align.y === 'stretch'}
-                onClick={() => setAlign({ ...align, y: align.y === 'stretch' ? 'center' : 'stretch' })}
-              >
-                <ArrowUpDown size={13} />
-              </IconToggle>
-            </div>
-          </div>
-        </Row>
       </Section>
 
       {regular && (
@@ -572,6 +551,28 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
             unit="%"
             onChange={onCommit((v) => patchStyle({ opacity: v / 100 }))}
           />
+        </Row>
+        <Row label="Item placement" hint="How objects you drop into a cell sit inside it">
+          <div className="gsec-align">
+            <AlignMatrix value={align} onChange={setAlign} />
+            <div className="gsec-align__fill">
+              <IconToggle
+                label={align.x === 'stretch' ? 'Items fill the width' : 'Fill the width'}
+                pressed={align.x === 'stretch'}
+                onClick={() => setAlign({ ...align, x: align.x === 'stretch' ? 'center' : 'stretch' })}
+              >
+                <ArrowLeftRight size={13} />
+              </IconToggle>
+              <IconToggle
+                label={align.y === 'stretch' ? 'Items fill the height' : 'Fill the height'}
+                pressed={align.y === 'stretch'}
+                onClick={() => setAlign({ ...align, y: align.y === 'stretch' ? 'center' : 'stretch' })}
+              >
+                <ArrowUpDown size={13} />
+              </IconToggle>
+            </div>
+            <PlacementPreview value={align} />
+          </div>
         </Row>
       </Section>
 
@@ -698,7 +699,7 @@ const AlignMatrix: React.FC<{ value: CellAlign; onChange: (next: CellAlign) => v
     <div
       className="gsec-matrix"
       role="radiogroup"
-      aria-label="Content alignment"
+      aria-label="Item placement"
       data-stretch-x={value.x === 'stretch' || undefined}
       data-stretch-y={value.y === 'stretch' || undefined}
       onKeyDown={onKey}
@@ -736,6 +737,24 @@ const AlignMatrix: React.FC<{ value: CellAlign; onChange: (next: CellAlign) => v
         })
       )}
     </div>
+  );
+};
+
+/** A cell with one small item in it, drawn where the chosen placement puts it. */
+const PlacementPreview: React.FC<{ value: CellAlign }> = ({ value }) => {
+  const at = (v: CellAlignAxis) => (v === 'start' ? 'flex-start' : v === 'end' ? 'flex-end' : 'center');
+  return (
+    <span
+      className="gsec-place"
+      aria-hidden="true"
+      data-testid="placement-preview"
+      style={{ justifyContent: at(value.x), alignItems: at(value.y) }}
+    >
+      <span
+        className="gsec-place__item"
+        style={{ width: value.x === 'stretch' ? '100%' : undefined, height: value.y === 'stretch' ? '100%' : undefined }}
+      />
+    </span>
   );
 };
 

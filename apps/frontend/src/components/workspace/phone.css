@@ -1,0 +1,416 @@
+/* ===========================================================================
+   PHONE SHELL — a coarse pointer under 600px (`data-device="phone"` on
+   <html>, from `engine/ui/device.ts`). Every rule here is scoped to it, so
+   tablets and desktops never see one. Tokens only; dark is `.dark-theme`.
+
+   - The bottom bar replaces the dock; anything placed from `--dock-h`
+     clears it.
+   - The two column headers are compact pills along the top; the columns
+     themselves are sheets (`BottomSheet`).
+   - The selection bar is the rail with five 44px actions.
+   =========================================================================== */
+
+:root[data-device='phone'] body {
+  --phone-bar-h: 56px;
+  --dock-h: calc(var(--phone-bar-h) + var(--space-2) * 2 + env(safe-area-inset-bottom, 0px));
+  --shell-inset: var(--space-2);
+}
+
+/* ------------------------------------------------------------- the bar */
+
+.phone-bar {
+  position: fixed;
+  left: var(--space-2);
+  right: var(--space-2);
+  bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+  z-index: var(--z-chrome);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  translate: none;
+}
+
+:root[data-surface='board'] .phone-bar.tool-dock {
+  translate: none;
+}
+
+.phone-bar__row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  max-width: 440px;
+  height: var(--phone-bar-h);
+  padding: var(--space-1) 6px;
+  box-sizing: border-box;
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  pointer-events: auto;
+}
+
+.phone-bar__seat {
+  flex: 1 1 0;
+  min-width: 44px;
+  height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: none;
+  color: var(--text-secondary);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.phone-bar__seat:active:not(:disabled) {
+  background: var(--surface-active);
+}
+
+/* Armed is ink, the dock's marker without the travel. */
+.phone-bar__seat[data-active] {
+  background: var(--surface-inverse);
+  color: var(--text-inverse);
+}
+
+.phone-bar__seat:disabled {
+  opacity: 0.35;
+}
+
+.phone-bar__seat:focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.phone-bar__rule {
+  flex: none;
+  width: 1px;
+  height: 24px;
+  margin: 0 2px;
+  background: var(--border-divider);
+}
+
+/* While a stroke or drag is under way it steps back, as the dock does. */
+.phone-bar[data-receding] {
+  opacity: 0.32;
+}
+
+/* --------------------------------------------------------- More sheet */
+
+.phone-tools {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5, 20px);
+  padding: var(--space-1) var(--space-3) var(--space-6);
+}
+
+.phone-tools__heading {
+  margin: 0 0 var(--space-2) var(--space-1);
+  font-size: var(--text-xs, 12px);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.phone-tools__grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-1);
+}
+
+.phone-tools__tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 72px;
+  padding: var(--space-2) var(--space-1);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: none;
+  color: var(--text-primary);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.phone-tools__tile:active:not(:disabled) {
+  background: var(--surface-active);
+}
+
+.phone-tools__tile[data-active] {
+  background: var(--surface-secondary);
+  box-shadow: inset 0 0 0 1.5px var(--text-primary);
+}
+
+.phone-tools__tile:disabled {
+  opacity: 0.35;
+}
+
+.phone-tools__tile:focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.phone-tools__label {
+  max-width: 100%;
+  font-size: var(--text-xs, 12px);
+  line-height: 1.25;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.phone-tools__tile[data-active] .phone-tools__label {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* ------------------------------------------------------ selection bar */
+
+:root[data-device='phone'] .ctx-toolbar {
+  height: 52px;
+  padding-inline: var(--space-1);
+}
+
+:root[data-device='phone'] .ctx-toolbar .ctx-btn {
+  height: 44px;
+  min-width: 44px;
+  border-radius: var(--radius-lg);
+}
+
+.phone-ctx__edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 var(--space-1);
+  font-size: var(--text-sm, 13px);
+  font-weight: 500;
+}
+
+/* Above the keyboard while typing. */
+.phone-keybar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: var(--z-flyout);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 48px;
+  padding: 0 var(--space-2);
+  border-top: 1px solid var(--border-divider);
+  background: var(--surface-elevated);
+}
+
+.phone-keybar__fill {
+  flex: 1 1 auto;
+}
+
+.phone-keybar__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm, 13px);
+  font-weight: 500;
+}
+
+.phone-keybar__btn--done {
+  background: var(--surface-inverse);
+  color: var(--text-inverse);
+}
+
+.phone-keybar__btn:focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------- header */
+
+/* Two pills share the top edge: the board on the left, people on the right. */
+:root[data-device='phone'] .board-pill {
+  top: calc(var(--inset-top) + var(--space-2) + env(safe-area-inset-top, 0px));
+  max-width: none;
+}
+
+:root[data-device='phone'] .board-pill--left {
+  left: var(--space-2);
+  max-width: calc(100vw - var(--space-2) * 3 - var(--phone-right-pill, 128px));
+}
+
+:root[data-device='phone'] .board-pill--left .board-head--pill {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+:root[data-device='phone'] .board-pill--left .hdr-doc {
+  min-width: 0;
+}
+
+:root[data-device='phone'] .board-pill--left .hdr-title {
+  max-width: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The save tick says nothing a phone needs to see at rest; Offline still speaks. */
+:root[data-device='phone'] .board-pill--left .sync-pip--idle {
+  display: none;
+}
+
+/* Avatars collapse to the first face and a count; the record stays mounted for the menu. */
+:root[data-device='phone'] .board-head--phone .hdr-music {
+  display: none;
+}
+
+:root[data-device='phone'] .board-head--phone .hdr-share-text {
+  display: none;
+}
+
+:root[data-device='phone'] .board-head--phone .hdr-btn--primary {
+  width: var(--control-h-md);
+  padding: 0;
+  justify-content: center;
+}
+
+:root[data-device='phone'] .board-head--phone .hdr-presence .avatar-stack > :nth-child(n + 2):not(:last-child) {
+  display: none;
+}
+
+/* The radar and its foot sit where the bar is; pinch and the board menu cover them. */
+:root[data-device='phone'] .radar-collapsed,
+:root[data-device='phone'] .radar-panel,
+:root[data-device='phone'] .minimap-container {
+  display: none;
+}
+
+/* -------------------------------------------------------------- sheets */
+
+/* A column's own header is the pill's on a phone, and the sheet has a title. */
+.phone-panel > .board-head,
+.phone-panel > .panel-width-handle,
+.phone-panel .panel-width-handle {
+  display: none;
+}
+
+.phone-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.phone-panel > * {
+  position: static;
+  width: auto;
+  max-width: none;
+  height: auto;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.phone-comments-sheet .comment-inbox {
+  position: static;
+  inset: auto;
+  width: auto;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  box-shadow: none;
+  border-radius: 0;
+  background: none;
+}
+
+/* Share is a full-height sheet. */
+:root[data-device='phone'] .dlg-scrim:has(> .dlg.sh) {
+  padding: env(safe-area-inset-top, 0px) 0 0;
+  align-items: flex-end;
+}
+
+:root[data-device='phone'] .dlg.sh {
+  max-width: none;
+  height: calc(100% - var(--space-3));
+  max-height: none;
+  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* The music player is a full-height sheet with its own Close. It covers the
+   board, so a finger on the board cannot put it away mid-scroll. */
+:root[data-device='phone'] .music-panel {
+  inset: calc(env(safe-area-inset-top, 0px) + var(--space-3)) 0 0 0 !important;
+  width: auto;
+  max-width: none;
+  max-height: none !important;
+  padding: 0 var(--space-4) calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
+  box-shadow: var(--shadow-overlay);
+  animation-name: phoneSheetUp;
+}
+
+:root[data-device='phone'] .music-panel:focus-visible {
+  outline: none;
+}
+
+.music-panel__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  min-height: 56px;
+  margin: 0 calc(-1 * var(--space-4)) var(--space-2);
+  padding: var(--space-1) var(--space-2) 0 var(--space-4);
+  background: var(--surface-elevated);
+}
+
+.music-panel__title {
+  flex: 1 1 auto;
+  font-size: var(--text-md, 15px);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.music-panel__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.music-panel__close:active {
+  background: var(--surface-active);
+}
+
+.music-panel__close:focus-visible {
+  outline: var(--focus-ring-width, 2px) solid var(--focus-ring-color);
+  outline-offset: -4px;
+}
+
+.phone-bar[hidden] {
+  display: none;
+}
+
+@keyframes phoneSheetUp {
+  from { transform: translateY(24px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-device='phone'] .music-panel { animation: none; }
+}

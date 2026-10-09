@@ -1,4 +1,6 @@
 import React from 'react';
+import { CHART_BITMAP_ZOOM, useChartBitmap } from '../../../engine/render/lod';
+import { renderPixelRatio } from '../../../engine/render/renderBudget';
 import { Arc, Circle, Group, Line, Path, Rect, Text } from 'react-konva';
 import type { ChartNode } from '../../../engine/model/schema';
 import { layoutChart, type ChartLayout, type Measure } from '../../../engine/chart/chartLayout';
@@ -184,6 +186,25 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
   );
 
   const groupRef = React.useRef<any>(null);
+  /**
+   * Far out on a lite budget the chart is drawn from a bitmap of itself:
+   * dozens of marks and labels become one image. Re-taken after every render,
+   * so it never shows stale data; dropped as soon as the board comes closer.
+   */
+  const bitmap = useChartBitmap();
+  React.useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+    if (bitmap) {
+      try {
+        group.cache({ pixelRatio: CHART_BITMAP_ZOOM * renderPixelRatio() });
+      } catch {
+        /* an empty or zero-size chart has nothing to cache */
+      }
+    } else if (group.isCached?.()) {
+      group.clearCache();
+    }
+  });
   const [handle, setHandle] = React.useState<ValueHandle | null>(null);
   // A linked chart's values are dragged only by someone who may write the
   // table: the drop asks to write the cell instead of changing the chart.

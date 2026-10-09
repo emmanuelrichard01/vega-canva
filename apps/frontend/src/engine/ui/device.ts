@@ -121,6 +121,9 @@ export function notePen() {
   if (!current.hasPen) publish({ ...current, hasPen: true });
 }
 
+/** How long after the last resize the layout counts as settled. */
+const RESIZE_SETTLE_MS = 250;
+
 let installed = false;
 
 /**
@@ -138,8 +141,21 @@ export function installDeviceSignal() {
   } catch {
     /* an old engine without MediaQueryList events keeps the first answer */
   }
-  window.addEventListener('resize', refresh);
-  window.addEventListener('orientationchange', refresh);
+  // A rotation or a split-view drag marks `data-resizing` until it settles, so
+  // CSS can land the layout in one step rather than animating every piece.
+  let settle: ReturnType<typeof setTimeout> | null = null;
+  const resized = () => {
+    refresh();
+    const root = document.documentElement;
+    root.dataset.resizing = '';
+    if (settle) clearTimeout(settle);
+    settle = setTimeout(() => {
+      settle = null;
+      delete root.dataset.resizing;
+    }, RESIZE_SETTLE_MS);
+  };
+  window.addEventListener('resize', resized);
+  window.addEventListener('orientationchange', resized);
   window.addEventListener(
     'pointerdown',
     (e) => {

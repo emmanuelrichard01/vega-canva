@@ -3,6 +3,7 @@ import Konva from 'konva';
 import type React from 'react';
 import { cameraSystem } from '../../../engine/CameraSystem';
 import { engineEvents } from '../../../engine/EventBus';
+import { renderPixelRatio } from '../../../engine/render/renderBudget';
 
 /** Below this zoom a blur is invisible on screen and its bitmap is skipped. */
 const FAR_ZOOM = 0.15;
@@ -69,7 +70,7 @@ export function useLayerFilters(
     node.filters([Konva.Filters.Blur]);
     node.blurRadius(radius);
     node.cache({
-      pixelRatio: typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1,
+      pixelRatio: renderPixelRatio(),
       offset: pad,
       // Konva otherwise outlines the cached region while caching, which lands
       // in the bitmap and stays there.

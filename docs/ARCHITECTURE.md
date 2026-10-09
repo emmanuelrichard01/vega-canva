@@ -180,6 +180,20 @@ the first to finish would otherwise un-mount the board out from under the
 second. Any transient store that more than one caller can hold at once has that
 problem; most of them cannot, which is why it is the only one counted.
 
+### Added in wave 8
+
+- **Device layer.** `engine/ui/device.ts` classifies pointer and device and
+  writes `data-pointer` / `data-device` on the root; `styles/device.css` and
+  the phone shell (`components/workspace/usePhone.ts`, `PhoneToolbar`,
+  `PhoneContextBar`, `components/ui/BottomSheet`) key off it.
+  `engine/interaction/gestures.ts` turns touches into pan, pinch, long-press
+  and multi-finger undo and redo; pens reject palms.
+- **Render budget.** `engine/render/` (`renderBudget`, `lod`, `gestureLite`)
+  caps DPR, drops detail at low zoom and skips shadows while a gesture is
+  moving, on low-end or touch devices only.
+- **Single playback.** `engine/model/audioPlayback.ts` is the one audio slot;
+  starting a clip stops the previous one.
+
 ## 5. Known bottlenecks and mitigations
 
 **1. Single sync-server instance is a scaling ceiling, not a hackathon

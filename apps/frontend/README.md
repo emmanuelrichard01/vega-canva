@@ -36,3 +36,7 @@ See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rule
 This file is the stock Vite template notes. The app itself is described in the
 repository `README.md`, `DESIGN.md` and `docs/`; redesign waves 5 to 7 are
 summarised in `HANDOFF.md`.
+
+Wave 8 added the device layer (`engine/ui/device.ts`, `styles/device.css`,
+`engine/interaction/gestures.ts`), the phone shell in `components/workspace/`
+and the render budget in `engine/render/`; see the repository `README.md`.

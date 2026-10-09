@@ -22,6 +22,7 @@ import { uploadIdFromSrc, useResolvedSrc } from '../../../utils/pendingMedia';
 import { retryUpload, uploadFraction, useUploadState } from '../../../engine/media/upload';
 import { canEditObjects } from '../../../engine/model/permissions';
 import { UploadOverlay } from './UploadOverlay';
+import { renderPixelRatio } from '../../../engine/render/renderBudget';
 
 interface Props {
   node: ImageNode;
@@ -194,7 +195,7 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
       return;
     }
 
-    shape.cache({ pixelRatio: veiled && !adjusted ? 0.35 : window.devicePixelRatio || 1 });
+    shape.cache({ pixelRatio: veiled && !adjusted ? 0.35 : renderPixelRatio() });
     shape.getLayer()?.batchDraw();
   }, [
     image,

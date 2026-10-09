@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useStore } from '../../../hooks/useStore';
 import { cameraSystem } from '../../../engine/CameraSystem';
 import { engineEvents } from '../../../engine/EventBus';
@@ -93,6 +93,19 @@ export function useRailPlacement(opts: {
   const lastRef = useRef({ x: -9999, y: -9999, placement: 'top' as RailSide, clear: true, visible: false });
   /** The element the last transform went to: a remounted rail must get its first write. */
   const wroteToRef = useRef<HTMLElement | null>(null);
+  /**
+   * Places at once when the rail's elements are new since the last placement.
+   * Set by the effect below while it is live.
+   */
+  const syncRef = useRef<(() => void) | null>(null);
+
+  // The rail mounts on `isVisible` (and remounts per subject), after the frame
+  // that decided it should show. Child refs are attached before this runs, so
+  // a rail that has just appeared is placed in the same commit, before paint,
+  // instead of waiting at the origin for the camera or the selection to move.
+  useLayoutEffect(() => {
+    syncRef.current?.();
+  });
 
   useEffect(() => {
     if ((!activeId && !isBulk) || suspended) {
@@ -277,9 +290,23 @@ export function useRailPlacement(opts: {
     window.addEventListener('canvas-drag-end', handleDragEnd);
     window.addEventListener('pointerup', handlePointerRelease, true);
     window.addEventListener('pointercancel', handlePointerRelease, true);
+    syncRef.current = () => {
+      const anchor = anchorRef.current;
+      if (!anchor || (anchor === wroteToRef.current && railRef.current === observedRail)) return;
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      if (railVeil.held) return;
+      if (chromeDirty) {
+        chromeDirty = false;
+        measureChrome();
+      }
+      place();
+      observeRail();
+    };
     schedule();
 
     return () => {
+      syncRef.current = null;
       if (frame) cancelAnimationFrame(frame);
       unsubscribeVeil();
       observer.disconnect();

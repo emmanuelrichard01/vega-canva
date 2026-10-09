@@ -836,6 +836,19 @@ then shows a picture that appears nowhere except on the card.
 - **Template covers** are drawn from the template itself (`boardSvg`), in the
   current theme; there are no hand-made thumbnails.
 
+### Wave 8: panel grammar and touch
+
+- **Properties panel grammar.** 288px by default, resizable 240 to 400.
+  Controls are 32px, spacing runs on an 8px rhythm, the label column is 72 to
+  104px, sections collapse with a short animation, and the header carries a
+  tile and a lock button. An empty selection shows the board section.
+- **Vinyl.** The trigger is a record with a tonearm; it coasts to a stop rather
+  than halting, and its label takes a tint from the station or album art. The
+  voice note HUD is a 28-bar meter with key hints.
+- **Touch.** Targets are 44px on coarse pointers. Phones use bottom sheets and
+  a bottom toolbar; tablets get overlay panels behind a scrim. The focus ring
+  stays neutral on every device.
+
 ## Do's and Don'ts
 
 ### Do:

@@ -666,3 +666,53 @@
   position: static;
   z-index: auto;
 }
+
+/* ------------------------------------------------------------ on a phone */
+
+/* A coarse pointer under 600px (`data-device`, from `engine/ui/device.ts`).
+   Cards stand one to a row, a card's Use is a thumb-sized button on its
+   picture, and the peek is a full-height sheet. */
+:root[data-device='phone'] .tgrid,
+:root[data-device='phone'] .tgrid--starters {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+:root[data-device='phone'] .gcard__actions {
+  display: flex;
+  opacity: 1;
+  transform: none;
+}
+
+/* Tapping the card already previews it. */
+:root[data-device='phone'] .gcard__act:not(.gcard__act--use) {
+  display: none;
+}
+
+:root[data-device='phone'] .gcard__act--use {
+  height: 44px;
+  min-width: 88px;
+  padding: 0 var(--space-5);
+  justify-content: center;
+  font-size: var(--text-base);
+}
+
+:root[data-device='phone'] .tpeek {
+  top: calc(env(safe-area-inset-top, 0px) + var(--space-3));
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  max-height: none;
+  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
+  animation-name: tpeek-up;
+}
+
+:root[data-device='phone'] .tpeek__actions {
+  padding-bottom: calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
+}
+
+:root[data-device='phone'] .tpeek__use,
+:root[data-device='phone'] .tpeek__icon {
+  min-height: 44px;
+  min-width: 44px;
+}

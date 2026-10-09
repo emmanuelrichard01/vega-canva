@@ -90,6 +90,8 @@ import { IconsGlyph } from '../icons/IconsGlyph';
 import { TextFaceToggle, TextStyleChips, TextStyleList } from '../dock/TextStylePicker';
 import { TEXT_FACES, TEXT_STYLES, nextText } from '../../engine/tools/TextToolStyles';
 import { openIconBrowser } from '../../engine/icons/iconStore';
+import { usePhone } from './usePhone';
+import { PhoneToolbar } from './PhoneToolbar';
 
 /**
  * How the active-tool marker travels from seat to seat.
@@ -2890,11 +2892,15 @@ const ToolWorkspaceInner: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAd
   );
 };
 
-/** The dock, contained: a crash here leaves the board and its other chrome running. */
+/**
+ * The dock, contained: a crash here leaves the board and its other chrome
+ * running. On a phone it is the compact bar instead (`PhoneToolbar`).
+ */
 export const ToolWorkspace = React.memo(function ToolWorkspace(props: Props) {
+  const phone = usePhone();
   return (
     <FeatureBoundary name="tool dock" variant="panel" resetKey={props.activeToolId}>
-      <ToolWorkspaceInner {...props} />
+      {phone ? <PhoneToolbar activeToolId={props.activeToolId} /> : <ToolWorkspaceInner {...props} />}
     </FeatureBoundary>
   );
 });

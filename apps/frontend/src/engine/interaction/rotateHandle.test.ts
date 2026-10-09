@@ -287,3 +287,20 @@ describe('shear', () => {
     expect(shearCursorAngle('top', -30)).toBe(330);
   });
 });
+
+describe('rotate ring on a coarse pointer', () => {
+  it('starts outside the 44px corner target and is a finger deep', async () => {
+    const { ringRadii, inCornerRing, reachAt, TOUCH_HANDLE_REACH } = await import('./rotateHandle');
+    expect(ringRadii(200, true).inner).toBe(TOUCH_HANDLE_REACH);
+    expect(ringRadii(200, true).inner).toBeGreaterThan(ringRadii(200).inner);
+    expect(ringRadii(200, true).outer - ringRadii(200, true).inner).toBeGreaterThanOrEqual(22);
+    // The zone square still covers the whole ring.
+    expect(reachAt(1, true)).toBeGreaterThanOrEqual(ringRadii(200, true).outer);
+    // 15px out from the top-left corner: resize territory on touch, ring on a mouse.
+    const corner = { x: 0, y: 0 };
+    const out = { sx: -1, sy: -1 };
+    const p = { x: -10.6, y: -10.6 };
+    expect(inCornerRing(corner, out, p, 1, 200)).toBe(true);
+    expect(inCornerRing(corner, out, p, 1, 200, true)).toBe(false);
+  });
+});

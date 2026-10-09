@@ -1,9 +1,11 @@
 import React, { Suspense, lazy, useCallback, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { X } from 'lucide-react';
 import { useFloatingPanel } from '../ui/useFloatingPanel';
 import { PORTAL_SURFACE_ATTR } from '../ui/portalSurface';
 import { VinylGlyph } from './VinylGlyph';
 import { useMiniMode, usePlayingSignal } from '../../engine/music/playingSignal';
+import { usePhone } from '../workspace/usePhone';
 import './trigger.css';
 
 const MusicPanel = lazy(() => import('./MusicPanel'));
@@ -21,7 +23,16 @@ export const MusicButton: React.FC<{ className?: string }> = ({ className }) => 
   const [open, setOpen] = useState(false);
   const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null);
   const [panel, setPanel] = useState<HTMLDivElement | null>(null);
-  const close = useCallback(() => setOpen(false), []);
+  const phone = usePhone();
+  // On a phone the player is a full-height sheet with its own Close: a press
+  // outside it is a finger on the board mid-gesture, not a request to leave.
+  const close = useCallback(
+    (reason?: 'outside' | 'escape') => {
+      if (phone && reason === 'outside') return;
+      setOpen(false);
+    },
+    [phone]
+  );
   const spot = useFloatingPanel({ open, trigger, panel, onClose: close });
 
   // The name never changes; what is playing is announced separately and shown in the tooltip.
@@ -56,8 +67,25 @@ export const MusicButton: React.FC<{ className?: string }> = ({ className }) => 
             className="music-panel"
             {...{ [PORTAL_SURFACE_ATTR]: 'music' }}
             data-side={spot?.side}
+            data-sheet={phone ? '' : undefined}
             style={{ left: spot?.x ?? 0, top: spot?.y ?? 0, maxHeight: spot?.maxHeight, visibility: spot ? 'visible' : 'hidden' }}
           >
+            {phone && (
+              <div className="music-panel__head">
+                <span className="music-panel__title">Music</span>
+                <button
+                  type="button"
+                  className="music-panel__close"
+                  aria-label="Close music"
+                  onClick={() => {
+                    setOpen(false);
+                    trigger?.focus({ preventScroll: true });
+                  }}
+                >
+                  <X size={20} aria-hidden="true" />
+                </button>
+              </div>
+            )}
             <Suspense fallback={<div className="music-loading" aria-busy="true" aria-label="Loading the player" />}>
               <MusicPanel />
             </Suspense>

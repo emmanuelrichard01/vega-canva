@@ -49,6 +49,9 @@ import { useContrast } from '../../engine/ui/contrast';
 import { toggleBoardSketch, useBoardSketch } from '../../engine/model/roughBoard';
 import { canEditObjects } from '../../engine/model/permissions';
 import { SketchLookGlyph } from '../panel/sketchIcons';
+import { BottomSheet } from '../ui/BottomSheet';
+import type { SnapName } from '../ui/bottomSheetModel';
+import { usePhone } from './usePhone';
 import './shell.css';
 
 /**
@@ -452,6 +455,7 @@ const BoardHeaderRightInner: React.FC<RightProps> = ({
 }) => {
   const { canUndo, canRedo } = useUndoAvailability();
   const receded = useReceded();
+  const phone = usePhone();
 
   const share = (
     <button className="hdr-btn hdr-btn--primary" onClick={onShareClick} aria-label="Share this board" data-tour="share">
@@ -490,6 +494,23 @@ const BoardHeaderRightInner: React.FC<RightProps> = ({
    * the way in otherwise. With no panel to open (a commenter or a viewer),
    * the pill is the only way in, so they always show.
    */
+  /**
+   * The phone's header: who is here, comments and Share, nothing else. The
+   * properties open from the selection bar's Edit, zoom is a pinch, and the
+   * record stays mounted (hidden) so the board menu's Music can open it.
+   */
+  if (phone) {
+    return (
+      <div className="board-head board-head--right board-head--pill board-head--phone" data-receded={receded || undefined}>
+        <RoleBadge />
+        <CollaborationLayer />
+        {music}
+        {comments}
+        {share}
+      </div>
+    );
+  }
+
   if (variant === 'pill') {
     return (
       <div className="board-head board-head--right board-head--pill" data-receded={receded || undefined}>
@@ -630,6 +651,13 @@ export interface BoardColumnProps {
   pill: (toggle: ColumnToggle | undefined) => React.ReactNode;
   /** The panel's contents. */
   children: React.ReactNode;
+  /** On a phone the panel is a bottom sheet; this puts it away. */
+  onClose?: () => void;
+  /** The sheet's title on a phone. Defaults to `panelLabel`. */
+  sheetLabel?: string;
+  /** The sheet's snaps on a phone, and where it opens. Full height by default. */
+  sheetSnaps?: readonly SnapName[];
+  sheetInitialSnap?: SnapName;
 }
 
 /**
@@ -671,7 +699,12 @@ export const BoardColumn: React.FC<BoardColumnProps> = ({
   panelData,
   pill,
   children,
+  onClose,
+  sheetLabel,
+  sheetSnaps = ['full'],
+  sheetInitialSnap,
 }) => {
+  const phone = usePhone();
   const [peek, setPeek] = useState(false);
   const shown = open || (peek && canOpen);
   const Tag = side === 'left' ? 'nav' : 'aside';
@@ -840,6 +873,30 @@ export const BoardColumn: React.FC<BoardColumnProps> = ({
       focusInside.current = false;
     }
   }, [shown, open]);
+
+  /**
+   * On a phone the column is always its pill, and the open panel is a sheet
+   * over the board: a phone has no width to give a column.
+   */
+  if (phone) {
+    return (
+      <>
+        <Tag ref={pillRef} className={`board-pill board-pill--${side}`} aria-label={pillLabel} data-region={region} data-tour={tour}>
+          {pill(canOpen ? toggle : undefined)}
+        </Tag>
+        <BottomSheet
+          open={open && canOpen}
+          onClose={() => onClose?.()}
+          label={sheetLabel ?? panelLabel}
+          snaps={sheetSnaps}
+          initialSnap={sheetInitialSnap}
+          className={`phone-panel-sheet phone-panel-sheet--${side}`}
+        >
+          <div className="phone-panel">{children}</div>
+        </BottomSheet>
+      </>
+    );
+  }
 
   if (shown) {
     return (

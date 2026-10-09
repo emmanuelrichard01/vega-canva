@@ -19,8 +19,11 @@ export function shapePath2D(node: ShapeNode): Path2D {
   const path = new Path2D();
 
   if (outline.kind === 'rect') {
+    // All four corners, fitted: the largest of them on every corner would
+    // round the clip, the inner shadow and the drop shadow's silhouette where
+    // the shape itself is square.
     if (outline.radius > 0 && typeof path.roundRect === 'function') {
-      path.roundRect(outline.x, outline.y, outline.width, outline.height, outline.radius);
+      path.roundRect(outline.x, outline.y, outline.width, outline.height, [...outline.radii]);
     } else {
       path.rect(outline.x, outline.y, outline.width, outline.height);
     }
