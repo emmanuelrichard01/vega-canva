@@ -125,43 +125,36 @@ export const AuthModal: React.FC = () => {
           uncertain about. `aria-label` still names each for anyone not seeing
           the glyph, which is the case that actually needed covering.
         */}
-        <div className="auth__theme" role="radiogroup" aria-label="Appearance">
-          {([
-            [false, 'Light', <Sun size={15} aria-hidden key="s" />],
-            [true, 'Dark', <Moon size={15} aria-hidden key="m" />],
-          ] as const).map(([dark, label, icon]) => (
-            <button
-              key={label}
-              type="button"
-              role="radio"
-              aria-checked={darkTheme === dark}
-              aria-label={label}
-              className="auth__theme-option"
-              data-active={darkTheme === dark || undefined}
-              onClick={() => setDarkTheme(dark)}
-            >
-              {icon}
-            </button>
-          ))}
-        </div>
+        <header className="auth__bar">
+          {/* The wordmark, in the pane masthead rather than in the card.
+              Inside the card it was a third stacked block above the question,
+              and as a stretched <img> its glyphs centred over left-aligned type,
+              so the first thing on the first screen sat 80px off the heading.
+              Up here it is identity for the pane, level with the one
+              preference, and the card holds only the question and its answer. */}
+          <Logo piece="wordmark" size={20} alt="Vega Studio" className="auth__mark" />
+          <div className="auth__theme" role="radiogroup" aria-label="Appearance">
+            {([
+              [false, 'Light', <Sun size={15} aria-hidden key="s" />],
+              [true, 'Dark', <Moon size={15} aria-hidden key="m" />],
+            ] as const).map(([dark, label, icon]) => (
+              <button
+                key={label}
+                type="button"
+                role="radio"
+                aria-checked={darkTheme === dark}
+                aria-label={label}
+                className="auth__theme-option"
+                data-active={darkTheme === dark || undefined}
+                onClick={() => setDarkTheme(dark)}
+              >
+                {icon}
+              </button>
+            ))}
+          </div>
+        </header>
 
       <div className="auth__card">
-        {/* The wordmark, not the stacked lockup.
-            This is still a brand moment, but it is now a brand moment beside
-            another one: the showcase fills the other half of the screen and
-            carries the product's argument. A 104px stacked mark on top of a
-            form, next to that, is the identity said twice at two sizes. The
-            wordmark is a line above a line, which is the shape the column
-            wants.
-
-            Sized down from 30 and given its own space below rather than the
-            card's shared gap. At 30 it was a second headline stacked on the
-            real one, and an even gap above and below made the masthead and the
-            heading read as two lines of one block. A masthead is not a heading
-            for the thing under it: it carries more air beneath it than between
-            the heading and its own lede. */}
-        <Logo piece="wordmark" size={22} alt="Vega Studio" className="auth__mark" />
-
         <div>
           <h1 className="auth__title">What&rsquo;s your name?</h1>
           {/* The honest version of what used to be "start collaborating with

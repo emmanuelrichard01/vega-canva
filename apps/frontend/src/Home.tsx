@@ -1058,7 +1058,7 @@ export const Home: React.FC = () => {
                 </h1>
                 <p className="lstage__lede">
                   {view === 'boards'
-                    ? `${recentRooms.length} on this device${pinnedSet.size ? `, ${pinnedSet.size} pinned` : ''}. Kept in your browser rather than in an account.`
+                    ? `${recentRooms.length} board${recentRooms.length === 1 ? '' : 's'}${pinnedSet.size ? ` · ${pinnedSet.size} pinned` : ''} · stored in this browser, not an account`
                     : category
                       ? `${matchedTemplates.length} board${matchedTemplates.length === 1 ? '' : 's'}, each one editable the moment it opens.`
                       : 'Working boards, already filled in. Click one for a closer look.'}
@@ -1223,8 +1223,8 @@ export const Home: React.FC = () => {
             <section className="lseam" aria-labelledby="lseam-title">
               <header className="lseam__head">
                 <h2 className="lseam__title" id="lseam-title">Start from a template</h2>
-                <button type="button" className="lbtn" onClick={() => goTemplates(null)}>
-                  All {TEMPLATES.length}
+                <button type="button" className="llink" onClick={() => goTemplates(null)}>
+                  Browse all {TEMPLATES.length}
                   <ChevronRight size={14} aria-hidden="true" />
                 </button>
               </header>

@@ -209,7 +209,7 @@ export const TemplateGallery: React.FC<Props> = ({
                 <p className="tsection__blurb">{c.blurb}</p>
               </div>
               {inCategory.length > shown.length && (
-                <button type="button" className="lbtn" onClick={() => onCategory(c.id)} aria-label={`Show all ${inCategory.length} ${c.label} templates`}>
+                <button type="button" className="llink" onClick={() => onCategory(c.id)} aria-label={`Show all ${inCategory.length} ${c.label} templates`}>
                   All {inCategory.length}
                   <ChevronRight size={14} aria-hidden="true" />
                 </button>

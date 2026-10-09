@@ -85,7 +85,7 @@ export const QuickStart: React.FC<Props> = ({
         <section className="qstart__starters" aria-labelledby="qstart-starters">
           <header className="qstart__starters-head">
             <h3 id="qstart-starters" className="qstart__starters-title">Or start from a template</h3>
-            <button type="button" className="lbtn" onClick={onTemplates}>
+            <button type="button" className="llink" onClick={onTemplates}>
               All {templateCount}
               <ArrowRight size={14} aria-hidden="true" />
             </button>

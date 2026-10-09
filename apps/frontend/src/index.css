@@ -6497,7 +6497,24 @@ body:has(.tool-shelf) { --dock-h: 112px; }
    block. A masthead is not a heading for the thing under it. It gets a step
    more air below, which is also the system's rule that a heading carries more
    space above it than below. */
-.auth__mark { margin-bottom: var(--space-2); }
+/* The pane's masthead: identity on the left, the one preference on the right,
+   both out of the decision path. The card below holds only the question. */
+.auth__bar {
+  position: absolute;
+  top: clamp(var(--space-4), 3vh, var(--space-6));
+  /* On the card's own edges: the pane padding, or the inset that centres a
+     380px card, whichever is larger. The wordmark then starts where the
+     heading starts and the switch ends where the field ends. */
+  --auth-inset: max(clamp(var(--space-6), 6vw, 72px), calc(50% - 190px));
+  left: var(--auth-inset);
+  right: var(--auth-inset);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.auth__mark { flex: none; }
 
 .auth__title {
   margin: 0 0 8px;
@@ -6511,10 +6528,11 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 
 .auth__lede {
   margin: 0;
-  /* Held to a measure rather than to the column. At 380px this ran the full
-     width and broke mid-phrase; a one-sentence lede reads as a subtitle only
-     while it is visibly narrower than the heading above it. */
-  max-width: 34ch;
+  /* Held to a measure, but one the sentence fits. At 34ch it broke a single
+     line into two with "you." alone on the second; `pretty` keeps any wrap
+     from leaving an orphan at narrower widths. */
+  max-width: 44ch;
+  text-wrap: pretty;
   font-size: var(--text-md);
   line-height: 1.6;
   color: var(--text-secondary);
@@ -6542,9 +6560,6 @@ body:has(.tool-shelf) { --dock-h: 112px; }
    state of the page and the accent belongs to Continue — the screen's one
    front door. */
 .auth__theme {
-  position: absolute;
-  top: clamp(var(--space-4), 3vh, var(--space-6));
-  right: clamp(var(--space-5), 4vw, var(--space-8));
   display: flex;
   gap: 2px;
   padding: 3px;
@@ -6581,7 +6596,7 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 .auth__field {
   height: 52px;
   padding: 0 16px;
-  border: 1px solid var(--border-divider);
+  border: 1px solid var(--lib-line);
   border-radius: var(--radius-lg);
   background: var(--surface-primary);
   color: var(--text-primary);
@@ -6928,10 +6943,19 @@ body:has(.tool-shelf) { --dock-h: 112px; }
    =========================================================================== */
 
 .lib {
+  /* ## One hairline for the library and the way in
+     `--border-divider` is 4% black in light, which is right for a panel seam on
+     white and too faint on the 050 canvas: search, sort, layout and every cover
+     well lost their edge and read as floating labels. Strong in light, divider
+     in dark (already 12%), scoped here so the board chrome is untouched. */
+  --lib-line: var(--border-strong);
   display: flex;
   height: 100%;
   background: var(--surface-canvas);
 }
+
+.dark-theme .lib,
+.dark-theme .auth { --lib-line: var(--border-divider); }
 
 /* ------------------------------------------------------------------ rail --- */
 
@@ -6943,8 +6967,10 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   flex-shrink: 0;
   width: 60px;
   padding: var(--space-3) 0 var(--space-4);
-  border-right: 1px solid var(--border-divider);
-  background: var(--surface-primary);
+  /* The stage's own plane, divided by a hairline. A white fill *and* a border
+     was two cues for one edge, and made the rail a second material. */
+  border-right: 1px solid var(--lib-line);
+  background: var(--surface-canvas);
 }
 
 .lrail__brand {
@@ -7174,10 +7200,10 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 
 .lstage__head {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-6);
-  margin-bottom: var(--space-6);
+  margin-bottom: var(--space-8);
 }
 
 .lstage__titles { min-width: 0; }
@@ -7222,10 +7248,10 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: var(--control-h-lg);
+  height: var(--control-h-md);
   padding: 0 var(--space-3);
-  border: 1px solid var(--border-divider);
-  border-radius: var(--radius-lg);
+  border: 1px solid var(--lib-line);
+  border-radius: var(--radius-md);
   background: var(--surface-primary);
   color: var(--text-secondary);
   font-family: inherit;
@@ -7247,19 +7273,19 @@ body:has(.tool-shelf) { --dock-h: 112px; }
    hairline between the two halves. */
 .lstage__layout {
   display: inline-flex;
-  border: 1px solid var(--border-divider);
-  border-radius: var(--radius-lg);
+  border: 1px solid var(--lib-line);
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
 .lstage__layout .lbtn {
-  height: calc(var(--control-h-lg) - 2px);
+  height: calc(var(--control-h-md) - 2px);
   border: none;
   border-radius: 0;
   background: transparent;
 }
 
-.lstage__layout .lbtn + .lbtn { box-shadow: inset 1px 0 0 var(--border-divider); }
+.lstage__layout .lbtn + .lbtn { box-shadow: inset 1px 0 0 var(--lib-line); }
 
 .lbtn--icon { padding: 0 var(--space-3); }
 
@@ -7285,8 +7311,8 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   position: relative;
   display: inline-flex;
   flex-shrink: 0;
-  height: var(--control-h-lg);
-  border-radius: var(--radius-lg);
+  height: var(--control-h-md);
+  border-radius: var(--radius-md);
   background: var(--accent);
   box-shadow: var(--shadow-sm);
   transition: background-color var(--motion-hover), box-shadow var(--motion-hover);
@@ -7307,18 +7333,18 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 
 .lstage__new-go {
   gap: 6px;
-  padding: 0 var(--space-3) 0 var(--space-4);
-  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
-  font-size: var(--text-md);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+  font-size: var(--text-base);
   font-weight: var(--weight-semibold);
   white-space: nowrap;
 }
 
 .lstage__new-more {
   justify-content: center;
-  width: 28px;
+  width: 26px;
   padding: 0;
-  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
   /* The divider is the accent's own ink at low alpha, so the two halves read as
      one control split rather than as two controls abutted. */
   box-shadow: inset 1px 0 0 color-mix(in srgb, var(--accent-on) 22%, transparent);
@@ -7361,21 +7387,25 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   .lstage__new { transition: none; }
 }
 
+/* A tool's page title, not a landing page's. At 34px it was display type over a
+   grid whose job is scanning; the weight belongs to the boards. */
 .lstage__title {
   margin: 0;
-  font-size: clamp(26px, 2.4vw, 34px);
-  font-weight: 650;
-  line-height: 1.1;
-  letter-spacing: -0.035em;
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  line-height: 1.2;
+  letter-spacing: -0.025em;
   color: var(--text-primary);
 }
 
+/* A status line about the list, set as metadata rather than as a paragraph. */
 .lstage__lede {
-  margin: 6px 0 0;
-  max-width: 62ch;
-  color: var(--text-secondary);
-  font-size: var(--text-md);
-  line-height: 1.55;
+  margin: 4px 0 0;
+  max-width: 72ch;
+  color: var(--text-tertiary);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
 }
 
 .lstage__search {
@@ -7386,12 +7416,12 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   /* Shrinkable, with a floor. `flex-shrink: 0` at a `38vw` width is what put
      the header over the edge of the stage; a field is the one control in this
      row that can give up width without losing its job. */
-  flex: 0 1 300px;
+  flex: 0 1 280px;
   min-width: 160px;
-  height: var(--control-h-lg);
+  height: var(--control-h-md);
   padding: 0 var(--space-3);
-  border: 1px solid var(--border-divider);
-  border-radius: var(--radius-lg);
+  border: 1px solid var(--lib-line);
+  border-radius: var(--radius-md);
   background: var(--surface-primary);
   color: var(--text-tertiary);
   transition: border-color var(--motion-hover);
@@ -7516,21 +7546,33 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 /* The categories, beside the grid they filter. A row across the top of a wall
    of pictures reads as a filter; the same five as a column down the side read
    as a second navigation. */
+/* One row that scrolls rather than a wrap that strands the last category on a
+   line of its own. The right edge fades to say the row continues, and the end
+   padding keeps a row that fits clear of the fade. Focus scrolls a chip into
+   view natively, so the keyboard path is unchanged. */
 .lchips {
   display: flex;
-  flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: var(--space-8);
+  margin: 0 0 var(--space-8) -2px;
+  padding: 2px 32px 2px 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
 }
+
+.lchips::-webkit-scrollbar { display: none; }
 
 .lchip {
   display: flex;
   align-items: center;
+  flex: none;
   gap: 6px;
-  height: 32px;
+  height: 30px;
   padding: 0 var(--space-3);
-  border: 1px solid var(--border-divider);
+  border: 1px solid var(--lib-line, var(--border-divider));
   border-radius: var(--radius-pill);
+  white-space: nowrap;
   background: transparent;
   color: var(--text-secondary);
   font-family: inherit;
@@ -8490,8 +8532,10 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   overflow: hidden;
   border-radius: var(--radius-xl);
   background: var(--surface-secondary);
-  /* The art's one edge. Hover adds the lift; nothing else draws a frame. */
-  box-shadow: inset 0 0 0 1px var(--border-divider);
+  /* The art's one edge. Hover adds the lift; nothing else draws a frame.
+     `--lib-line` where the library defines it, so the edge survives a 050
+     canvas in light. */
+  box-shadow: inset 0 0 0 1px var(--lib-line, var(--border-divider));
   transition: transform var(--motion-hover), box-shadow var(--motion-hover);
 }
 
@@ -8500,7 +8544,7 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 /* Only the picture moves. Lifting the whole card moves the words with it,
    which is a lot of motion for a hover on a wall of twenty. */
 .bcard:hover .bcard__art {
-  transform: translateY(-3px);
+  transform: translateY(-2px);
   box-shadow: inset 0 0 0 1px var(--border-strong), var(--shadow-md);
 }
 
@@ -8508,8 +8552,8 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 3px;
-  padding: var(--space-3) 2px 0;
+  gap: 2px;
+  padding: 10px 2px 0;
 }
 
 .bcard__name {
@@ -8702,7 +8746,7 @@ body:has(.tool-shelf) { --dock-h: 112px; }
     width: 100%;
     padding: var(--space-2) var(--space-3);
     border-right: none;
-    border-bottom: 1px solid var(--border-divider);
+    border-bottom: 1px solid var(--lib-line);
   }
 
   .lrail__nav { flex-direction: row; gap: var(--space-1); margin-top: 0; }
@@ -9929,6 +9973,7 @@ html.dark-theme,
    =========================================================================== */
 
 .auth {
+  --lib-line: var(--border-strong);
   position: fixed;
   inset: 0;
   z-index: var(--z-dialog);
@@ -9956,8 +10001,10 @@ html.dark-theme,
   flex-direction: column;
   justify-content: center;
   gap: var(--space-5);
-  padding: var(--space-8) clamp(var(--space-6), 6vw, 72px);
-  border-left: 1px solid var(--border-divider);
+  /* The top padding clears the masthead, so a short window scrolls the card
+     rather than sliding it under the wordmark. */
+  padding: calc(var(--space-8) + 48px) clamp(var(--space-6), 6vw, 72px) var(--space-8);
+  border-left: 1px solid var(--lib-line);
   overflow-y: auto;
 }
 
@@ -9996,8 +10043,12 @@ html.dark-theme,
      version of it would be an ornament, and an ornament above a form is the
      thing that pushes the field below the fold on a phone. */
   .auth { grid-template-columns: minmax(0, 1fr); }
-  .showcase { display: none; }
-  .auth__pane { padding: var(--space-6) var(--space-5); }
+  /* Qualified, because `.showcase { display: flex }` is declared further down
+     at the same specificity and won: phones got the full panel above the form,
+     pushing the field below the fold. */
+  .auth > .showcase { display: none; }
+  .auth__pane { padding: calc(var(--space-6) + 48px) var(--space-5) var(--space-6); }
+  .auth__bar { --auth-inset: max(var(--space-5), calc(50% - 190px)); }
 }
 
 /* ===========================================================================
@@ -19449,7 +19500,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 .lseam {
   margin-top: var(--space-12);
   padding-top: var(--space-8);
-  border-top: 1px solid var(--border-divider);
+  border-top: 1px solid var(--lib-line, var(--border-divider));
 }
 
 .lseam__head {
@@ -19459,6 +19510,29 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   gap: var(--space-4);
   margin-bottom: var(--space-4);
 }
+
+/* "Browse all" is navigation, so it is drawn as a link: no box beside a
+   section heading, ink on hover, the chevron as the affordance. */
+.llink {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: var(--control-h-sm);
+  margin-right: calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: color var(--motion-hover), background-color var(--motion-hover);
+}
+
+.llink:hover { color: var(--text-primary); background: var(--surface-hover); }
+.llink:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 1px; }
 
 /* A section heading, so it is set as one.
 
