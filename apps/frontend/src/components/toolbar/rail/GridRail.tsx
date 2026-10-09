@@ -1,88 +1,246 @@
 import React from 'react';
-import { ChevronDown, Clock, Grid3x3, ImagePlus, Minus, Plus, Shuffle, Space } from 'lucide-react';
-import { setGridRecipe } from '../../../engine/grid/gridApply';
-import { switchKind, type GridRecipe } from '../../../engine/grid/gridBuild';
+import { ChevronDown, Clock, Columns3, Grid3x3, ImagePlus, MoveHorizontal, Shuffle, Square, StretchVertical } from 'lucide-react';
+import type { GridRecipe } from '../../../engine/grid/gridBuild';
+import { switchKind } from '../../../engine/grid/gridBuild';
 import { GRID_HINTS, GRID_KINDS, GRID_LABELS } from '../../../engine/grid/gridLayout';
+import { GRID_PRESETS, gridPresetMatching } from '../../../engine/grid/gridPresets';
 import { gridEditMode } from '../../../engine/grid/gridEditMode';
 import { GRID_PALETTES } from '../../../engine/grid/gridStyle';
+import { canEditObjects } from '../../../engine/model/permissions';
 import type { GridNode } from '../../../engine/model/schema';
 import { useStore } from '../../../hooks/useStore';
+import { GridArt, GridKindArt } from '../../dock/art/DataArt';
+import { NumberField, SegmentedControl } from '../../panel/grammar';
 import { GridKindIcon } from '../../workspace/gridIcons';
-import { PopoverSlider, RailButton } from '../RailBase';
+import { RailButton } from '../RailBase';
 import { RailPopover } from '../RailPopover';
 import { RailAnatomy, type RailVerb } from './anatomy';
-import { ScrubValue } from './controls';
 import type { SingleRail } from './types';
-import { fillGridFromFiles, trackLabel } from './gridActions';
+import {
+  MAX_GUTTER,
+  MAX_MARGIN,
+  MAX_TRACKS,
+  MIN_TRACKS,
+  canHug,
+  fillGridFromFiles,
+  trackLabel,
+  withFitContent,
+  withLayoutField,
+  withPreset,
+  writeGridRecipe,
+  type LayoutField,
+} from './gridActions';
 import { parkedCount } from './gridSlotIndex';
 
-const MIN_TRACKS = 1;
-const MAX_TRACKS = 24;
-const MAX_GAP = 200;
-/** A gap write re-lays out every module, so a scrub writes at most this often. */
-const GAP_SCRUB_MS = 80;
+type Family = 'systems' | 'named';
 
+/** Systems and named grids as art tiles; one family at a time keeps the popover short. */
+const ArrangementPanel: React.FC<{
+  recipe: GridRecipe;
+  parked: number;
+  apply: (next: GridRecipe) => void;
+}> = ({ recipe, parked, apply }) => {
+  const matched = gridPresetMatching(recipe.spec);
+  const [family, setFamily] = React.useState<Family>(matched ? 'named' : 'systems');
+  return (
+    <div className="grid-pop">
+      <SegmentedControl
+        fill
+        ariaLabel="Arrangement family"
+        value={family}
+        onChange={(v) => setFamily(v as Family)}
+        segments={[
+          { value: 'systems', label: 'Systems' },
+          { value: 'named', label: 'Named grids' },
+        ]}
+      />
+      <div className="grid-tiles" role="group" aria-label={family === 'systems' ? 'Grid systems' : 'Named grids'}>
+        {family === 'systems'
+          ? GRID_KINDS.map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                className="grid-tile"
+                aria-pressed={recipe.spec.kind === kind && !matched}
+                aria-label={GRID_LABELS[kind]}
+                data-tooltip={GRID_HINTS[kind]}
+                onClick={() => apply(switchKind(recipe, kind))}
+              >
+                <GridKindArt kind={kind} size={52} />
+                <span className="grid-tile__name">{GRID_LABELS[kind]}</span>
+              </button>
+            ))
+          : GRID_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className="grid-tile"
+                aria-pressed={matched?.id === preset.id}
+                aria-label={preset.label}
+                data-tooltip={preset.hint}
+                onClick={() => apply(withPreset(recipe, preset))}
+              >
+                <GridArt preset={preset.id} size={52} />
+                <span className="grid-tile__name">{preset.label}</span>
+              </button>
+            ))}
+      </div>
+      {parked > 0 && (
+        <p className="ctx-popover__note">
+          {parked} {parked === 1 ? 'item has' : 'items have'} no module in this arrangement. They wait below the grid and
+          return when there is room.
+        </p>
+      )}
+    </div>
+  );
+};
+
+/** Columns, gutter and margin: the three numbers that define a layout grid. Deeper settings live in Properties. */
+const LayoutPanel: React.FC<{
+  recipe: GridRecipe;
+  tracks: string | null;
+  write: (field: LayoutField, value: number, commit: boolean) => void;
+}> = ({ recipe, tracks, write }) => {
+  const { spec } = recipe;
+  return (
+    <div className="grid-pop grid-pop--fields">
+      <div className="grid-field">
+        <span className="grid-field__name">{tracks ?? 'Columns'}</span>
+        <NumberField
+          label={tracks ?? 'Columns'}
+          glyph={<Columns3 size={13} />}
+          value={spec.columns}
+          min={MIN_TRACKS}
+          max={MAX_TRACKS}
+          step={1}
+          precision={0}
+          disabledReason={tracks ? undefined : `${GRID_LABELS[spec.kind]} sets its own columns`}
+          onChange={(v, c) => write('tracks', v, c.commit)}
+        />
+      </div>
+      <div className="grid-field">
+        <span className="grid-field__name">Gutter</span>
+        <NumberField
+          label="Gutter"
+          glyph={<MoveHorizontal size={13} />}
+          value={spec.gutterX}
+          min={0}
+          max={MAX_GUTTER}
+          step={1}
+          precision={0}
+          unit="px"
+          onChange={(v, c) => write('gutter', v, c.commit)}
+        />
+      </div>
+      <div className="grid-field">
+        <span className="grid-field__name">Margin</span>
+        <NumberField
+          label="Margin"
+          glyph={<Square size={13} />}
+          value={spec.margin}
+          min={0}
+          max={MAX_MARGIN}
+          step={1}
+          precision={0}
+          unit="px"
+          onChange={(v, c) => write('margin', v, c.commit)}
+        />
+      </div>
+      <p className="ctx-popover__note">Tracks, spans, alignment and colour are in Properties.</p>
+    </div>
+  );
+};
 
 /**
  * A grid leads with its arrangement, the picker that says what it is; then its
- * palette as paint, its tracks, its gap, its cells, pictures to put in it, and
- * another draw of the same system.
+ * palette as paint, its three layout numbers, fitting its rows to content, its
+ * cells, pictures to put in it, and another draw of the same system. Anything
+ * deeper is in Properties.
  */
 export const GridRail: SingleRail<GridNode> = ({ node, conditional, tail, tailControls }) => {
   const recipe = node.grid;
   // A number, so the rail re-renders only when the count changes.
   const parked = useStore((s) => parkedCount(s.objects, node.id));
-  const apply = (next: GridRecipe) => setGridRecipe(node.id, next);
-  const patchSpec = (patch: Partial<GridRecipe['spec']>) => apply({ ...recipe, spec: { ...recipe.spec, ...patch } });
+  const editable = canEditObjects();
+  const apply = (next: GridRecipe) => writeGridRecipe(node.id, next, true);
   const tracks = trackLabel(recipe);
-  const gap = recipe.spec.gutterX;
-  const setGap = (g: number) => patchSpec({ gutterX: g, gutterY: g });
   const paletteKey = recipe.style.palette.join();
+  const hugging = recipe.spec.sizing === 'hug';
+  const name = GRID_LABELS[recipe.spec.kind];
 
-  const verbs: RailVerb[] = [];
-  if (tracks) {
-    const n = recipe.spec.columns;
-    verbs.push({
-      id: 'tracks',
-      controls: 2,
-      node: (
-        <span className="rail-stepper" role="group" aria-label={tracks}>
-          <RailButton
-            label={`Fewer ${tracks.toLowerCase()}`}
-            disabled={n <= MIN_TRACKS}
-            onClick={() => patchSpec({ columns: Math.max(MIN_TRACKS, n - 1) })}
-          >
-            <Minus size={14} />
-          </RailButton>
-          <span className="ctx-value rail-stepper__value" data-tooltip={tracks}>
-            {n}
-          </span>
-          <RailButton
-            label={`More ${tracks.toLowerCase()}`}
-            disabled={n >= MAX_TRACKS}
-            onClick={() => patchSpec({ columns: Math.min(MAX_TRACKS, n + 1) })}
-          >
-            <Plus size={14} />
-          </RailButton>
+  const kindLabel =
+    parked > 0
+      ? `Arrangement: ${name}. ${parked} ${parked === 1 ? 'item has' : 'items have'} no module in this arrangement`
+      : `Arrangement: ${name}`;
+  const kindFace = (
+    <span className="rail-kind">
+      <GridKindIcon kind={recipe.spec.kind} size={16} />
+      <span className="rail-kind__name">{name}</span>
+      {parked > 0 && (
+        <span className="rail-badge" aria-hidden="true">
+          <Clock size={11} aria-hidden />
+          {parked}
         </span>
-      ),
-    });
+      )}
+      {editable && <ChevronDown size={12} aria-hidden className="rail-kind__chevron" />}
+    </span>
+  );
+
+  // Viewers and commenters see what the grid is, and nothing to change.
+  if (!editable) {
+    return (
+      <RailAnatomy
+        kind={
+          <span className="ctx-btn" role="img" aria-label={kindLabel}>
+            {kindFace}
+          </span>
+        }
+        kindControls={0}
+        verbs={[]}
+        conditional={conditional}
+        tail={tail}
+        tailControls={tailControls}
+      />
+    );
   }
-  verbs.push(
+
+  const writeLayout = (field: LayoutField, value: number, commit: boolean) =>
+    writeGridRecipe(node.id, withLayoutField(recipe, field, value), commit);
+  const fit = withFitContent(recipe, !hugging);
+
+  const verbs: RailVerb[] = [
     {
-      id: 'gap',
+      id: 'layout',
       controls: 1,
       node: (
         <RailPopover
-          label="Gap"
+          label="Layout: columns, gutter and margin"
+          size="sm"
+          live
           trigger={
-            <ScrubValue value={gap} min={0} max={MAX_GAP} throttleMs={GAP_SCRUB_MS} onChange={setGap}>
-              <Space size={16} />
-            </ScrubValue>
+            <span className="rail-kind">
+              <Columns3 size={16} aria-hidden />
+              <span className="ctx-value">{recipe.spec.columns}</span>
+            </span>
           }
         >
-          <PopoverSlider label="Gap" value={gap} min={0} max={MAX_GAP} suffix="px" onChange={setGap} />
+          <LayoutPanel recipe={recipe} tracks={tracks} write={writeLayout} />
         </RailPopover>
+      ),
+    },
+    {
+      id: 'fit',
+      controls: 1,
+      node: (
+        <RailButton
+          label={hugging ? 'Rows fit content' : 'Fit rows to content'}
+          hint={fit ? 'Rows grow to hold what is in them (undoable)' : `${name} has no rows to fit`}
+          pressed={hugging}
+          disabled={!canHug(recipe)}
+          onClick={() => fit && apply(fit)}
+        >
+          <StretchVertical size={16} />
+        </RailButton>
       ),
     },
     {
@@ -110,66 +268,26 @@ export const GridRail: SingleRail<GridNode> = ({ node, conditional, tail, tailCo
         <RailButton
           label="Reshuffle"
           hint="Another draw of the same system (undoable)"
-          onClick={() => patchSpec({ seed: Math.floor(Math.random() * 100000) })}
+          onClick={() => apply({ ...recipe, spec: { ...recipe.spec, seed: Math.floor(Math.random() * 100000) } })}
         >
           <Shuffle size={16} />
         </RailButton>
       ),
-    }
-  );
+    },
+  ];
 
   return (
     <RailAnatomy
       kind={
-        <RailPopover
-          label={
-            parked > 0
-              ? `Arrangement: ${GRID_LABELS[recipe.spec.kind]}. ${parked} ${parked === 1 ? 'item has' : 'items have'} no module in this arrangement`
-              : `Arrangement: ${GRID_LABELS[recipe.spec.kind]}`
-          }
-          trigger={
-            <span className="rail-kind">
-              <GridKindIcon kind={recipe.spec.kind} size={16} />
-              <span className="rail-kind__name">{GRID_LABELS[recipe.spec.kind]}</span>
-              {parked > 0 && (
-                <span className="rail-badge" aria-hidden="true">
-                  <Clock size={11} aria-hidden />
-                  {parked}
-                </span>
-              )}
-              <ChevronDown size={12} aria-hidden className="rail-kind__chevron" />
-            </span>
-          }
-          align="start"
-        >
-          <span className="ctx-popover__label">Arrangement</span>
-          <div className="ctx-shape-grid">
-            {GRID_KINDS.map((kind) => (
-              <button
-                key={kind}
-                type="button"
-                className="ctx-shape-btn"
-                aria-pressed={recipe.spec.kind === kind}
-                data-tooltip={`${GRID_LABELS[kind]}: ${GRID_HINTS[kind]}`}
-                aria-label={GRID_LABELS[kind]}
-                onClick={() => apply(switchKind(recipe, kind))}
-              >
-                <GridKindIcon kind={kind} size={16} />
-              </button>
-            ))}
-          </div>
-          {parked > 0 && (
-            <p className="ctx-popover__note">
-              {parked} {parked === 1 ? 'item has' : 'items have'} no module in this arrangement. They wait below the grid
-              and return when there is room.
-            </p>
-          )}
+        <RailPopover label={kindLabel} size="md" align="start" trigger={kindFace}>
+          <ArrangementPanel recipe={recipe} parked={parked} apply={apply} />
         </RailPopover>
       }
       kindControls={1}
       paint={
         <RailPopover
           label="Palette"
+          size="sm"
           trigger={
             <span className="rail-ribbon" aria-hidden="true">
               {recipe.style.palette.slice(0, 5).map((c, i) => (
@@ -180,31 +298,28 @@ export const GridRail: SingleRail<GridNode> = ({ node, conditional, tail, tailCo
           align="start"
         >
           {(close) => (
-            <>
-              <span className="ctx-popover__label">Palette</span>
-              <div className="ctx-palettes" role="radiogroup" aria-label="Grid palette">
-                {GRID_PALETTES.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={p.colors.join() === paletteKey}
-                    className="ctx-palette"
-                    onClick={() => {
-                      apply({ ...recipe, style: { ...recipe.style, palette: p.colors } });
-                      close();
-                    }}
-                  >
-                    <span className="ctx-palette__ribbon">
-                      {p.colors.map((c, i) => (
-                        <i key={i} style={{ background: c }} />
-                      ))}
-                    </span>
-                    <span className="ctx-palette__name">{p.name}</span>
-                  </button>
-                ))}
-              </div>
-            </>
+            <div className="ctx-palettes" role="radiogroup" aria-label="Grid palette">
+              {GRID_PALETTES.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={p.colors.join() === paletteKey}
+                  className="ctx-palette"
+                  onClick={() => {
+                    apply({ ...recipe, style: { ...recipe.style, palette: p.colors } });
+                    close();
+                  }}
+                >
+                  <span className="ctx-palette__ribbon">
+                    {p.colors.map((c, i) => (
+                      <i key={i} style={{ background: c }} />
+                    ))}
+                  </span>
+                  <span className="ctx-palette__name">{p.name}</span>
+                </button>
+              ))}
+            </div>
           )}
         </RailPopover>
       }
