@@ -46,6 +46,7 @@ describe('installed on Konva', () => {
         if (name === 'lineWidth') widths.push(value as number);
       },
       _applyLineCap: () => undefined,
+      _applyStrokeStyle: () => undefined,
       setLineDash: () => undefined,
       save: () => undefined,
       restore: () => undefined,
