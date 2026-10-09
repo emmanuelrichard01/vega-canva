@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { normalizeNode } from '../../../engine/document/normalize';
 import type { AnyNode } from '../../../engine/model/schema';
 import { fitVerbs, RAIL_CONTROL_CAP, type RailVerb } from './verbs';
-import { chromeFromTokens, chromeInset, DEFAULT_HEADER_H, EDGE_MARGIN, freeStrip, readPx } from './railBounds';
+import { chromeFromTokens, chromeInset, DEFAULT_HEADER_H, EDGE_MARGIN, freeStrip, readPx, subjectInView } from './railBounds';
 import { railSubjectOf } from './subject';
 import { inferGap, inferRowGap, inferRows, layoutRows, tidySelection } from './tidy';
 
@@ -85,6 +85,20 @@ describe('placement bounds', () => {
     expect(chromeInset({ left: 1152, right: 1440, width: 288, height: 800 }, 'right', 1440)).toBe(288);
     expect(chromeInset({ left: 0, right: 0, width: 0, height: 0 }, 'left', 1440)).toBe(EDGE_MARGIN);
     expect(chromeInset(null, 'right', 1440)).toBe(EDGE_MARGIN);
+  });
+
+  it('stands beside a selection only while some of it is on screen', () => {
+    const strip = { top: 64, bottom: 772, left: 292, right: 1148 };
+    // Fully in view, and half off the right edge: the rail belongs to it.
+    expect(subjectInView({ x: 400, y: 200, width: 100, height: 60 }, strip)).toBe(true);
+    expect(subjectInView({ x: 1100, y: 200, width: 100, height: 60 }, strip)).toBe(true);
+    // Panned off the side, or under the left panel: nothing to stand beside.
+    expect(subjectInView({ x: 1200, y: 200, width: 100, height: 60 }, strip)).toBe(false);
+    expect(subjectInView({ x: 100, y: 200, width: 100, height: 60 }, strip)).toBe(false);
+    // A sliver smaller than the margin does not count.
+    expect(subjectInView({ x: 1144, y: 200, width: 100, height: 60 }, strip)).toBe(false);
+    // A flat line in view still counts, though it has no height.
+    expect(subjectInView({ x: 400, y: 300, width: 200, height: 0 }, strip)).toBe(true);
   });
 
   const measured = { insetLeft: 300, insetRight: 280 };

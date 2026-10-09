@@ -586,6 +586,18 @@ Cursor chat is small and independent — it can be slotted anywhere.
    trade-off recorded in the table above. A curve-preserving boolean remains
    available later — the operands are flattened at one call site.
 
+## Update: redesign waves 5 to 7
+
+Shipped since the table above was last tallied: version history (sessions,
+autosaves, named versions); slides and presentation (slide view, presenter view,
+transitions, PDF); table-to-chart data links with write-back; Fluent emoji and
+sticky stamps/checklists; frame icons, themes and presets; a line/arrow tool
+with connector binding, shadows and fine stroke weights; sketch mode per board
+and per object; multi-selection align (to key or frame), live grid and booleans;
+tiled PNG, ZIP and font-embedding export; presence roster, spotlight and ping;
+and a nine-category template catalogue. Still open: non-destructive booleans,
+nested groups, text on path.
+
 ## The rules any of this work must respect
 
 These are not style preferences; each was learned from a bug in this codebase

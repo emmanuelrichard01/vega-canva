@@ -93,7 +93,7 @@ business charts, statistical spreads, hierarchies, networks and timelines, and
 mathematical plots from typed expressions — and tables with typed columns,
 merges, sorting, filtering and CSV in and out, both edited through one shared
 spreadsheet and both drawable in the hand-drawn sketch style without losing a
-value. Finished examples and board templates exist for both.
+value. Finished examples exist for both, and a chart can follow a table and write edits back to it. Board templates (about 53 across nine categories, including slide decks) start a room full.
 
 Durable constraints future work must preserve:
 
@@ -187,3 +187,10 @@ is a real `role="slider"` with arrow, Home/End and Space support.
 The drawn cursor hands the surface back to native cursors on a coarse pointer and
 under `forced-colors`, where a drawn cursor cannot honour the pointer size and
 contrast the OS was asked for.
+
+## Presenting, history and onboarding
+
+Frames are slides: the board can be presented (slide view, presenter view,
+transitions) and exported to PDF. Version history keeps autosaved sessions and
+named versions per board. New users get a welcome, a Get started checklist
+and a tour; none of them blocks the canvas.

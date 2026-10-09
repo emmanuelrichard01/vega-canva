@@ -5,8 +5,11 @@ import {
   MAX_AMPLITUDE_SCALE,
   MAX_WAVES,
   MIN_WAVES,
+  ELBOW_RADIUS,
   defaultEndAlign,
   dynamicWaves,
+  elbowPoints,
+  isRouteProfile,
   linePoints,
   type LineProfile,
 } from './linePath';
@@ -26,8 +29,12 @@ const A: Point = { x: 0, y: 0 };
 const B: Point = { x: 600, y: 0 };
 const LENGTH = 600;
 
-/** Every profile that actually draws a shape; `straight` is the pass-through. */
-const SHAPED = LINE_PROFILES.filter((p) => p !== 'straight');
+/**
+ * Every profile drawn along and across its own run. `straight` is the
+ * pass-through, and `elbow` is laid out in the board's axes on purpose, so it
+ * has its own block below rather than joining assertions about rotation.
+ */
+const SHAPED = LINE_PROFILES.filter((p) => p !== 'straight' && p !== 'elbow');
 
 /** A point in the run's own frame: distance along it, and offset across it. */
 function project(p: Point, a: Point, b: Point): { along: number; across: number } {
@@ -333,6 +340,8 @@ describe('defaultEndAlign', () => {
   it('keeps a straight head inside and projects every shaped one', () => {
     expect(defaultEndAlign(undefined)).toBe('inside');
     expect(defaultEndAlign('straight')).toBe('inside');
+    // An elbow arrives on a straight leg, so its head has nothing to eat.
+    expect(defaultEndAlign('elbow')).toBe('inside');
     for (const profile of SHAPED) {
       expect(defaultEndAlign(profile), profile).toBe('extend');
     }
@@ -519,5 +528,52 @@ describe('where a run leaves and arrives', () => {
       expect(pts[pts.length - 1].x).toBeCloseTo(400, 6);
       expect(pts[pts.length - 1].y).toBeCloseTo(0, 6);
     }
+  });
+});
+
+describe('the elbow', () => {
+  const a = { x: 0, y: 0 };
+  const isAxis = (p: Point, q: Point) => Math.abs(p.x - q.x) < 1e-9 || Math.abs(p.y - q.y) < 1e-9;
+
+  it('leaves and arrives along the longer axis, so a head meets an edge square on', () => {
+    const across = elbowPoints(a, { x: 300, y: 120 });
+    expect(across[1].y).toBeCloseTo(0, 9);
+    expect(across[across.length - 2].y).toBeCloseTo(120, 9);
+    const down = elbowPoints(a, { x: 80, y: 300 });
+    expect(down[1].x).toBeCloseTo(0, 9);
+    expect(down[down.length - 2].x).toBeCloseTo(80, 9);
+  });
+
+  it('starts and finishes on its own ends in every quadrant', () => {
+    for (const b of [{ x: 200, y: 90 }, { x: -200, y: 90 }, { x: 200, y: -90 }, { x: -60, y: -300 }]) {
+      const pts = elbowPoints(a, b);
+      expect(pts[0]).toEqual(a);
+      expect(pts[pts.length - 1]).toEqual(b);
+      expect(isAxis(pts[0], pts[1])).toBe(true);
+      expect(isAxis(pts[pts.length - 2], pts[pts.length - 1])).toBe(true);
+    }
+  });
+
+  it('never rounds a corner past half of either leg', () => {
+    // A 10-unit rise leaves a middle leg too short for two full-radius corners.
+    const pts = elbowPoints(a, { x: 300, y: 10 });
+    for (const p of pts) {
+      expect(p.y).toBeGreaterThanOrEqual(-1e-9);
+      expect(p.y).toBeLessThanOrEqual(10 + 1e-9);
+    }
+    // The first corner begins at most a radius before the middle.
+    expect(pts[1].x).toBeGreaterThanOrEqual(150 - ELBOW_RADIUS - 1e-9);
+  });
+
+  it('is a straight line when the ends already share an axis', () => {
+    expect(elbowPoints(a, { x: 400, y: 0 })).toEqual([a, { x: 400, y: 0 }]);
+    expect(elbowPoints(a, { x: 0, y: -90 })).toEqual([a, { x: 0, y: -90 }]);
+  });
+
+  it('is one of the three route profiles a connector can take over', () => {
+    expect(isRouteProfile('elbow')).toBe(true);
+    expect(isRouteProfile(undefined)).toBe(true);
+    expect(isRouteProfile('curved')).toBe(true);
+    expect(isRouteProfile('wavy')).toBe(false);
   });
 });

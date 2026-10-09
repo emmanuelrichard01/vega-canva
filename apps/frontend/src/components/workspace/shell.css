@@ -460,6 +460,14 @@
   padding: 0;
 }
 
+/* At a zoom limit: still pointable, so the tooltip can say why it is off. */
+.zoom-ctl__step[aria-disabled='true'],
+.zoom-ctl__step[aria-disabled='true']:hover {
+  color: var(--text-disabled);
+  background: transparent;
+  cursor: default;
+}
+
 .zoom-ctl__field {
   display: inline-flex;
   align-items: center;

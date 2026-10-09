@@ -23,7 +23,8 @@ describe('the library', () => {
   });
 
   it('leads with eight common shapes, all of them on offer', () => {
-    expect(QUICK_SHAPES).toHaveLength(8);
+    // One full row of the grid, so the row has no gap at its end.
+    expect(QUICK_SHAPES).toHaveLength(LIBRARY_LAYOUT.cols);
     for (const p of QUICK_SHAPES) expect(LIBRARY_PRESETS).toContain(p);
   });
 });

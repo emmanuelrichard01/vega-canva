@@ -1,4 +1,4 @@
-import { Group, Rect, Text } from 'react-konva';
+import { Group, Rect } from 'react-konva';
 import { nanoid } from 'nanoid';
 import * as React from 'react';
 import type { Tool, ToolContext } from './Tool';
@@ -7,6 +7,7 @@ import { useStore } from '../../hooks/useStore';
 import { DEFAULT_FRAME, frameBoxFromDrag, framePreset, nextFrameName } from '../model/frames';
 import { captureExistingIntoFrame } from '../interaction/frameMembership';
 import { chromeToken } from '../interaction/chromeHalo';
+import { hud } from '../ui/hud';
 
 /**
  * Drawing a frame.
@@ -75,7 +76,7 @@ export class FrameTool implements Tool {
   onPointerUp(ctx: ToolContext) {
     if (!this.isDragging) return;
     this.isDragging = false;
-    ctx.setOverlayState?.({ active: false });
+    this.clearOverlay(ctx);
 
     const box = frameBoxFromDrag(
       { x: this.startX, y: this.startY },
@@ -123,7 +124,7 @@ export class FrameTool implements Tool {
   onKeyDown(ctx: ToolContext, e: KeyboardEvent) {
     if (e.key === 'Escape' && this.isDragging) {
       this.isDragging = false;
-      ctx.setOverlayState?.({ active: false });
+      this.clearOverlay(ctx);
     }
   }
 
@@ -131,10 +132,30 @@ export class FrameTool implements Tool {
     // A keyboard tool-switch mid-drag never fires onPointerUp, which would
     // leave the size preview stuck on screen.
     this.isDragging = false;
+    this.clearOverlay(ctx);
+  }
+
+  /** The gesture is over, committed or not: the overlay and the readout go. */
+  private clearOverlay(ctx: ToolContext) {
     ctx.setOverlayState?.({ active: false });
+    hud.hide('frame');
   }
 
   private pushOverlay(ctx: ToolContext) {
+    // The running dimensions through the board's one HUD, because a frame is a
+    // thing you size to a number far more often than you size by eye.
+    const box = frameBoxFromDrag(
+      { x: this.startX, y: this.startY },
+      { x: this.currentX, y: this.currentY },
+      this.fallbackSize()
+    );
+    hud.show({
+      source: 'frame',
+      kind: 'size',
+      value: { width: box.width, height: box.height },
+      at: { x: this.currentX, y: this.currentY },
+      box,
+    });
     ctx.setOverlayState?.({
       active: true,
       kind: 'frame',
@@ -155,13 +176,8 @@ export class FrameTool implements Tool {
       overlayState.fallback ?? DEFAULT_FRAME
     );
 
-    // The running dimensions, because a frame is a thing you size to a number
-    // far more often than you size by eye — and without the readout the only
-    // way to hit 1080 is to draw roughly and fix it in the panel afterwards.
-    const label = `${Math.round(box.width)} × ${Math.round(box.height)}`;
     // Ink, as the selection is: the preview is the frame-to-be, not an armed state.
     const ink = chromeToken('--text-primary', '#111827');
-    const zoom = Math.max(0.01, _ctx.camera.zoom ?? 1);
 
     return (
       <Group listening={false}>
@@ -176,14 +192,6 @@ export class FrameTool implements Tool {
           /* Unscaled, so the preview outline is a hairline at every zoom
              rather than a slab when you are zoomed out drawing a big frame. */
           strokeScaleEnabled={false}
-        />
-        <Text
-          x={box.x}
-          y={box.y - 18 / zoom}
-          text={label}
-          fontSize={12 / zoom}
-          fontFamily="Inter, sans-serif"
-          fill={ink}
         />
       </Group>
     );

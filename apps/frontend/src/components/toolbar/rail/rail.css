@@ -159,6 +159,15 @@
   color: var(--text-tertiary);
 }
 
+/* What a row measures, beside its name: a frame's pixel size. Data, so it is
+   tabular and quieter than the name it qualifies. */
+.rail-list__meta {
+  flex: none;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
 .rail-list__label {
   /* Takes the row, so a trailing check or measurement sits at the end. */
   flex: 1 1 auto;
@@ -302,4 +311,53 @@
   background: var(--surface-elevated);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+/* A popover on the flyout width scale: the dock's widths, so a list of rows
+   on the rail is the width of a list of rows rising from the dock. Never
+   wider than the window allows. */
+.ctx-popover[data-size] {
+  box-sizing: border-box;
+  width: min(var(--popover-w), calc(100vw - 16px));
+}
+
+.ctx-popover[data-size='sm'] { --popover-w: var(--flyout-w-sm, 240px); }
+.ctx-popover[data-size='md'] { --popover-w: var(--flyout-w-md, 408px); }
+.ctx-popover[data-size='lg'] { --popover-w: var(--flyout-w-lg, 480px); }
+
+.ctx-popover[data-size] .rail-list { min-width: 0; }
+
+/* A popover that scrolls clips whatever draws outside it, and an offset focus
+   ring on a tile against its edge would be cut in half. Inside one, every
+   ring is drawn inward. */
+.ctx-popover[data-scrolls] :focus-visible {
+  outline-offset: -2px;
+}
+
+/* Eight end caps in one row of a narrow popover: the segments share the row
+   evenly, with the inset trimmed so the 20px glyphs fit without wrapping and
+   the popover's own padding stays equal on both sides. */
+.ctx-popover[data-size='sm'] .seg--fill .seg__item {
+  padding: 0 3px;
+}
+
+/* A panel standing beside the selection did not come out of the button above
+   or below it, so it fades in rather than rising from it (as a floating one does). */
+@media (prefers-reduced-motion: no-preference) {
+  .ctx-popover[data-side='left']:not([data-switched]):not([data-float]),
+  .ctx-popover[data-side='right']:not([data-switched]):not([data-float]) {
+    animation-name: ctxFadeIn;
+  }
+}
+
+/* An open panel is the rail being reached for: it and its panel stay solid
+   while the pointer is out on the board dragging a gap or watching a ghost,
+   rather than dropping back to the resting or veiled translucency. */
+.ctx-toolbar:has(.ctx-popover) {
+  opacity: 1;
+}
+
+.ctx-toolbar--veiled:has(.ctx-popover) {
+  opacity: 1;
+  background: var(--surface-elevated);
 }

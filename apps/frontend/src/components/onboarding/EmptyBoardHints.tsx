@@ -19,12 +19,6 @@ interface Hint {
 
 const MOD = IS_MAC ? '⌘' : 'Ctrl';
 
-/** Without counting every key, which a store selector would do on each change. */
-function isEmpty(table: object): boolean {
-  for (const key in table) if (Object.prototype.hasOwnProperty.call(table, key)) return false;
-  return true;
-}
-
 /** What an empty board can usefully say, per role. Every key here is bound. */
 export function hintsFor(role: RoomRole): { title: string; hints: Hint[] } {
   if (role === 'editor') {
@@ -56,7 +50,7 @@ export function hintsFor(role: RoomRole): { title: string; hints: Hint[] } {
  * key, a scroll, or an object arriving from anyone.
  */
 export const EmptyBoardHints: React.FC<{ visible: boolean }> = ({ visible }) => {
-  const empty = useStore((s) => isEmpty(s.objects));
+  const empty = useStore((s) => s.objectCount === 0);
   const { role } = useRoomPermissions();
   const [ready, setReady] = useState(false);
   const [phase, setPhase] = useState<'on' | 'leaving' | 'gone'>(retired ? 'gone' : 'on');

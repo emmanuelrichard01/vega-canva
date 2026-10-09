@@ -67,13 +67,22 @@ describe('RotateZones', () => {
     expect(proxy.rotation()).toBe(0);
 
     // Press on the top-left zone, then move the pointer a hair.
-    const press = { clientX: BOX.x, clientY: BOX.y };
+    // Just outside the top-left handle, in the ring, on the turned selection.
+    const cx = BOX.x + BOX.width / 2;
+    const cy = BOX.y + BOX.height / 2;
+    const r = (30 * Math.PI) / 180;
+    const dx = BOX.x - 9 - cx;
+    const dy = BOX.y - 9 - cy;
+    const press = {
+      clientX: cx + dx * Math.cos(r) - dy * Math.sin(r),
+      clientY: cy + dx * Math.sin(r) + dy * Math.cos(r),
+    };
     stage.setPointersPositions(press as unknown as MouseEvent);
     act(() => {
       zones[0].fire('mousedown', { evt: new MouseEvent('mousedown', press) }, true);
     });
     act(() => {
-      window.dispatchEvent(new MouseEvent('pointermove', { clientX: BOX.x + 1, clientY: BOX.y }) as PointerEvent);
+      window.dispatchEvent(new MouseEvent('pointermove', { clientX: press.clientX + 0.3, clientY: press.clientY }) as PointerEvent);
     });
 
     expect(onStart).toHaveBeenCalledWith('rotate');

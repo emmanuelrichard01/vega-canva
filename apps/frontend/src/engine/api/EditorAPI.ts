@@ -2,7 +2,7 @@ import { commandManager, CreateNodeCommand, UpdateNodeCommand, DeleteNodeCommand
 import { sceneGraph } from '../SceneGraph';
 import type { AnyNode } from '../model/schema';
 import { nanoid } from 'nanoid';
-import { applyGroupPlan, provider, type NewNodeInput } from '../document';
+import { applyGroupPlan, provider, type CreateNodeOptions, type NewNodeInput } from '../document';
 import { planGroup, planUngroup, rootGroupOf } from '../model/groupTree';
 import { useStore } from '../../hooks/useStore';
 import { cameraSystem } from '../CameraSystem';
@@ -46,8 +46,8 @@ export class EditorAPI {
    * new objects actually land on top of the stack instead of every node in
    * the room sharing z-index 0.
    */
-  createNode(node: NewNodeInput): string {
-    const command = new CreateNodeCommand(node);
+  createNode(node: NewNodeInput, options?: CreateNodeOptions): string {
+    const command = new CreateNodeCommand(node, options);
     commandManager.execute(command);
     return command.createdId ?? node.id ?? '';
   }

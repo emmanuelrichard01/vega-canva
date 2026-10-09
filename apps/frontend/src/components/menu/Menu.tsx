@@ -1,8 +1,10 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronRight } from 'lucide-react';
+import { Check, ChevronRight, Search } from 'lucide-react';
 import {
   aimingAt,
+  countCommands,
+  filterMenu,
   firstIndex,
   isNavigable,
   lastIndex,
@@ -16,6 +18,8 @@ import {
   type Size,
 } from './menuModel';
 import { menuShortcut, withShortcut } from './shortcuts';
+import { FLOATING_CHILD_ATTR, useOutsidePress } from '../ui/outsidePress';
+import './menu.css';
 
 /**
  * The app's menu: right-click on the board, and the rail's overflow.
@@ -44,6 +48,11 @@ import { menuShortcut, withShortcut } from './shortcuts';
  * - **One authored motion.** The panel grows out of the corner nearest the
  *   pointer, in 140ms, on the app's exponential settle. Under reduced motion it
  *   simply appears.
+ * - **Search, when the menu is long.** A `searchable` menu with enough
+ *   commands in it turns typing into a filter over every row, submenus
+ *   included (`filterMenu`). Backspace edits the query, Escape clears it before
+ *   it closes anything, and the panel shrinks toward the edge it opened from so nothing
+ *   moves under the pointer. A short menu keeps native type-ahead.
  */
 
 export type MenuAnchor =
@@ -57,18 +66,50 @@ interface MenuProps {
   onClose: () => void;
   /** Put the keyboard on the first row — for a menu the keyboard opened. */
   focusFirst?: boolean;
+  /**
+   * Let typing filter the whole menu, once it reaches `SEARCH_FROM` commands.
+   * For the board's own menu, which is long and nested; small menus keep
+   * type-ahead, where one letter jumping to a row is the faster answer.
+   */
+  searchable?: boolean;
+  /**
+   * The control that opened it, when the anchor rect is wider than that control
+   * (a menu hung from a whole group). A press on it closes the menu and eats its
+   * click. Left out, a press inside a `rect` anchor counts as the trigger; `null`
+   * means nothing does.
+   */
+  trigger?: React.RefObject<Element | null> | Element | null;
 }
 
 const MARGIN = 8;
+/** Commands, submenus included, at which a searchable menu starts filtering on typing. */
+export const SEARCH_FROM = 12;
 const OPEN_DELAY = 110;
 const AIM_GRACE = 260;
 
 const viewport = () => ({ width: window.innerWidth, height: window.innerHeight, margin: MARGIN });
 
-export const Menu: React.FC<MenuProps> = ({ entries, label, anchor, onClose, focusFirst = false }) => {
+/**
+ * Where focus goes back to on close. Whatever had it — unless that is the body,
+ * as it is in Safari after clicking a button (Safari does not focus buttons on
+ * click): then the focusable control under the anchor rect, the trigger.
+ */
+function focusTarget(anchor: MenuAnchor, trigger: MenuProps['trigger']): Element | null {
+  const active = document.activeElement;
+  if (active && active !== document.body) return active;
+  const given = trigger && ('current' in trigger ? trigger.current : trigger);
+  if (given) return given;
+  if (anchor.kind !== 'rect' || typeof document.elementFromPoint !== 'function') return active;
+  const { left, top, width, height } = anchor.rect;
+  const hit = document.elementFromPoint(left + width / 2, top + height / 2);
+  return hit?.closest('button, [href], [tabindex]:not([tabindex="-1"])') ?? active;
+}
+
+export const Menu: React.FC<MenuProps> = ({ entries, label, anchor, onClose, focusFirst = false, searchable = false, trigger }) => {
   const layerRef = useRef<HTMLDivElement>(null);
   /** What had focus before, so closing from the keyboard hands it back. */
-  const returnTo = useRef<Element | null>(typeof document !== 'undefined' ? document.activeElement : null);
+  const returnTo = useRef<Element | null>(null);
+  if (returnTo.current === null && typeof document !== 'undefined') returnTo.current = focusTarget(anchor, trigger);
   const restore = useRef(false);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -78,27 +119,32 @@ export const Menu: React.FC<MenuProps> = ({ entries, label, anchor, onClose, foc
     onCloseRef.current();
   }, []);
 
+  /**
+   * `pointerdown`, in the capture phase: a menu still on screen at mouseup
+   * would sit over a drag that has already begun, and a handler that stops
+   * propagation on the way up must not be able to keep it open. A press on the
+   * button that opened it (the anchor rect) closes it and eats that button's
+   * click, so a toggle trigger cannot open it straight back up.
+   */
+  useOutsidePress({
+    open: true,
+    surfaces: [layerRef],
+    triggers: () => (trigger !== undefined ? trigger : anchor.kind === 'rect' ? anchor.rect : undefined),
+    trigger: 'close',
+    onOutside: () => closeAll(false),
+  });
+
   useEffect(() => {
-    /**
-     * `pointerdown`, in the capture phase: a menu still on screen at mouseup
-     * would sit over a drag that has already begun, and a handler that stops
-     * propagation on the way up must not be able to keep it open.
-     */
-    const onDown = (e: PointerEvent) => {
-      if (!layerRef.current?.contains(e.target as Node)) closeAll(false);
-    };
     const onWheel = (e: WheelEvent) => {
       if (!layerRef.current?.contains(e.target as Node)) closeAll(false);
     };
     const onBlur = () => closeAll(false);
     const onResize = () => closeAll(false);
-    window.addEventListener('pointerdown', onDown, true);
     window.addEventListener('wheel', onWheel, { capture: true, passive: true });
     window.addEventListener('blur', onBlur);
     window.addEventListener('resize', onResize);
     const previous = returnTo.current;
     return () => {
-      window.removeEventListener('pointerdown', onDown, true);
       window.removeEventListener('wheel', onWheel, true);
       window.removeEventListener('blur', onBlur);
       window.removeEventListener('resize', onResize);
@@ -117,7 +163,7 @@ export const Menu: React.FC<MenuProps> = ({ entries, label, anchor, onClose, foc
   );
 
   return createPortal(
-    <div ref={layerRef} className="menu-layer" onContextMenu={(e) => e.preventDefault()}>
+    <div ref={layerRef} className="menu-layer" {...{ [FLOATING_CHILD_ATTR]: '' }} onContextMenu={(e) => e.preventDefault()}>
       <MenuPanel
         entries={entries}
         label={label}
@@ -125,6 +171,7 @@ export const Menu: React.FC<MenuProps> = ({ entries, label, anchor, onClose, foc
         place={place}
         focusToken={focusFirst ? 1 : 0}
         closeAll={closeAll}
+        searchable={searchable && countCommands(entries) >= SEARCH_FROM}
       />
     </div>,
     document.body
@@ -146,6 +193,8 @@ interface PanelProps {
   onPointerEnterPanel?: () => void;
   /** A bespoke body instead of rows. */
   custom?: (close: () => void) => React.ReactNode;
+  /** Typing filters this panel's rows and everything under them. */
+  searchable?: boolean;
 }
 
 interface OpenSub {
@@ -166,8 +215,14 @@ const MenuPanel: React.FC<PanelProps> = ({
   onPlaced,
   onPointerEnterPanel,
   custom,
+  searchable = false,
 }) => {
   const panelRef = useRef<HTMLDivElement>(null);
+  const [query, setQuery] = useState('');
+  /** The rows on screen: the menu, or what the query reaches in it. */
+  const shown = useMemo(() => (query ? filterMenu(entries, query) : entries), [entries, query]);
+  /** The height the panel opened at, so a menu that opened upward can keep its bottom edge while filtering. */
+  const openedHeight = useRef<number | null>(null);
   const rows = useRef(new Map<number, HTMLElement>());
   const [spot, setSpot] = useState<(Placement & { side?: 'left' | 'right' }) | null>(null);
   const [active, setActive] = useState(-1);
@@ -186,6 +241,7 @@ const MenuPanel: React.FC<PanelProps> = ({
     const el = panelRef.current;
     if (!el) return;
     const next = place({ width: el.offsetWidth, height: el.scrollHeight });
+    openedHeight.current = Math.min(el.offsetHeight, next.maxHeight ?? Infinity);
     setSpot(next);
     // Measured once, at open: a menu that re-placed itself as rows changed
     // would move under the pointer that is choosing from it.
@@ -205,7 +261,7 @@ const MenuPanel: React.FC<PanelProps> = ({
     (index: number, tileIndex?: number) => {
       setActive(index);
       if (index < 0) return;
-      const entry = entries[index];
+      const entry = shown[index];
       const el = rows.current.get(index);
       if (!el) return;
       if (entry?.kind === 'strip') {
@@ -217,7 +273,7 @@ const MenuPanel: React.FC<PanelProps> = ({
       }
       el.scrollIntoView?.({ block: 'nearest' });
     },
-    [entries, tile]
+    [shown, tile]
   );
 
   useEffect(() => {
@@ -230,7 +286,7 @@ const MenuPanel: React.FC<PanelProps> = ({
       }
       return;
     }
-    if (focusToken) focusRow(firstIndex(entries));
+    if (focusToken) focusRow(firstIndex(shown));
     else if (depth === 0) panelRef.current?.focus({ preventScroll: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spot, focusToken]);
@@ -261,9 +317,28 @@ const MenuPanel: React.FC<PanelProps> = ({
     setSub(null);
   }, []);
 
+  // A new query is a new list: nothing open, and the keyboard on its best match.
+  // Compared with the last query rather than skipping a first run, so a
+  // StrictMode double-run at mount does not move the keyboard.
+  const lastQuery = useRef(query);
+  useEffect(() => {
+    if (lastQuery.current === query) return;
+    lastQuery.current = query;
+    window.clearTimeout(timer.current);
+    closeSub();
+    setTile({});
+    const first = firstIndex(shown);
+    if (first >= 0) focusRow(first);
+    else {
+      setActive(-1);
+      panelRef.current?.focus({ preventScroll: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
+
   // --------------------------------------------------------------- activate
   const activate = (index: number) => {
-    const entry = entries[index];
+    const entry = shown[index];
     if (!entry || !isNavigable(entry)) return;
     if (entry.kind === 'submenu') {
       openSub(index, true);
@@ -303,23 +378,45 @@ const MenuPanel: React.FC<PanelProps> = ({
       return;
     }
 
-    const entry = entries[active];
+    if (searchable && !e.nativeEvent.isComposing) {
+      if (e.key === 'Backspace') {
+        if (query) {
+          e.preventDefault();
+          setQuery((q) => q.slice(0, -1));
+        }
+        return;
+      }
+      if (e.key === 'Escape' && query) {
+        e.preventDefault();
+        setQuery('');
+        return;
+      }
+      // Space types a space once a query has begun, and presses the row before.
+      const printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+      if (printable && (e.key !== ' ' || query)) {
+        e.preventDefault();
+        setQuery((q) => (q + e.key).slice(0, 48));
+        return;
+      }
+    }
+
+    const entry = shown[active];
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault();
-        focusRow(stepIndex(entries, active, 1));
+        focusRow(stepIndex(shown, active, 1));
         return;
       case 'ArrowUp':
         e.preventDefault();
-        focusRow(active < 0 ? lastIndex(entries) : stepIndex(entries, active, -1));
+        focusRow(active < 0 ? lastIndex(shown) : stepIndex(shown, active, -1));
         return;
       case 'Home':
         e.preventDefault();
-        focusRow(firstIndex(entries));
+        focusRow(firstIndex(shown));
         return;
       case 'End':
         e.preventDefault();
-        focusRow(lastIndex(entries));
+        focusRow(lastIndex(shown));
         return;
       case 'ArrowRight':
         e.preventDefault();
@@ -367,7 +464,7 @@ const MenuPanel: React.FC<PanelProps> = ({
       const now = performance.now();
       const text = now - buffer.current.at < 700 ? buffer.current.text + e.key : e.key;
       buffer.current = { text, at: now };
-      const hit = typeahead(entries, active, text);
+      const hit = typeahead(shown, active, text);
       if (hit >= 0) focusRow(hit);
     }
   };
@@ -380,7 +477,7 @@ const MenuPanel: React.FC<PanelProps> = ({
   };
 
   const settleOn = (index: number) => {
-    const entry = entries[index];
+    const entry = shown[index];
     if (!entry || !isNavigable(entry)) {
       setActive(-1);
       panelRef.current?.focus({ preventScroll: true });
@@ -416,16 +513,25 @@ const MenuPanel: React.FC<PanelProps> = ({
     settleOn(index);
   };
 
-  const subEntry = sub ? entries[sub.index] : null;
+  const subEntry = sub ? shown[sub.index] : null;
 
+  /**
+   * Filtering shrinks the panel toward the edge it was opened from: a menu
+   * that opened down keeps its top under the pointer, and one that opened
+   * upward keeps its bottom there, so the query readout never jumps away.
+   */
+  const pinBottom = Boolean(query && spot?.origin.startsWith('bottom') && openedHeight.current);
   const panelStyle: React.CSSProperties = spot
     ? {
         left: spot.x,
-        top: spot.y,
+        ...(pinBottom
+          ? { bottom: window.innerHeight - (spot.y + (openedHeight.current ?? 0)) }
+          : { top: spot.y }),
         maxHeight: spot.maxHeight,
         transformOrigin: spot.origin,
       }
     : { left: 0, top: 0, visibility: 'hidden' };
+  const matches = query ? shown.filter(isNavigable).length : 0;
 
   return (
     <>
@@ -446,9 +552,27 @@ const MenuPanel: React.FC<PanelProps> = ({
           if (!sub) setActive(-1);
         }}
       >
+        {searchable && (
+          <span className="sr-only" role="status">
+            {query ? `${matches} ${matches === 1 ? 'command matches' : 'commands match'} ${query}` : ''}
+          </span>
+        )}
+        {query && (
+          <div className="menu__search" aria-hidden="true">
+            <Search size={14} className="menu__search-icon" />
+            <span className="menu__query">{query}</span>
+            <span className="menu__caret" />
+            <span className="menu__count">{matches}</span>
+          </div>
+        )}
+        {query && shown.length === 0 && (
+          <div className="menu__empty" role="presentation">
+            Nothing here matches “{query}”
+          </div>
+        )}
         {custom
           ? custom(() => closeAll(true))
-          : entries.map((entry, index) => {
+          : shown.map((entry, index) => {
               switch (entry.kind) {
                 case 'separator':
                   return <div key={entry.id} className="menu__rule" role="separator" />;

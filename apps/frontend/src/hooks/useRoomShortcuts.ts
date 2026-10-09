@@ -7,7 +7,8 @@ import { toolModes } from '../engine/tools/toolModes';
 import { editor } from '../engine/api/EditorAPI';
 import { cameraSystem } from '../engine/CameraSystem';
 import { toggleIconBrowser } from '../engine/icons/iconStore';
-import { arrangeSelectionInGrid } from '../engine/grid/arrangeInGrid';
+import { arrangeSession } from '../engine/arrange/session';
+import { frameSelection } from '../engine/arrange/frameSelection';
 import { canEditObjects } from '../engine/model/permissions';
 import { toggleBoardSketch } from '../engine/model/roughBoard';
 
@@ -43,7 +44,8 @@ export interface RoomShortcutsOptions {
  * - Zoom in / out / fit / reset (Cmd/Ctrl + +/-, bare +/-, 0, !)
  * - Tool hotkeys (from TOOL_FOR_KEY map)
  * - Export the selection (Cmd/Ctrl + Shift + E)
- * - Arrange the selection in a grid (Alt+Shift+G)
+ * - Arrange the selection in a live grid (Alt+Shift+G)
+ * - Frame the selection (Mod+Alt+G)
  * - Help (?), Toggle UI (\ or Mod+.), side panels to pills and back (Mod+\)
  * - Panel dismissals on Escape
  */
@@ -262,14 +264,27 @@ export function useRoomShortcuts({
         return;
       }
 
-      // Alt+Shift+G (`arrangeGrid`) makes a multiple selection a live grid, the
-      // same act as the rail's button, whether or not the rail is showing.
+      // Alt+Shift+G (`arrangeGrid`) lays a multiple selection out as a live
+      // grid, the same act as the rail's Arrange control: handles on the board,
+      // nothing written until it settles, then one undo step.
       if (e.altKey && e.shiftKey && !hasModifier && e.code === 'KeyG') {
         if (e.repeat || selectedIds.length < 2 || !canEditObjects()) return;
         if ((e.target as { isContentEditable?: unknown } | null)?.isContentEditable === true) return;
         e.preventDefault();
-        const gridId = arrangeSelectionInGrid(selectedIds);
-        if (gridId) editor.select(gridId);
+        const { objects, groups } = useStore.getState();
+        const nodes = selectedIds.map((id) => objects[id]).filter(Boolean);
+        arrangeSession.start(nodes, objects, groups);
+        return;
+      }
+
+      // Mod+Alt+G (`frameSelection`) puts a frame around the selection, as Figma does.
+      if (hasModifier && e.altKey && !e.shiftKey && e.code === 'KeyG') {
+        if (e.repeat || selectedIds.length === 0 || !canEditObjects()) return;
+        if ((e.target as { isContentEditable?: unknown } | null)?.isContentEditable === true) return;
+        e.preventDefault();
+        const { objects } = useStore.getState();
+        const frameId = frameSelection(selectedIds.map((id) => objects[id]).filter(Boolean), objects);
+        if (frameId) editor.select(frameId);
         return;
       }
 

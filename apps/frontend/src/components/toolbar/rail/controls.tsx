@@ -26,6 +26,16 @@ import {
   SketchStateIcon,
 } from '../../panel/sketchIcons';
 import { StrokeWeightIcon } from '../../panel/strokeWeightIcon';
+import { StrokeWeightField, WeightSpecimen } from '../../panel/sections/StrokeWeightField';
+import {
+  MAX_STROKE_WEIGHT,
+  MIN_STROKE_WEIGHT,
+  STROKE_WEIGHTS,
+  STROKE_WEIGHT_STEP,
+  STROKE_WEIGHT_UNIT,
+  clampWeight,
+  formatWeight,
+} from './strokeDefaults';
 import { PopoverSlider } from '../RailBase';
 import { RailPopover } from '../RailPopover';
 
@@ -233,6 +243,12 @@ export const ScrubValue: React.FC<{
 /**
  * Stroke colour and weight. The trigger shows the weight the object is drawn
  * at, which for a run with nothing stored is the renderer's default, not 0.
+ *
+ * The weight is on the same scale as the panel's Stroke section (both read
+ * `strokeDefaults`): drag the trigger in quarter steps, pick a weight from the
+ * scale, each drawn at its weight, or type one. The typed field commits on
+ * Enter, blur or an arrow press; the trigger is the live scrub, and lands as
+ * one undo step.
  */
 export const StrokeControl: React.FC<{
   appearance: Appearance;
@@ -241,12 +257,19 @@ export const StrokeControl: React.FC<{
   onChange: (patch: Partial<Appearance>) => void;
 }> = ({ appearance, width, onChange }) => {
   const color = appearance.stroke?.color ?? DEFAULT_INK;
-  const setWidth = (w: number) => onChange({ stroke: { color, ...appearance.stroke, width: w } });
+  const setWidth = (w: number) => onChange({ stroke: { color, ...appearance.stroke, width: clampWeight(w) } });
   return (
     <RailPopover
       label="Stroke"
       trigger={
-        <ScrubValue value={width} min={0} max={40} onChange={setWidth}>
+        <ScrubValue
+          value={width}
+          min={MIN_STROKE_WEIGHT}
+          max={MAX_STROKE_WEIGHT}
+          step={STROKE_WEIGHT_STEP}
+          display={formatWeight(width)}
+          onChange={setWidth}
+        >
           <StrokeWeightIcon width={width} />
         </ScrubValue>
       }
@@ -258,7 +281,32 @@ export const StrokeControl: React.FC<{
           onChange={(next) => onChange({ stroke: { ...appearance.stroke, width: width || 2, color: next } })}
         />
       </div>
-      <PopoverSlider label="Weight" value={width} min={0} max={40} onChange={setWidth} />
+      <span className="ctx-popover__label">Weight</span>
+      <div className="stroke-scale" role="group" aria-label="Stroke weight">
+        {STROKE_WEIGHTS.map((w) => (
+          <button
+            key={w}
+            type="button"
+            className="stroke-scale__item"
+            aria-pressed={Math.abs(width - w) < 1e-6}
+            aria-label={`${formatWeight(w)} ${STROKE_WEIGHT_UNIT}`}
+            onClick={() => setWidth(w)}
+          >
+            <WeightSpecimen width={w} />
+            <span aria-hidden="true">{formatWeight(w)}</span>
+          </button>
+        ))}
+      </div>
+      <StrokeWeightField
+        value={width}
+        presets={false}
+        label="Weight"
+        onChange={(w, change) => {
+          // Settled values only: the rail writes straight to the document, so
+          // each preview of a scrub here would be its own undo step.
+          if (change.commit) setWidth(w);
+        }}
+      />
     </RailPopover>
   );
 };
@@ -272,6 +320,7 @@ export const OpacityControl: React.FC<{ value: number; onChange: (opacity: numbe
   return (
     <RailPopover
       label="Opacity"
+      size="sm"
       trigger={
         <ScrubValue value={pct} min={0} max={100} display={`${pct}%`} onChange={set}>
           <Droplet size={16} />
@@ -294,6 +343,7 @@ export const CornerRadiusControl: React.FC<{
   return (
     <RailPopover
       label="Corner radius"
+      size="sm"
       trigger={
         <ScrubValue value={radius} min={0} max={200} onChange={set}>
           <CornerIcon rounded />

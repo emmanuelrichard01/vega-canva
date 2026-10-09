@@ -49,6 +49,24 @@ export function freeStrip(
   };
 }
 
+/** How much of the selection must show in the free strip before the rail stands beside it. */
+export const MIN_VISIBLE = 8;
+
+/**
+ * Whether enough of the selection is on screen for the rail to belong to it.
+ *
+ * The placement keeps the rail inside the free strip, so a selection panned
+ * off the side of the window left the rail pinned to the window edge, beside
+ * nothing, editing something nobody can see. With less than `MIN_VISIBLE`
+ * pixels of the selection in the strip the rail steps away, and the next pan
+ * that brings the selection back brings the rail with it.
+ */
+export function subjectInView(subject: { x: number; y: number; width: number; height: number }, bounds: Bounds): boolean {
+  const w = Math.min(subject.x + subject.width, bounds.right) - Math.max(subject.x, bounds.left);
+  const h = Math.min(subject.y + subject.height, bounds.bottom) - Math.max(subject.y, bounds.top);
+  return w >= Math.min(MIN_VISIBLE, subject.width) && h >= Math.min(MIN_VISIBLE, subject.height) && w >= 0 && h >= 0;
+}
+
 /**
  * How far the chrome on one side reaches into the window.
  *
@@ -68,6 +86,8 @@ export interface FrameTokens {
   insetLeft: number | null;
   insetRight: number | null;
   headerH: number | null;
+  /** `--dock-h`: the band the dock and its tray reserve above the window's bottom. */
+  dockH?: number | null;
 }
 
 /** What a probe reads back for a token that is not set. */
@@ -86,7 +106,7 @@ let probe: HTMLElement | null = null;
  */
 export function readFrameTokens(): FrameTokens {
   if (typeof document === 'undefined' || !document.body) {
-    return { insetTop: null, insetLeft: null, insetRight: null, headerH: null };
+    return { insetTop: null, insetLeft: null, insetRight: null, headerH: null, dockH: null };
   }
   if (!probe || !probe.isConnected) {
     probe = document.createElement('div');
@@ -94,7 +114,8 @@ export function readFrameTokens(): FrameTokens {
     probe.style.cssText =
       'position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;' +
       `margin-left:var(--inset-left,${UNSET}px);margin-top:var(--inset-top,${UNSET}px);` +
-      `text-indent:var(--inset-right,${UNSET}px);outline-offset:var(--header-h,${UNSET}px);`;
+      `text-indent:var(--inset-right,${UNSET}px);outline-offset:var(--header-h,${UNSET}px);` +
+      `letter-spacing:var(--dock-h,${UNSET}px);`;
     document.body.appendChild(probe);
   }
   const style = getComputedStyle(probe);
@@ -107,6 +128,7 @@ export function readFrameTokens(): FrameTokens {
     insetTop: read(style.marginTop),
     insetRight: read(style.textIndent),
     headerH: read(style.outlineOffset),
+    dockH: read(style.letterSpacing),
   };
 }
 
@@ -126,5 +148,31 @@ export function chromeFromTokens(
     headerH: tokens.insetTop ?? tokens.headerH ?? DEFAULT_HEADER_H,
     insetLeft: tokens.insetLeft !== null ? Math.max(EDGE_MARGIN, tokens.insetLeft) : measured.insetLeft,
     insetRight: tokens.insetRight !== null ? Math.max(EDGE_MARGIN, tokens.insetRight) : measured.insetRight,
+  };
+}
+
+/** A popover's margin from the chrome and the window: it is reached for, so it may come closer than the rail. */
+export const POPOVER_MARGIN = 8;
+
+/**
+ * The free strip a rail popover may stand in.
+ *
+ * The shell's own edges, not the rail's: `--inset-top` (else `--header-h`),
+ * `--inset-left` / `--inset-right` (else the panels' measured reach), and the
+ * higher of the dock's measured top and `--dock-h`, each with an 8px margin.
+ * With the chrome hidden, only the margin.
+ */
+export function popoverStrip(
+  edges: { top: number; left: number; right: number; dock: number },
+  viewport: { width: number; height: number },
+  chromeVisible: boolean
+): Bounds {
+  const m = POPOVER_MARGIN;
+  if (!chromeVisible) return { top: m, left: m, right: viewport.width - m, bottom: viewport.height - m };
+  return {
+    top: edges.top + m,
+    left: edges.left + m,
+    right: viewport.width - edges.right - m,
+    bottom: viewport.height - edges.dock - m,
   };
 }

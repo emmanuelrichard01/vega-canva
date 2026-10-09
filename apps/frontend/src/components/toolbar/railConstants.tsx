@@ -83,9 +83,10 @@ export const HANG: Record<RailSide, string> = {
   right: 'translate(0%, -50%)',
 };
 
+/** Where the rail rises from on its entrance: a few pixels toward the object it belongs to. */
 export const ENTRY: Record<RailSide, { x: number; y: number }> = {
-  top: { x: 0, y: 6 },
-  bottom: { x: 0, y: -6 },
-  left: { x: 6, y: 0 },
-  right: { x: -6, y: 0 },
+  top: { x: 0, y: 4 },
+  bottom: { x: 0, y: -4 },
+  left: { x: 4, y: 0 },
+  right: { x: -4, y: 0 },
 };

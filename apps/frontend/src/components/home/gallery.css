@@ -1,0 +1,660 @@
+/* ===========================================================================
+   THE TEMPLATE GALLERY
+   ---------------------------------------------------------------------------
+   Covers and previews are pictures of real boards (`boardSvg`), so they sit on
+   the board's own ground: paper with the dot grid. That ground does not flip
+   with the theme, because the boards themselves are authored on the light
+   board and a template's ink is chosen against it; in the dark theme the
+   picture is dimmed a step so it does not glare off the night surfaces, the
+   way Figma shows light file thumbnails in its dark UI.
+   =========================================================================== */
+
+.lib {
+  --board-paper: #f9fafb;
+  --board-dot: rgba(15, 23, 42, 0.09);
+  --peek-w: min(640px, calc(100vw - 2 * var(--space-3)));
+}
+
+/* Fitted to the stage, so the showcase can fold to one column when the peek
+   takes half the window, not only when the window is narrow. */
+.lib .lstage__inner { container: lstage / inline-size; }
+
+.lib .lstage { --peek-w: min(640px, calc(100vw - 2 * var(--space-3))); }
+
+/* -------------------------------------------------------------- the ground */
+
+.gcover,
+.bview__window,
+.gshow__thumb {
+  background-color: var(--board-paper);
+  background-image: radial-gradient(circle, var(--board-dot) 1px, transparent 1px);
+  background-size: 14px 14px;
+}
+
+.dark-theme .gcover,
+.dark-theme .bview__window,
+.dark-theme .gshow__thumb { filter: brightness(0.86); }
+
+/* ------------------------------------------------------------------ covers */
+
+.gcover {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: hidden;
+}
+
+.gcover__img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+  transition: opacity 240ms var(--ease-settle);
+}
+
+.gcover[data-state='ready'] .gcover__img { opacity: 1; }
+
+/* Still being drawn: a slow pass of light across the paper, the only motion
+   a waiting card makes. */
+.gcover[data-state='waiting']::after,
+.bview__window[data-state='waiting']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.55) 50%, transparent 70%);
+  /* Moved with transform, which stays on the compositor; animating the
+     background position repainted every waiting card on every frame. */
+  transform: translateX(-100%);
+  will-change: transform;
+  animation: gallery-wait 1.6s var(--ease-settle) infinite;
+}
+
+.gcover { overflow: hidden; }
+
+@keyframes gallery-wait {
+  to { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gcover[data-state='waiting']::after,
+  .bview__window[data-state='waiting']::after { animation: none; }
+}
+
+.gcover .cover { width: 100%; height: 100%; }
+
+/* ------------------------------------------------------------------- cards */
+
+.ggrid { row-gap: var(--space-8); }
+
+.gcard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.gcard__art {
+  position: relative;
+  /* Above the name's stretched hit area for good: the hover lift gives the
+     picture its own stacking context, which used to drop Preview and Use under
+     that overlay so a click on Use opened the peek instead. The picture itself
+     takes no pointer events, so a click on it still reaches the overlay. */
+  z-index: 2;
+  pointer-events: none;
+  display: block;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border-radius: var(--radius-xl);
+  transition: transform var(--motion-hover), box-shadow var(--motion-hover);
+}
+
+/* The hairline sits over the picture, not under it. */
+.gcard__art::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--border-divider);
+  pointer-events: none;
+}
+
+.gcard:hover .gcard__art {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-md);
+}
+
+.gcard[data-peeking] .gcard__art {
+  box-shadow: 0 0 0 2px var(--surface-canvas), 0 0 0 4px var(--text-primary);
+}
+
+.gcard:has(.gcard__hit:focus-visible) .gcard__art {
+  box-shadow: 0 0 0 2px var(--surface-canvas), 0 0 0 4px var(--focus-ring-color);
+}
+
+.gcard__badge {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  pointer-events: none;
+}
+
+.gcard__badge kbd {
+  font-family: inherit;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+}
+
+/* Preview and Use, over the picture's corner on hover. */
+.gcard__actions {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  z-index: 2;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: auto;
+  transition: opacity var(--motion-hover), transform var(--motion-hover);
+}
+
+.gcard:hover .gcard__actions,
+.gcard:focus-within .gcard__actions {
+  opacity: 1;
+  transform: none;
+}
+
+@media (hover: none) {
+  .gcard__actions { display: none; }
+}
+
+.gcard__act {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--control-h-sm);
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-hover);
+}
+
+.gcard__act:hover { background: var(--surface-hover); }
+
+.gcard__act--use {
+  background: var(--text-primary);
+  color: var(--surface-primary);
+}
+
+.gcard__act--use:hover { background: color-mix(in srgb, var(--text-primary) 86%, var(--surface-primary)); }
+
+.gcard__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: var(--space-3) 2px 0;
+}
+
+/* The card's one tab stop: its name, stretched over the whole card. */
+.gcard__hit {
+  position: static;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gcard__hit::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: var(--radius-xl);
+}
+
+.gcard__hit:focus-visible { outline: none; }
+
+.gcard__blurb {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+/* Capped, not wrapped: a chip that does not fit is left off whole. */
+.gcard__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  height: 22px;
+  margin-top: 4px;
+  overflow: hidden;
+}
+
+.gchip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+/* The seam under your boards is a quiet row: pictures and names only. */
+.tgrid--seam .gcard__blurb,
+.tgrid--seam .gcard__chips { display: none; }
+.tgrid--seam .gcard__hit { font-size: var(--text-sm); }
+
+/* --------------------------------------------------------------- buttons */
+
+.gbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--control-h-lg);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-lg);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover);
+}
+
+.gbtn:hover { border-color: var(--border-strong); background: var(--surface-hover); }
+
+/* The strong neutral: a filled ink button. The page's one accent is New board. */
+.gbtn--ink {
+  border-color: transparent;
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.gbtn--ink:hover {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--text-primary) 86%, var(--surface-primary));
+}
+
+.gbtn:focus-visible,
+.gcard__act:focus-visible,
+.gshow__tab:focus-visible,
+.bview__btn:focus-visible,
+.bview__pct:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.lib :where(.gbtn, .gcard__act, .gcard__hit, .gshow__tab, .bview__btn, .bview__pct, .bview__window):focus-visible {
+  box-shadow: none;
+}
+
+/* ---------------------------------------------------------------- showcase */
+
+.gshow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(280px, 1fr);
+  gap: var(--space-8);
+  align-items: start;
+  margin-bottom: var(--space-12);
+}
+
+.gshow__stage {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border-radius: var(--radius-2xl);
+  cursor: zoom-in;
+}
+
+.gshow__stage::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--border-divider);
+  pointer-events: none;
+}
+
+.gshow__side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.gshow__info { animation: gshow-in 320ms var(--ease-settle) both; }
+
+@keyframes gshow-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.gshow__name {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.gshow__blurb {
+  max-width: 46ch;
+  margin: var(--space-2) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-md);
+  line-height: 1.55;
+}
+
+.gshow__hint {
+  max-width: 46ch;
+  margin: var(--space-2) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.gshow__chips,
+.tpeek__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gshow__go {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+.gshow__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-divider);
+}
+
+.gshow__tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 6px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-hover);
+}
+
+.gshow__tab:hover { background: var(--surface-hover); }
+.gshow__tab[aria-selected='true'] { background: var(--surface-active, var(--surface-hover)); }
+
+.gshow__thumb {
+  position: relative;
+  flex: none;
+  width: 72px;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 0 0 1px var(--border-divider);
+}
+
+.gshow__tab[aria-selected='true'] .gshow__thumb {
+  box-shadow: 0 0 0 1px var(--surface-canvas), 0 0 0 3px var(--text-primary);
+}
+
+.gshow__tab-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.gshow__tab-name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gshow__tab-cat {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+@container lstage (max-width: 880px) {
+  .gshow { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
+  .gshow__list { flex-direction: row; overflow-x: auto; padding-bottom: 2px; }
+  .gshow__tab { flex: none; width: auto; }
+  .gshow__tab-text { display: none; }
+  .gshow__thumb { width: 96px; }
+}
+
+/* ---------------------------------------------------------- board viewer */
+
+.bview {
+  position: absolute;
+  inset: 0;
+}
+
+.bview__window {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  outline: none;
+}
+
+.bview[data-interactive] .bview__window { touch-action: none; cursor: zoom-in; }
+.bview[data-interactive] .bview__window[data-zoomed] { cursor: grab; }
+.bview[data-interactive] .bview__window[data-dragging] { cursor: grabbing; }
+
+.bview__window:focus-visible { box-shadow: inset 0 0 0 2px var(--focus-ring-color); }
+
+.bview__board {
+  flex: none;
+  transform-origin: center;
+}
+
+.bview__board[data-animate] { transition: transform 220ms var(--ease-settle); }
+
+.bview__board > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.bview__window .cover { width: 100%; height: 100%; }
+
+.bview__zoom {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.bview__btn,
+.bview__pct {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--control-h-sm);
+  min-width: var(--control-h-sm);
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.bview__pct { min-width: 46px; }
+
+.bview__btn:hover:not(:disabled),
+.bview__pct:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+
+.bview__btn:disabled,
+.bview__pct:disabled { color: var(--text-disabled, var(--text-tertiary)); cursor: default; }
+
+/* ------------------------------------------------------------------ peek */
+
+.lib .tpeek__art {
+  position: relative;
+  aspect-ratio: 3 / 2;
+  box-shadow: none;
+  background: none;
+}
+
+.lib .tpeek__art::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--border-divider);
+  pointer-events: none;
+}
+
+.tpeek__hint {
+  display: flex;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.tpeek__hint svg { flex: none; margin-top: 2px; color: var(--text-primary); }
+
+.tpeek__chips { margin-top: 0; }
+
+/* ------------------------------------------------- results and empties */
+
+.gresults {
+  margin: 0 0 var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.gempty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 46ch;
+  margin: var(--space-12) auto;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.gempty h2 {
+  margin: var(--space-2) 0 0;
+  color: var(--text-primary);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.gempty p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-md);
+  line-height: 1.55;
+}
+
+.gempty__ways {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+/* ------------------------------------------------------- contrast, motion */
+
+[data-contrast='more'] .gchip { box-shadow: inset 0 0 0 1px var(--border-strong); }
+[data-contrast='more'] .gcard__blurb { color: var(--text-secondary); }
+[data-contrast='more'] .gcard__art::after,
+[data-contrast='more'] .gshow__stage::after,
+[data-contrast='more'] .lib .tpeek__art::after { box-shadow: inset 0 0 0 1px var(--border-strong); }
+[data-contrast='more'] .gcard__actions { opacity: 1; transform: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .gcard__art,
+  .gcard__actions,
+  .gcover__img,
+  .bview__board[data-animate] { transition: none; }
+  .gcard:hover .gcard__art { transform: none; }
+  .gshow__info { animation: none; }
+  .gcover[data-state='waiting']::after,
+  .bview__window[data-state='waiting']::after { animation: none; }
+}

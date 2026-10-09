@@ -35,7 +35,7 @@ export const ConnectorRail: SingleRail<ConnectorNode> = ({ node, conditional, ta
   return (
     <RailAnatomy
       kind={
-        <RailPopover label="Route" trigger={<RouteIcon routing={node.routing} />} align="start">
+        <RailPopover label="Route" trigger={<RouteIcon routing={node.routing} />} align="start" size="sm">
           <span className="ctx-popover__label">Route</span>
           <SegmentedControl
             ariaLabel="Routing"
@@ -57,9 +57,11 @@ export const ConnectorRail: SingleRail<ConnectorNode> = ({ node, conditional, ta
               label="Ends"
               trigger={<EndsGlyph start={node.endStart ?? 'none'} end={node.endEnd ?? 'none'} />}
               align="start"
+              size="sm"
             >
               <span className="ctx-popover__label">Start</span>
               <SegmentedControl
+                fill
                 ariaLabel="Start cap"
                 value={node.endStart ?? 'none'}
                 onChange={(v) => update({ endStart: v as EndCapKind })}
@@ -72,6 +74,7 @@ export const ConnectorRail: SingleRail<ConnectorNode> = ({ node, conditional, ta
               />
               <span className="ctx-popover__label">End</span>
               <SegmentedControl
+                fill
                 ariaLabel="End cap"
                 value={node.endEnd ?? 'none'}
                 onChange={(v) => update({ endEnd: v as EndCapKind })}
@@ -99,7 +102,7 @@ export const ConnectorRail: SingleRail<ConnectorNode> = ({ node, conditional, ta
           id: 'label',
           controls: 1,
           node: (
-            <RailPopover label="Label" trigger={<Type size={16} />} align="start">
+            <RailPopover label="Label" trigger={<Type size={16} />} align="start" size="sm">
               <label className="ctx-popover__label" htmlFor={`rail-connector-label-${node.id}`}>
                 Label
               </label>

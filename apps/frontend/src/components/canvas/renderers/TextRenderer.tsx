@@ -1,8 +1,8 @@
 import React from 'react';
 import { Group, Path, Rect, Text } from 'react-konva';
 import type { TextNode } from '../../../engine/model/schema';
-import { provider, updateNode } from '../../../engine/document';
-import { collaboratorStore } from '../../../engine/presence/collaboratorStore';
+import { scheduleDerivedPatch } from '../../../engine/document/derivedPatches';
+import { isElectedWriter } from '../../../engine/document/election';
 import { applyTextCase } from '../../../engine/model/textCase';
 import { contrastInk } from '../../../engine/model/color';
 import { layoutText, type TextLayout } from '../../../engine/text/layout';
@@ -11,7 +11,8 @@ import { fontEpoch } from '../../../engine/text/fontEpoch';
 import { cycleColor, cycleRuns, cycleTotal, piecesBefore } from '../../../engine/text/colorCycle';
 import { highlightPath } from '../../../engine/text/highlight';
 import { useLiveTransform } from '../../../engine/model/liveTransformStore';
-import { canvasFontFamily, konvaFontStyle, konvaTextDecoration, shadowProps } from './shared';
+import { useSurfaceTextInk } from '../../../hooks/useSurface';
+import { canvasFontFamily, isMirrored, konvaFontStyle, konvaTextDecoration, shadowProps } from './shared';
 
 interface Props {
   node: TextNode;
@@ -121,18 +122,9 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
     // the overlay is sized from the node.
     if (!node.text) return;
 
-    // Authority check: if another collaborator is currently selecting this text node,
-    // they are the editor — passive peers must not compete and write back.
-    const remotes = collaboratorStore.live();
-    const otherHasSelection = remotes.some((person) => person.selection.includes(node.id));
-    if (otherHasSelection) return;
-
-    // If nobody has it selected (e.g. board mount, font epoch settlement), elect the lowest clientID
-    // as the single writer to prevent concurrent write ping-pong loops.
-    const myId = provider.awareness?.clientID || 0;
-    const allIds = [myId, ...remotes.map((r) => r.clientId)].filter(Boolean);
-    const isElectedWriter = allIds.length <= 1 || Math.min(...allIds) === myId;
-    if (!isElectedWriter) return;
+    // Automatic bookkeeping: only the room's elected writer (an editor) does
+    // it, so peers never compete or write twice, and a viewer never writes.
+    if (!isElectedWriter()) return;
 
     const rawWidth = node.resize === 'width' ? layout.width : node.width;
     const rawHeight = layout.height;
@@ -143,10 +135,10 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
 
     if (Math.abs(width - node.width) < 2 && Math.abs(height - node.height) < 2) return;
 
-    const timer = window.setTimeout(() => {
-      updateNode(node.id, { width: Math.max(1, width), height: Math.max(1, height) });
-    }, 180);
-    return () => window.clearTimeout(timer);
+    // Batched with every other text box settling in the same moment: opening a
+    // board measures them all at once, and one write each was one transaction
+    // (and one whole-board store update) per text object.
+    return scheduleDerivedPatch(node.id, { width: Math.max(1, width), height: Math.max(1, height) }, { delay: 180 });
   }, [node.id, node.resize, node.width, node.height, node.text, layout, visible, live]);
 
   /**
@@ -180,6 +172,9 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
     ensureFontLoaded(t.fontFamily, t.fontWeight, t.italic);
   }, [t.fontFamily, t.fontWeight, t.italic]);
 
+  // The default ink follows the surface (frame fill, else the board).
+  const surfaceColor = useSurfaceTextInk(node, t.color);
+
   if (!visible) return null;
 
   const highlight = t.highlight;
@@ -188,7 +183,7 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
   // `autoContrast` answers it from the fill rather than leaving it to whoever
   // picked the colour.
   const ink =
-    highlight && highlight.autoContrast ? contrastInk(highlight.color) : t.color;
+    highlight && highlight.autoContrast ? contrastInk(highlight.color) : surfaceColor;
 
   const outline = t.outline;
   const glow = t.glow;
@@ -198,7 +193,22 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
   // deliberate of the two — nobody turns a glow on by accident.
   const halo = glow
     ? { shadowColor: glow.color, shadowBlur: glow.blur, shadowOpacity: 1, shadowOffset: { x: 0, y: 0 } }
-    : shadowProps(node.appearance);
+    : shadowProps(node.appearance, { flipped: isMirrored(node) });
+  /**
+   * With an outline, the drop shadow rides on the outline pass, cast by a
+   * copy of the glyphs filled *before* the outline is stroked over them.
+   *
+   * That pass used to have no fill, and Konva skips a stroke's shadow, so
+   * outlined text cast no shadow at all. Casting from the stroke instead
+   * would be hollow (the band hugs each glyph's edge, not its body) and the
+   * fill pass above cannot carry it either, because its shadow would land on
+   * top of the outline it sits over. The glow keeps its own path: it is
+   * meant to follow the outline's edge.
+   */
+  const shadowUnderOutline = !glow && 'shadowColor' in halo;
+  const outlinePaint = shadowUnderOutline
+    ? { fill: ink, fillAfterStrokeEnabled: false }
+    : { fill: undefined, fillAfterStrokeEnabled: true };
 
   const common = {
     fontSize: t.fontSize,
@@ -272,6 +282,8 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
               align="left"
               text={line.marker}
               fill={ink}
+              // A marker has no outline pass, so it always casts its own.
+              {...halo}
             />
           )}
           {/* The outline is drawn as its own pass beneath the fill, because a
@@ -289,10 +301,9 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
                   x={line.x + w.x}
                   y={line.y}
                   text={w.text}
-                  fill={undefined}
+                  {...outlinePaint}
                   stroke={outline.color}
                   strokeWidth={outline.width * 2}
-                  fillAfterStrokeEnabled
                 />
               ))
             ) : (
@@ -302,10 +313,9 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
                 x={line.x}
                 y={line.y}
                 text={line.text}
-                fill={undefined}
+                {...outlinePaint}
                 stroke={outline.color}
                 strokeWidth={outline.width * 2}
-                fillAfterStrokeEnabled
               />
             )
           )}

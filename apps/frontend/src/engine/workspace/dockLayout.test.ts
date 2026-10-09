@@ -32,10 +32,14 @@ describe('DEFAULT_LAYOUT', () => {
     expect(seats.length).toBe(DOCK_SEATS.length);
   });
 
-  it('starts with eleven seats', () => {
+  it('starts with ten seats', () => {
     expect(DEFAULT_LAYOUT.order.filter((i) => i !== SEPARATOR)).toEqual([
-      'select', 'hand', 'draw', 'type', 'sticky', 'shape', 'connector', 'frame', 'data', 'media', 'comment',
+      'select', 'hand', 'draw', 'type', 'shape', 'connector', 'frame', 'data', 'media', 'comment',
     ]);
+  });
+
+  it('gives the sticky note no seat: it lives on the Draw tray', () => {
+    expect(DOCK_SEATS as readonly string[]).not.toContain('sticky');
   });
 
   it('carries every put-away tool on a seat, except Forces, which the drawer holds', () => {
@@ -60,6 +64,23 @@ describe('normalizeLayout', () => {
     expect(normalizeLayout(null)).toEqual(DEFAULT_LAYOUT);
     expect(normalizeLayout('nonsense')).toEqual(DEFAULT_LAYOUT);
     expect(normalizeLayout({ order: 'not an array' })).toEqual(DEFAULT_LAYOUT);
+  });
+
+  it('reads a stored layout that still seats the sticky note as that layout without it', () => {
+    // The arrangement everyone had before the note moved into the tray.
+    const before = {
+      order: ['select', 'hand', '|', 'draw', 'type', 'sticky', 'shape', 'connector', 'frame', '|', 'data', 'media', 'comment'],
+      hidden: [...DEFAULT_LAYOUT.hidden],
+    };
+    expect(normalizeLayout(before)).toEqual(DEFAULT_LAYOUT);
+    expect(isDefaultLayout(normalizeLayout(before))).toBe(true);
+  });
+
+  it('closes the gap a retired sticky seat leaves between two dividers', () => {
+    const { order, hidden } = normalizeLayout({ order: ['select', '|', 'sticky', '|', 'draw'], hidden: ['sticky'] });
+    expect(order.slice(0, 3)).toEqual(['select', '|', 'draw']);
+    expect(hidden as readonly string[]).not.toContain('sticky');
+    expect(order as readonly string[]).not.toContain('sticky');
   });
 
   it('drops tools that no longer exist', () => {

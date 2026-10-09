@@ -3,35 +3,51 @@ import ReactDOM from 'react-dom';
 import { ChevronDown, Check, Search, Upload, Laptop, AlertTriangle, Loader2, Share2, Trash2, X } from 'lucide-react';
 import { canvasFontFamily } from '../canvas/renderers/shared';
 import { ensureFontLoaded } from '../../engine/text/measure';
-import { CATEGORIES, FONTS, searchFonts, type FontEntry } from '../../engine/text/fontCatalogue';
+import { ensureFamilyStylesheet, fontEntry, weightsFor } from '../../engine/text/fontCatalogue';
 import { boardFamilies, fontLibrary, localFamilies, loadFamilyForPicker, familyLoadState, type DynamicFamily } from '../../engine/text/fontLibrary';
 import { localFontsStore, requestLocalFonts, restoreLocalFonts } from '../../engine/text/localFonts';
 import { familyAvailability } from '../../engine/text/fontAvailability';
 import { FONT_ACCEPT, FontFileError } from '../../engine/text/fontFile';
 import { getRoomRole, subscribeRoomRole } from '../../engine/model/permissions';
-import { PORTAL_SURFACE_ATTR, isInsidePortalSurface } from './portalSurface';
+import { readAllNodes } from '../../engine/document';
+import { beginPreview, endPreview } from '../panel/grammar/previewSession';
+import {
+  ROW_H,
+  buildSections,
+  createPreview,
+  layout,
+  stepCursor,
+  stepWeight,
+  visibleItems,
+  type PickerRow as Row,
+} from '../fonts/pickerModel';
+import { PORTAL_SURFACE_ATTR } from './portalSurface';
+import { useOutsidePress } from './outsidePress';
 import { storageGet, storageSet } from '../../utils/safeStorage';
 import './fontPicker.css';
 
 /**
  * Choosing a typeface.
  *
- * Four sources, in the order a person reaches for them:
+ * One list, in the order a person reaches for things: fonts **in this board**,
+ * **recent**, **uploaded** (shared with everyone), **on this device**, then the
+ * built-in catalogue by purpose. Typing replaces the sections with one ranked
+ * list. The list is virtualised: only the rows near the viewport exist.
  *
- * - **On this board**: fonts uploaded to the board. Every collaborator has
- *   them, so they come first.
- * - **Recent**: what this device used last.
- * - **On this device**: installed fonts, through the Local Font Access API,
- *   after the person asks. Each can be shared with the board, which uploads
- *   it so collaborators see the real face instead of a substitute.
- * - **Built-in**: the catalogue, grouped by what each face is for.
+ * Each row is set in its own face once that face has loaded; until then it is a
+ * skeleton line, and a face that fails says so. Rows near the viewport load
+ * through a small queue so a fast scroll cannot start sixty downloads.
  *
- * Each row is set in its own face and loads that face when it scrolls into
- * view. Search matches names and what a face is for ("narrow", "code").
+ * With `preview` on, hovering (or arrowing to) a row shows that face on the
+ * selection without committing. The write goes through the panel's untracked
+ * preview origin, so leaving the list or pressing Escape restores the original
+ * and Enter or a click lands as one undo step.
  */
 
 const RECENT_KEY = 'vega_recent_fonts';
 const RECENT_MAX = 5;
+const LIST_H = 320;
+const MAX_LOADS = 4;
 
 function readRecents(): string[] {
   try {
@@ -48,99 +64,147 @@ function pushRecent(family: string): string[] {
   return next;
 }
 
+/** Families the board's own text is set in, most used first. */
+function familiesInUse(): string[] {
+  const seen = new Map<string, number>();
+  try {
+    for (const n of Object.values(readAllNodes())) {
+      const t = n.typography as { fontFamily?: unknown } | undefined;
+      if (t && typeof t.fontFamily === 'string') seen.set(t.fontFamily, (seen.get(t.fontFamily) ?? 0) + 1);
+    }
+  } catch {
+    /* no document yet */
+  }
+  return [...seen].sort((a, b) => b[1] - a[1]).map(([f]) => f);
+}
+
 interface Props {
   value: string;
-  onChange: (val: string) => void;
+  /** `baseWeight` is the weight before any hover preview, for choosing the nearest one in the new face. */
+  onChange: (val: string, baseWeight?: number) => void;
   className?: string;
   /** The selection disagrees: the trigger says Mixed, and no row is ticked. */
   mixed?: boolean;
+  /**
+   * Preview a face on hover. Only valid where `onChange` writes through the
+   * panel's `writePatches`, so the preview stays out of undo history.
+   */
+  preview?: boolean;
+  /** With these, Left/Right in an empty search steps the weight. */
+  weight?: number;
+  onWeightChange?: (weight: number) => void;
 }
 
-/** One row of the list: a built-in entry, or a board or device family. */
-interface Row {
-  family: string;
-  source: 'builtin' | 'board' | 'local';
-  styles: number;
-}
-
-const builtinRow = (f: FontEntry): Row => ({ family: f.family, source: 'builtin', styles: f.weights.length * (f.italic ? 2 : 1) });
 const dynamicRow = (f: DynamicFamily): Row => ({ family: f.family, source: f.source, styles: f.faces.length });
 
-const matches = (family: string, q: string) => !q || family.toLowerCase().includes(q);
+type LoadState = 'idle' | 'loading' | 'ready' | 'failed';
+
+// A small queue: at most MAX_LOADS faces in flight, the rest wait their turn.
+const loadState = new Map<string, LoadState>();
+const waiting: (() => void)[] = [];
+let inFlight = 0;
+function pump() {
+  while (inFlight < MAX_LOADS && waiting.length) {
+    inFlight++;
+    waiting.shift()!();
+  }
+}
+function loadFace(family: string, source: Row['source']): Promise<LoadState> {
+  if (source === 'board') return loadFamilyForPicker(family);
+  const known = loadState.get(family);
+  if (known === 'ready' || known === 'failed') return Promise.resolve(known);
+  return new Promise((resolve) => {
+    waiting.push(() => {
+      const done = (s: LoadState) => {
+        loadState.set(family, s);
+        inFlight--;
+        resolve(s);
+        pump();
+      };
+      ensureFontLoaded(family);
+      const entry = fontEntry(family);
+      if (!entry || entry.source === 'system' || entry.source === 'bundled' || typeof document === 'undefined' || !document.fonts) {
+        done('ready');
+        return;
+      }
+      ensureFamilyStylesheet(family)
+        .then(() => document.fonts.load(`16px "${family}"`))
+        .then((faces) => done(faces.length > 0 ? 'ready' : 'failed'))
+        .catch(() => done('failed'));
+    });
+    pump();
+  });
+}
 
 const FontRow: React.FC<{
   row: Row;
+  top: number;
   selected: boolean;
   active: boolean;
   canShare: boolean;
   onPick: (family: string) => void;
-  onHover: () => void;
+  onHover: (family: string) => void;
   onShare?: (family: string) => void;
   sharing?: boolean;
   /** Offered on the board's own fonts, to editors. */
   onRemove?: (family: string) => void;
-}> = ({ row, selected, active, canShare, onPick, onHover, onShare, sharing, onRemove }) => {
-  const ref = useRef<HTMLDivElement>(null);
-  const [state, setState] = useState<'idle' | 'loading' | 'ready' | 'failed'>(() =>
-    row.source === 'board' ? familyLoadState(row.family) : 'idle'
+}> = ({ row, top, selected, active, canShare, onPick, onHover, onShare, sharing, onRemove }) => {
+  const [state, setState] = useState<LoadState>(() =>
+    row.source === 'board' ? familyLoadState(row.family) : (loadState.get(row.family) ?? 'idle'),
   );
 
+  // Mounted means near the viewport (the list is virtualised), so load now.
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (!entries.some((e) => e.isIntersecting)) return;
-        io.disconnect();
-        if (row.source === 'board') {
-          setState('loading');
-          void loadFamilyForPicker(row.family).then(setState);
-        } else {
-          ensureFontLoaded(row.family);
-        }
-      },
-      { root: el.closest('[role="listbox"]'), rootMargin: '120px' },
-    );
-    io.observe(el);
-    return () => io.disconnect();
+    if (state === 'ready' || state === 'failed') return;
+    let live = true;
+    setState('loading');
+    void loadFace(row.family, row.source).then((s) => live && setState(s));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [row.family, row.source]);
 
-  useEffect(() => {
-    if (active) ref.current?.scrollIntoView({ block: 'nearest' });
-  }, [active]);
-
-  const face = { fontFamily: canvasFontFamily(row.family) };
+  const face = state === 'ready' ? { fontFamily: canvasFontFamily(row.family) } : undefined;
   return (
     <div
-      ref={ref}
-      className="font-row-wrap"
+      className="font-row-wrap font-row-wrap--abs"
+      style={{ top, height: ROW_H }}
       data-active={active || undefined}
-      onMouseEnter={onHover}
+      onMouseEnter={() => onHover(row.family)}
     >
       <button
         type="button"
         role="option"
+        id={`font-opt-${row.family.replace(/\W+/g, '-')}`}
         aria-selected={selected}
         className="font-row"
         data-on={selected || undefined}
         data-active={active || undefined}
         onClick={() => onPick(row.family)}
       >
-        <span className="font-row__name" style={face}>
-          {row.family}
-        </span>
-        {state === 'loading' ? (
-          <Loader2 size={12} className="font-row__state font-row__state--spin" aria-label="Loading" />
-        ) : state === 'failed' ? (
-          <AlertTriangle size={12} className="font-row__state font-row__state--warn" aria-label="Could not load" />
+        {state === 'ready' || state === 'failed' ? (
+          <span className="font-row__name" style={face}>
+            {row.family}
+          </span>
         ) : (
+          <span className="font-row__name font-row__name--skeleton" aria-label={row.family}>
+            <span className="font-row__bar" aria-hidden="true" />
+          </span>
+        )}
+        {state === 'failed' ? (
+          <span className="font-row__fail" title="This font could not be loaded. Text will use a substitute.">
+            <AlertTriangle size={12} className="font-row__state font-row__state--warn" aria-hidden="true" />
+            <span className="font-row__meta">Unavailable</span>
+          </span>
+        ) : state === 'ready' ? (
           <span className="font-row__spec" style={face} aria-hidden="true">
             Agn8
           </span>
+        ) : (
+          <Loader2 size={12} className="font-row__state font-row__state--spin" aria-label="Loading" />
         )}
-        {row.source !== 'builtin' && row.styles > 1 && (
-          <span className="font-row__meta">{row.styles} styles</span>
-        )}
+        {row.source !== 'builtin' && row.styles > 1 && <span className="font-row__meta">{row.styles} styles</span>}
         {selected && <Check size={13} className="font-row__tick" aria-hidden="true" />}
       </button>
       {row.source === 'local' && canShare && onShare && (
@@ -180,17 +244,30 @@ interface UploadNote {
 
 let noteSeq = 0;
 
-export const FontSelector: React.FC<Props> = ({ value, onChange, className = '', mixed = false }) => {
+export const FontSelector: React.FC<Props> = ({
+  value,
+  onChange,
+  className = '',
+  mixed = false,
+  preview = false,
+  weight,
+  onWeightChange,
+}) => {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [recents, setRecents] = useState<string[]>([]);
+  const [inUse, setInUse] = useState<string[]>([]);
   const [cursor, setCursor] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [dragging, setDragging] = useState(false);
   const [notes, setNotes] = useState<UploadNote[]>([]);
   const [sharing, setSharing] = useState<string | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const hoverTimer = useRef<number>(0);
   const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(null);
 
   useSyncExternalStore(fontLibrary.subscribe, fontLibrary.getSnapshot);
@@ -198,54 +275,88 @@ export const FontSelector: React.FC<Props> = ({ value, onChange, className = '',
   const role = useSyncExternalStore(subscribeRoomRole, getRoomRole);
   const canEdit = role === 'editor';
 
-  const displayFont = value || 'Inter';
+  // The latest onChange, so the preview controller below is made once.
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const baseWeightRef = useRef(weight);
+  const previewer = useMemo(
+    () => createPreview({ begin: beginPreview, end: endPreview, apply: (f) => onChangeRef.current(f, baseWeightRef.current) }),
+    [],
+  );
+  // While a face is previewed `value` is the preview; the picker keeps reading the original.
+  const baseRef = useRef(value);
+  if (!previewer.active) {
+    baseRef.current = value;
+    baseWeightRef.current = weight;
+  }
+  const displayFont = (previewer.active ? baseRef.current : value) || 'Inter';
   const availability = familyAvailability(displayFont);
   const missing = availability === 'missing';
 
-  const rows = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const groups: { key: string; label: string; hint?: string; rows: Row[] }[] = [];
+  const restorePreview = useCallback(() => {
+    window.clearTimeout(hoverTimer.current);
+    previewer.restore();
+  }, [previewer]);
+  const showPreview = useCallback(
+    (family: string) => {
+      if (!preview) return;
+      window.clearTimeout(hoverTimer.current);
+      if (family === displayFont) {
+        previewer.restore();
+        return;
+      }
+      hoverTimer.current = window.setTimeout(() => {
+        ensureFontLoaded(family);
+        previewer.show(family);
+      }, 90);
+    },
+    [preview, displayFont, previewer],
+  );
 
-    const board = boardFamilies().filter((f) => matches(f.family, q)).map(dynamicRow);
-    groups.push({ key: 'board', label: 'On this board', hint: 'Shared with everyone', rows: board });
-
-    if (!q && recents.length) {
-      const recentRows = recents
-        .map((family): Row | null => {
-          const b = boardFamilies().find((f) => f.family === family) ?? localFamilies().find((f) => f.family === family);
-          if (b) return dynamicRow(b);
-          const entry = FONTS.find((x) => x.family === family);
-          return entry ? builtinRow(entry) : null;
-        })
-        .filter((r): r is Row => !!r);
-      if (recentRows.length) groups.push({ key: 'recent', label: 'Recent', rows: recentRows });
-    }
-
-    const device = localFamilies().filter((f) => matches(f.family, q)).map(dynamicRow);
-    groups.push({ key: 'device', label: 'On this device', hint: 'Private until you share one', rows: device });
-
-    const builtin = searchFonts(query);
-    for (const c of CATEGORIES) {
-      const fonts = builtin.filter((f) => f.category === c.id).map(builtinRow);
-      if (fonts.length) groups.push({ key: c.id, label: c.label, hint: c.hint, rows: fonts });
-    }
-    return groups;
+  const sections = useMemo(
+    () =>
+      buildSections({
+        query,
+        recents,
+        inUse,
+        uploaded: boardFamilies().map(dynamicRow),
+        device: localFamilies().map(dynamicRow),
+      }),
     // The library version is read through useSyncExternalStore above; recompute on every render it causes.
-  }, [query, recents, local, isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const flat = useMemo(() => rows.flatMap((g) => g.rows.map((r) => ({ ...r, key: `${g.key}:${r.family}` }))), [rows]);
+    [query, recents, inUse, local, isOpen], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const lay = useMemo(
+    () => layout(sections, (s) => !query.trim() && (s.key === 'board' || s.key === 'device')),
+    [sections, query],
+  );
+  const flat = lay.rows;
+  const visible = visibleItems(lay.items, scrollTop, LIST_H);
 
   const selectFont = useCallback(
     (font: string) => {
       ensureFontLoaded(font);
       setRecents(pushRecent(font));
-      onChange(font);
+      window.clearTimeout(hoverTimer.current);
+      if (preview) previewer.commit(font);
+      else onChange(font, weight);
       setIsOpen(false);
       setQuery('');
       triggerRef.current?.focus();
     },
-    [onChange],
+    [onChange, preview, previewer],
   );
+
+  const close = useCallback(
+    (refocus = true) => {
+      restorePreview();
+      setIsOpen(false);
+      if (refocus) triggerRef.current?.focus();
+    },
+    [restorePreview],
+  );
+
+  // Never leave a preview behind: unmounting mid-hover restores the original.
+  useEffect(() => () => previewer.restore(), [previewer]);
 
   const place = useCallback(() => {
     const trigger = triggerRef.current?.getBoundingClientRect();
@@ -263,11 +374,16 @@ export const FontSelector: React.FC<Props> = ({ value, onChange, className = '',
   useLayoutEffect(() => {
     if (!isOpen) return;
     place();
+    const onScroll = (e: Event) => {
+      // The list scrolls inside the popover; only an outer scroll moves the anchor.
+      if (listRef.current && e.target instanceof Node && listRef.current.contains(e.target)) return;
+      place();
+    };
     window.addEventListener('resize', place);
-    window.addEventListener('scroll', place, true);
+    window.addEventListener('scroll', onScroll, true);
     return () => {
       window.removeEventListener('resize', place);
-      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('scroll', onScroll, true);
     };
   }, [isOpen, place]);
 
@@ -275,51 +391,89 @@ export const FontSelector: React.FC<Props> = ({ value, onChange, className = '',
     if (!isOpen) return;
     setQuery('');
     setRecents(readRecents());
+    setInUse(familiesInUse());
     ensureFontLoaded(displayFont);
     void restoreLocalFonts();
     window.setTimeout(() => searchRef.current?.focus(), 0);
   }, [isOpen, displayFont]);
 
+  // Open on the selected row; typing returns to the top of the results.
+  const openedRef = useRef(false);
   useEffect(() => {
-    const i = flat.findIndex((f) => f.family === displayFont);
+    if (!isOpen) {
+      openedRef.current = false;
+      return;
+    }
+    const i = query.trim() ? 0 : flat.findIndex((f) => f.row.family === displayFont);
     setCursor(i >= 0 ? i : 0);
-  }, [flat, displayFont]);
+    if (!openedRef.current && flat.length) {
+      openedRef.current = true;
+      const row = flat[i >= 0 ? i : 0];
+      window.setTimeout(() => {
+        const el = listRef.current;
+        if (el && row) el.scrollTop = Math.max(0, row.top - LIST_H / 2 + ROW_H / 2);
+      }, 0);
+    }
+  }, [isOpen, flat, displayFont, query]);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const onDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (popoverRef.current?.contains(target) || triggerRef.current?.contains(target) || isInsidePortalSurface(target)) return;
-      setIsOpen(false);
-    };
-    window.addEventListener('mousedown', onDown);
-    return () => window.removeEventListener('mousedown', onDown);
-  }, [isOpen]);
+  // Keep the keyboard row on screen.
+  const reveal = useCallback(
+    (index: number) => {
+      const el = listRef.current;
+      const row = flat[index];
+      if (!el || !row) return;
+      if (row.top < el.scrollTop + 28) el.scrollTop = Math.max(0, row.top - 28);
+      else if (row.top + ROW_H > el.scrollTop + LIST_H) el.scrollTop = row.top + ROW_H - LIST_H;
+    },
+    [flat],
+  );
+
+  // The trigger toggles, so a press on it is left to its click. A press in the
+  // panel or rail popover this sits in is outside and closes the list.
+  useOutsidePress({ open: isOpen, surfaces: [popoverRef], triggers: triggerRef, onOutside: () => close(false) });
+
+  const moveTo = (next: number) => {
+    setCursor(next);
+    reveal(next);
+    const f = flat[next]?.row.family;
+    if (f) showPreview(f);
+  };
 
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      setIsOpen(false);
-      triggerRef.current?.focus();
+      close();
       return;
     }
     if (e.target !== searchRef.current) return;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       if (!flat.length) return;
-      const step = e.key === 'ArrowDown' ? 1 : -1;
-      setCursor((c) => (c + step + flat.length) % flat.length);
+      moveTo(stepCursor(cursor, e.key === 'ArrowDown' ? 1 : -1, flat.length));
+      return;
+    }
+    if ((e.key === 'PageDown' || e.key === 'PageUp') && flat.length) {
+      e.preventDefault();
+      const jump = Math.floor(LIST_H / ROW_H) - 1;
+      moveTo(Math.min(flat.length - 1, Math.max(0, cursor + (e.key === 'PageDown' ? jump : -jump))));
+      return;
+    }
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !query && onWeightChange && weight != null) {
+      e.preventDefault();
+      const family = flat[cursor]?.row.family ?? displayFont;
+      const next = stepWeight(weightsFor(family), weight, e.key === 'ArrowRight' ? 1 : -1);
+      if (next !== weight) onWeightChange(next);
       return;
     }
     if (e.key === 'Enter') {
       e.preventDefault();
       const pick = flat[cursor];
-      if (pick) selectFont(pick.family);
+      if (pick) selectFont(pick.row.family);
     }
   };
 
-  const upload = async (files: FileList | null) => {
+  const upload = async (files: FileList | File[] | null) => {
     if (!files?.length) return;
     const { uploadFontFile } = await import('../../engine/text/fontUpload');
     let lastFamily: string | null = null;
@@ -354,8 +508,8 @@ export const FontSelector: React.FC<Props> = ({ value, onChange, className = '',
             ? errors.length && !uploaded
               ? { ...x, status: 'error', message: errors[0] }
               : { ...x, status: 'done', message: `${family}: ${uploaded} ${uploaded === 1 ? 'style' : 'styles'} shared` }
-            : x
-        )
+            : x,
+        ),
       );
     } finally {
       setSharing(null);
@@ -396,12 +550,7 @@ export const FontSelector: React.FC<Props> = ({ value, onChange, className = '',
       return local.families.length === 0 ? <p className="font-menu__note">No fonts beyond the built-in ones were found.</p> : null;
     }
     return (
-      <button
-        type="button"
-        className="font-menu__action"
-        onClick={() => void requestLocalFonts()}
-        disabled={local.status === 'requesting'}
-      >
+      <button type="button" className="font-menu__action" onClick={() => void requestLocalFonts()} disabled={local.status === 'requesting'}>
         {local.status === 'requesting' ? <Loader2 size={14} className="font-row__state--spin" aria-hidden="true" /> : <Laptop size={14} aria-hidden="true" />}
         <span className="font-menu__action-text">
           <span>Use fonts on this device</span>
@@ -411,18 +560,19 @@ export const FontSelector: React.FC<Props> = ({ value, onChange, className = '',
     );
   };
 
+  const activeKey = flat[cursor]?.key;
+  const hasFontFile = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+
   return (
     <div className={`font-select ${className}`}>
       <button
         ref={triggerRef}
         type="button"
         className="font-trigger"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => (isOpen ? close(false) : setIsOpen(true))}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
-        aria-label={
-          mixed ? 'Font: Mixed' : missing ? `Font: ${displayFont}, not available on this device` : `Font: ${displayFont}`
-        }
+        aria-label={mixed ? 'Font: Mixed' : missing ? `Font: ${displayFont}, not available on this device` : `Font: ${displayFont}`}
       >
         {mixed ? (
           <span className="font-trigger__name" data-mixed>
@@ -448,19 +598,43 @@ export const FontSelector: React.FC<Props> = ({ value, onChange, className = '',
             ref={popoverRef}
             {...{ [PORTAL_SURFACE_ATTR]: 'true' }}
             className="font-menu panel-surface"
+            data-dragging={dragging || undefined}
             style={{ top: position.top, left: position.left, width: position.width }}
             onKeyDown={onKey}
+            onMouseLeave={restorePreview}
+            onDragOver={(e) => {
+              if (!canEdit || !hasFontFile(e)) return;
+              e.preventDefault();
+              setDragging(true);
+            }}
+            onDragLeave={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+            }}
+            onDrop={(e) => {
+              if (!canEdit || !hasFontFile(e)) return;
+              e.preventDefault();
+              setDragging(false);
+              void upload(e.dataTransfer.files);
+            }}
           >
             <div className="font-menu__search">
               <Search size={13} aria-hidden="true" />
               <input
                 ref={searchRef}
                 type="text"
+                role="combobox"
+                aria-expanded="true"
+                aria-controls="font-listbox"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => {
+                  restorePreview();
+                  setQuery(e.target.value);
+                  setScrollTop(0);
+                  if (listRef.current) listRef.current.scrollTop = 0;
+                }}
                 placeholder="Search fonts, or what they are for"
                 aria-label="Search fonts"
-                aria-activedescendant={undefined}
+                aria-activedescendant={flat[cursor] ? `font-opt-${flat[cursor].row.family.replace(/\W+/g, '-')}` : undefined}
                 spellCheck={false}
               />
               {canEdit && (
@@ -469,20 +643,20 @@ export const FontSelector: React.FC<Props> = ({ value, onChange, className = '',
                   className="font-menu__icon-btn"
                   onClick={() => fileRef.current?.click()}
                   aria-label="Upload a font to this board"
-                  title="Upload a font (WOFF2, WOFF, TTF, OTF)"
+                  title="Upload a font (WOFF2, WOFF, TTF, OTF), or drop one here"
                 >
                   <Upload size={14} aria-hidden="true" />
                 </button>
               )}
-              <input
-                ref={fileRef}
-                type="file"
-                accept={FONT_ACCEPT}
-                multiple
-                hidden
-                onChange={(e) => void upload(e.target.files)}
-              />
+              <input ref={fileRef} type="file" accept={FONT_ACCEPT} multiple hidden onChange={(e) => void upload(e.target.files)} />
             </div>
+
+            {dragging && (
+              <div className="font-menu__drop" aria-hidden="true">
+                <Upload size={18} />
+                <span>Drop a font to add it to this board</span>
+              </div>
+            )}
 
             {missing && !mixed && (
               <div className="font-menu__banner" role="status">
@@ -509,9 +683,7 @@ export const FontSelector: React.FC<Props> = ({ value, onChange, className = '',
                     {n.status === 'uploading' && <Loader2 size={12} className="font-row__state--spin" aria-hidden="true" />}
                     {n.status === 'done' && <Check size={12} aria-hidden="true" />}
                     {n.status === 'error' && <AlertTriangle size={12} aria-hidden="true" />}
-                    <span className="font-note__text">
-                      {n.status === 'uploading' ? `Uploading ${n.name}…` : n.message}
-                    </span>
+                    <span className="font-note__text">{n.status === 'uploading' ? `Uploading ${n.name}…` : n.message}</span>
                     {n.status === 'error' && (
                       <button
                         type="button"
@@ -527,53 +699,60 @@ export const FontSelector: React.FC<Props> = ({ value, onChange, className = '',
               </ul>
             )}
 
-            <div className="font-menu__list custom-scrollbar" role="listbox" aria-label="Fonts">
+            <div
+              ref={listRef}
+              id="font-listbox"
+              className="font-menu__list font-menu__list--virtual custom-scrollbar"
+              role="listbox"
+              aria-label="Fonts"
+              style={{ height: LIST_H }}
+              onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+            >
               {flat.length === 0 && query.trim() && (
-                <p className="font-menu__empty">
-                  Nothing matches “{query.trim()}”. Try a category: narrow, mono, slab, hand.
-                </p>
+                <p className="font-menu__empty">Nothing matches “{query.trim()}”. Try a category: narrow, mono, slab, hand.</p>
               )}
-              {rows.map((group) => {
-                const showEmptyBoard = group.key === 'board' && group.rows.length === 0 && !query.trim();
-                const showDevice = group.key === 'device' && !query.trim();
-                if (!group.rows.length && !showEmptyBoard && !showDevice) return null;
-                return (
-                  <div key={group.key} className="font-menu__group" role="group" aria-label={group.label}>
-                    <div className="font-menu__label">
-                      {group.label}
-                      {group.hint && <span className="font-menu__hint">{group.hint}</span>}
-                    </div>
-                    {showEmptyBoard && (
-                      <p className="font-menu__note">
-                        {canEdit
-                          ? 'Upload a brand font and everyone on the board can use it.'
-                          : 'No fonts have been uploaded to this board.'}
-                      </p>
-                    )}
-                    {group.key === 'device' && deviceAction()}
-                    {group.rows.map((row) => {
-                      const key = `${group.key}:${row.family}`;
-                      return (
-                        <FontRow
-                          key={key}
-                          row={row}
-                          selected={!mixed && row.family === displayFont}
-                          active={flat[cursor]?.key === key}
-                          canShare={canEdit}
-                          onPick={selectFont}
-                          onHover={() => {
-                            if (row.source !== 'board') ensureFontLoaded(row.family);
-                          }}
-                          onShare={share}
-                          sharing={sharing === row.family}
-                          onRemove={group.key === 'board' && canEdit ? (family) => void removeFromBoard(family) : undefined}
-                        />
-                      );
-                    })}
-                  </div>
-                );
-              })}
+              <div className="font-menu__canvas" style={{ height: lay.height }}>
+                {visible.map((it) => {
+                  if (it.kind === 'header') {
+                    const s = it.section;
+                    const emptyBoard = s.key === 'board' && s.rows.length === 0;
+                    const isDevice = s.key === 'device';
+                    return (
+                      <div key={it.key} className="font-menu__label font-menu__label--abs" style={{ top: it.top, height: it.height }} role="presentation">
+                        {s.label}
+                        {s.hint && <span className="font-menu__hint">{s.hint}</span>}
+                        {(emptyBoard || (isDevice && s.rows.length === 0)) && (
+                          <span className="font-menu__hint font-menu__hint--note">
+                            {emptyBoard ? (canEdit ? 'Drop a font here' : 'None yet') : ''}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  }
+                  return (
+                    <FontRow
+                      key={it.key}
+                      row={it.row}
+                      top={it.top}
+                      selected={!mixed && it.row.family === displayFont}
+                      active={activeKey === it.key}
+                      canShare={canEdit}
+                      onPick={selectFont}
+                      onHover={(family) => {
+                        setCursor(it.index);
+                        showPreview(family);
+                      }}
+                      onShare={share}
+                      sharing={sharing === it.row.family}
+                      onRemove={it.section.key === 'board' && canEdit ? (family) => void removeFromBoard(family) : undefined}
+                    />
+                  );
+                })}
+              </div>
             </div>
+            {!query.trim() && sections.some((s) => s.key === 'device') && (
+              <div className="font-menu__foot">{deviceAction()}</div>
+            )}
           </div>,
           document.body,
         )}

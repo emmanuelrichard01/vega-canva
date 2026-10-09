@@ -1,6 +1,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { PORTAL_SURFACE_ATTR } from '../ui/portalSurface';
+import { useOutsidePress } from '../ui/outsidePress';
 
 /**
  * A wide surface, opened from a button in the properties panel.
@@ -116,13 +117,12 @@ export const PanelPopover: React.FC<Props> = ({
     };
   }, [open, width, align]);
 
+  // A press on the trigger is left to its toggle; one in a menu or picker
+  // opened from inside the surface (a Select, a colour chip) is still inside.
+  useOutsidePress({ open, surfaces: [surfaceRef], triggers: triggerRef, onOutside: () => setOpen(false) });
+
   React.useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (surfaceRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
-      setOpen(false);
-    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       // Stopped, so the canvas does not also read this as "deselect" and take
@@ -131,10 +131,8 @@ export const PanelPopover: React.FC<Props> = ({
       setOpen(false);
       triggerRef.current?.focus();
     };
-    window.addEventListener('mousedown', onDown);
     window.addEventListener('keydown', onKey, true);
     return () => {
-      window.removeEventListener('mousedown', onDown);
       window.removeEventListener('keydown', onKey, true);
     };
   }, [open]);

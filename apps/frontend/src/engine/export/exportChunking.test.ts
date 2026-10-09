@@ -39,6 +39,15 @@ const SHARED = [
   'isolate',
   'ExportTypes',
   'filenames',
+  // The pure SVG writers, which the dashboard's template pictures draw with
+  // (`components/home/boardSvg`). They reach no store and no stage.
+  'abort',
+  'commentPins',
+  'markup',
+  'nodesToSvg',
+  'stickyExport',
+  'svgPaint',
+  'svgShadow',
 ] as const;
 
 const SRC = join(__dirname, '..', '..');

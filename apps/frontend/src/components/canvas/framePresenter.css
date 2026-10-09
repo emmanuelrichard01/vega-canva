@@ -1,11 +1,41 @@
 /*
- * Presenting frames. The letterbox is a fixed dark ground in both themes: a
- * slide reads best on black, whatever the app chrome is wearing.
+ * Presenting slides. The letterbox is a fixed dark ground in both themes: a
+ * slide reads best on black, whatever the app chrome is wearing. The laser
+ * red, the blank screens and this theatre palette are the only literal
+ * colours, and each is the same in every theme on purpose.
  */
 
 :root[data-presenting] .konvajs-content {
   /* The board is read-only while presenting: nothing under the slide takes input. */
   pointer-events: none;
+}
+
+/*
+ * Nothing but the slide while presenting.
+ *
+ * The slide is the live board seen through a hole in the letterbox, so any
+ * chrome floating over the board (the side columns, the dock, rails, rulers,
+ * the radar, readouts, hints, coach marks, comment pins, cursors, the chrome
+ * layer of the stage itself) would show through the hole. Rather than gate
+ * each surface, and miss the next one somebody adds, the whole page is made
+ * invisible and only the show opts back in: the board's content layer (the
+ * stage's first canvas), the presenter, the on-screen presenter view and
+ * error notices. `visibility` rather than `display`, so nothing is unmounted
+ * or reflowed and the board comes back exactly as it was.
+ */
+:root[data-presenting] body {
+  visibility: hidden;
+}
+:root[data-presenting] .konvajs-content > canvas:first-child,
+:root[data-presenting] .fp-root,
+:root[data-presenting] .fp-notice,
+:root[data-presenting] [data-presenter-ui],
+:root[data-presenting] .notice--error {
+  visibility: visible;
+}
+/* An error still has to be seen, so it is lifted over the letterbox, quietly. */
+:root[data-presenting] .notice-layer {
+  z-index: calc(var(--z-popover, 9200) + 5);
 }
 
 .fp-root {
@@ -231,9 +261,185 @@
   white-space: nowrap;
 }
 
+/* Above the slide, the blank screen and any transition, in this order. */
+.fp-hud,
+.fp-strip,
+.fp-digits,
+.fp-notice--show {
+  z-index: 3;
+}
+
+.fp-btn--wide {
+  width: auto;
+  min-width: 30px;
+  gap: 4px;
+  padding: 0 8px;
+}
+
+.fp-btn[aria-pressed='true'] {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.fp-audience {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The laser replaces the pointer over the slide. */
+.fp-root[data-laser] .fp-slide {
+  cursor: none;
+}
+
+.fp-laser {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+}
+
+/* A transition plays over the slide while the camera cuts beneath it. */
+.fp-transition {
+  position: fixed;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* B and W: the screen goes black or white; any click or move brings it back. */
+.fp-blank {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  padding: 0;
+  border: 0;
+  background: #000;
+  pointer-events: auto;
+  cursor: var(--cursor-arrow, default);
+}
+.fp-blank[data-blank='white'] {
+  background: #fff;
+}
+
+/* How far through the deck: a hairline along the bottom of the screen. */
+.fp-progress {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  pointer-events: none;
+}
+.fp-progress > span {
+  display: block;
+  height: 100%;
+  background: rgba(242, 243, 245, 0.55);
+  transform-origin: left center;
+}
+
+.fp-number {
+  position: fixed;
+  right: calc(20px + env(safe-area-inset-right, 0px));
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 2;
+  color: var(--fp-ink-quiet);
+  font: 500 var(--text-sm, 12px) / 1 var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* A slide number being typed, before Enter takes the show there. */
+.fp-digits {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-radius: var(--radius-xl);
+  background: var(--fp-hud);
+  color: var(--fp-ink-quiet);
+  font: 500 var(--text-lg, 16px) / 1 var(--font-sans);
+  pointer-events: none;
+}
+.fp-digits strong {
+  color: var(--fp-ink);
+  font-size: 28px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.fp-digits kbd {
+  border-color: rgba(255, 255, 255, 0.24);
+  color: var(--fp-ink);
+}
+
+.fp-notice--show {
+  top: calc(24px + env(safe-area-inset-top, 0px));
+  bottom: auto;
+  background: var(--fp-hud);
+  box-shadow: none;
+  color: var(--fp-ink);
+}
+
+/* Reactions from the room, rising up the right-hand side. */
+.fp-reactions {
+  position: fixed;
+  right: 40px;
+  bottom: 96px;
+  z-index: 3;
+  width: 96px;
+  height: 56vh;
+  pointer-events: none;
+}
+.fp-reaction {
+  position: absolute;
+  bottom: 0;
+  left: calc(var(--lane, 0.5) * 56px);
+  opacity: 0;
+  animation: fp-react-fade 2600ms ease-out forwards;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .fp-hud {
     animation: fp-rise 200ms var(--ease-settle, ease-out);
+  }
+  .fp-progress > span {
+    transition: transform 360ms var(--ease-settle, ease-out);
+  }
+  .fp-reaction {
+    animation-name: fp-react-rise;
+  }
+}
+
+@keyframes fp-react-fade {
+  10%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes fp-react-rise {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.6);
+  }
+  12% {
+    opacity: 1;
+    transform: translateY(-24px) scale(1);
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-48vh) scale(0.9);
   }
 }
 
@@ -266,6 +472,28 @@
   background: var(--fp-ink);
 }
 
+[data-contrast='more'] .fp-progress > span {
+  background: var(--fp-ink);
+}
+
+[data-contrast='more'] .fp-number {
+  color: var(--fp-ink);
+}
+
 [data-contrast='more'] .fp-notice {
   box-shadow: var(--shadow-overlay), inset 0 0 0 1px var(--border-strong);
+}
+
+/* A push or slide: both slides' pictures, stacked and clipped to the slide. */
+.fp-transition--panes {
+  overflow: hidden;
+  /* What the old slide sinks into: the theatre, not the board behind. */
+  background: var(--fp-ground);
+}
+.fp-transition--panes > canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  will-change: transform, opacity;
 }

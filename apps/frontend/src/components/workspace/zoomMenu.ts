@@ -41,14 +41,30 @@ export interface ZoomMenuActions {
 
 /** The rows, given whether anything is selected and the zoom shown now (percent). */
 export function zoomMenuEntries(
-  state: { hasSelection: boolean; percent: number },
+  state: {
+    hasSelection: boolean;
+    percent: number;
+    /** False on an empty board, where there is nothing to fit. Defaults to true. */
+    hasContent?: boolean;
+    /** At the zoom limits, the step that cannot go further is off, with the reason. */
+    atMin?: boolean;
+    atMax?: boolean;
+  },
   actions: ZoomMenuActions
 ): MenuEntry[] {
   return [
-    { kind: 'item', id: 'zoom-in', label: 'Zoom in', shortcut: SHORTCUTS.zoomIn, keepOpen: true, onSelect: actions.zoomIn },
-    { kind: 'item', id: 'zoom-out', label: 'Zoom out', shortcut: SHORTCUTS.zoomOut, keepOpen: true, onSelect: actions.zoomOut },
+    { kind: 'item', id: 'zoom-in', label: 'Zoom in', shortcut: SHORTCUTS.zoomIn, keepOpen: true, disabled: state.atMax || undefined, disabledReason: state.atMax ? 'Already at the closest zoom' : undefined, onSelect: actions.zoomIn },
+    { kind: 'item', id: 'zoom-out', label: 'Zoom out', shortcut: SHORTCUTS.zoomOut, keepOpen: true, disabled: state.atMin || undefined, disabledReason: state.atMin ? 'Already at the farthest zoom' : undefined, onSelect: actions.zoomOut },
     { kind: 'separator', id: 's1' },
-    { kind: 'item', id: 'zoom-fit', label: 'Fit all', shortcut: SHORTCUTS.zoomFit, onSelect: actions.fitAll },
+    {
+      kind: 'item',
+      id: 'zoom-fit',
+      label: 'Fit all',
+      shortcut: SHORTCUTS.zoomFit,
+      disabled: state.hasContent === false || undefined,
+      disabledReason: state.hasContent === false ? 'Nothing on the board yet' : undefined,
+      onSelect: actions.fitAll,
+    },
     {
       kind: 'item',
       id: 'zoom-selection',

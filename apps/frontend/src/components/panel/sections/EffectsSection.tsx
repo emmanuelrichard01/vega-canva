@@ -1,19 +1,19 @@
 import React from 'react';
 import { Droplets, Minus, MoveHorizontal, MoveVertical, Scan, Sun, SunDim } from 'lucide-react';
-import { ColorChip, NumberField, Note, PairRow, Section } from '../grammar';
+import { ColorChip, NumberField, Note, PairRow, Row, Section, SegmentedControl } from '../grammar';
 import type { MenuEntry } from '../../menu/menuModel';
 import { DEFAULT_SHADOW_COLOR, type Appearance, type Shadow } from '../../../engine/model/schema';
 import { fillsInterior } from '../../../engine/model/rough';
 import type { Shared } from '../../../engine/model/selection';
-
-const DEFAULT_SHADOW: Shadow = {
-  color: DEFAULT_SHADOW_COLOR,
-  blur: 12,
-  offsetX: 0,
-  offsetY: 4,
-  spread: 0,
-  opacity: 0.25,
-};
+import {
+  DEFAULT_DROP_SHADOW,
+  MAX_SHADOW_BLUR,
+  MAX_SHADOW_OFFSET,
+  MAX_SHADOW_SPREAD,
+  SHADOW_PRESETS,
+  SHADOW_STEP,
+  presetOf,
+} from '../../../engine/model/dropShadow';
 
 const DEFAULT_INNER_SHADOW: Shadow = {
   color: DEFAULT_SHADOW_COLOR,
@@ -73,64 +73,118 @@ const EffectHead: React.FC<{ id: EffectId; onRemove: () => void }> = ({ id, onRe
   </div>
 );
 
+/** One value of a shadow across the selection: agreed, or mixed. */
+type ShadowRead = (pick: (s: Shadow) => number | string | undefined) => Shared<number | string | undefined>;
+
+/**
+ * The fields of one shadow, read across the whole selection.
+ *
+ * Every field asks the selection rather than the primary object, so two
+ * shadows that differ in blur say *Mixed* in Blur and nowhere else, and typing
+ * a number there sets that one property on every object while leaving each
+ * one's offset and colour alone.
+ *
+ * Offset, blur and spread move in half-units and take any typed decimal, so a
+ * 0.5px contact shadow is as reachable as a 24px lift. A scrub writes previews
+ * and lands as one undo step (see `NumberField`).
+ */
 const ShadowFields: React.FC<{
   name: string;
   shadow: Shadow;
-  colorMixed: boolean;
+  read: ShadowRead;
   allowSpread: boolean;
+  presets?: boolean;
   onChange: (patch: Partial<Shadow>) => void;
-}> = ({ name, shadow, colorMixed, allowSpread, onChange }) => (
-  <>
-    <ColorChip
-      label={name}
-      value={colorMixed ? 'mixed' : shadow.color}
-      opacity={shadow.opacity ?? 1}
-      allowNone={false}
-      onChange={(color) => onChange({ color })}
-      onOpacityChange={(opacity) => onChange({ opacity })}
-    />
-    <PairRow>
-      <NumberField
-        label={`${name} offset X`}
-        glyph={<MoveHorizontal size={13} />}
-        unit="px"
-        value={Math.round(shadow.offsetX)}
-        onChange={(v) => onChange({ offsetX: v })}
+}> = ({ name, shadow, read, allowSpread, presets = false, onChange }) => {
+  const value = (pick: (s: Shadow) => number | undefined): number | 'mixed' => {
+    const shared = read(pick);
+    return shared.mixed ? 'mixed' : ((shared.value as number | undefined) ?? 0);
+  };
+  const colour = read((s) => s.color);
+  const opacity = read((s) => s.opacity ?? 1);
+  const depth = read((s) => presetOf(s) ?? 'custom');
+  return (
+    <>
+      <ColorChip
+        label={name}
+        value={colour.mixed ? 'mixed' : shadow.color}
+        opacity={opacity.mixed ? 1 : (shadow.opacity ?? 1)}
+        allowNone={false}
+        onChange={(color) => onChange({ color })}
+        onOpacityChange={(o) => onChange({ opacity: o })}
       />
-      <NumberField
-        label={`${name} offset Y`}
-        glyph={<MoveVertical size={13} />}
-        unit="px"
-        value={Math.round(shadow.offsetY)}
-        onChange={(v) => onChange({ offsetY: v })}
-      />
-    </PairRow>
-    <PairRow>
-      <NumberField
-        label={`${name} blur`}
-        glyph="B"
-        unit="px"
-        min={0}
-        max={200}
-        value={Math.round(shadow.blur)}
-        onChange={(v) => onChange({ blur: v })}
-      />
-      {allowSpread ? (
-        <NumberField
-          label={`${name} spread`}
-          glyph="S"
-          unit="px"
-          min={0}
-          max={100}
-          value={Math.round(shadow.spread ?? 0)}
-          onChange={(v) => onChange({ spread: v })}
-        />
-      ) : (
-        <span aria-hidden />
+      {presets && (
+        <Row label="Depth" hint="A ready-made elevation. The shadow keeps its colour.">
+          <SegmentedControl
+            ariaLabel={`${name} depth`}
+            fill
+            mixed={depth.mixed}
+            value={depth.mixed ? '' : String(depth.value ?? '')}
+            onChange={(id) => {
+              const hit = SHADOW_PRESETS.find((p) => p.id === id);
+              if (!hit) return;
+              const { offsetX, offsetY, blur, spread, opacity: o } = hit.shadow;
+              onChange({ offsetX, offsetY, blur, spread, opacity: o });
+            }}
+            segments={SHADOW_PRESETS.map((p) => ({
+              value: p.id,
+              label: p.label,
+              hint: `Offset ${p.shadow.offsetY}, blur ${p.shadow.blur}, ${Math.round((p.shadow.opacity ?? 1) * 100)}%`,
+            }))}
+          />
+        </Row>
       )}
-    </PairRow>
-  </>
-);
+      <PairRow>
+        <NumberField
+          label={`${name} offset X`}
+          glyph={<MoveHorizontal size={13} />}
+          unit="px"
+          step={SHADOW_STEP}
+          min={-MAX_SHADOW_OFFSET}
+          max={MAX_SHADOW_OFFSET}
+          value={value((s) => s.offsetX)}
+          onChange={(v) => onChange({ offsetX: v })}
+        />
+        <NumberField
+          label={`${name} offset Y`}
+          glyph={<MoveVertical size={13} />}
+          unit="px"
+          step={SHADOW_STEP}
+          min={-MAX_SHADOW_OFFSET}
+          max={MAX_SHADOW_OFFSET}
+          value={value((s) => s.offsetY)}
+          onChange={(v) => onChange({ offsetY: v })}
+        />
+      </PairRow>
+      <PairRow>
+        <NumberField
+          label={`${name} blur`}
+          glyph="B"
+          unit="px"
+          step={SHADOW_STEP}
+          min={0}
+          max={MAX_SHADOW_BLUR}
+          value={value((s) => s.blur)}
+          onChange={(v) => onChange({ blur: v })}
+        />
+        {allowSpread ? (
+          <NumberField
+            label={`${name} spread`}
+            glyph="S"
+            unit="px"
+            step={SHADOW_STEP}
+            min={0}
+            max={MAX_SHADOW_SPREAD}
+            value={value((s) => s.spread)}
+            onChange={(v) => onChange({ spread: v })}
+          />
+        ) : (
+          <span aria-hidden />
+        )}
+      </PairRow>
+    </>
+  );
+};
 
 /**
  * Effects: shadows and blurs, as a list.
@@ -160,9 +214,16 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
     blur: !hasConnector && !hasImage,
     backdropBlur: !hasConnector && edge,
   };
+  // Present when *any* selected object has it, so a selection where only some
+  // objects carry a shadow shows it, with Mixed where they differ, rather than
+  // offering to add one that would overwrite the shadows already there.
+  const anyHas = (pick: (a: Appearance) => unknown) => {
+    const shared = sharedPaint((a) => Boolean(pick(a)));
+    return shared.mixed || Boolean(shared.value);
+  };
   const present: Record<EffectId, boolean> = {
-    shadow: Boolean(appearance.shadow),
-    innerShadow: Boolean(appearance.innerShadow),
+    shadow: anyHas((a) => a.shadow),
+    innerShadow: anyHas((a) => a.innerShadow),
     blur: Boolean(appearance.blur),
     backdropBlur: Boolean(appearance.backdropBlur),
   };
@@ -174,8 +235,9 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
   const applied = ids.filter((id) => present[id]);
 
   const add = (id: EffectId) => {
-    if (id === 'shadow') setAppearance({ shadow: { ...DEFAULT_SHADOW } });
-    if (id === 'innerShadow') setAppearance({ innerShadow: { ...DEFAULT_INNER_SHADOW } });
+    // Through the merging setters, so an object that already has one keeps it.
+    if (id === 'shadow') setShadow({});
+    if (id === 'innerShadow') setInnerShadow({});
     if (id === 'blur') setAppearance({ blur: 4 });
     if (id === 'backdropBlur') setAppearance({ backdropBlur: 12 });
   };
@@ -204,16 +266,19 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
       {applied.map((id) => (
         <div key={id} className="pg-effect">
           <EffectHead id={id} onRemove={() => remove(id)} />
-          {id === 'shadow' && appearance.shadow && (
+          {id === 'shadow' && (
             <ShadowFields
               name="Drop shadow"
-              shadow={appearance.shadow}
-              colorMixed={sharedPaint((a) => a.shadow?.color).mixed}
-              allowSpread={Boolean(capabilities.supportsShadowSpread) && !openShape}
+              shadow={appearance.shadow ?? DEFAULT_DROP_SHADOW}
+              read={(pick) => sharedPaint((a) => (a.shadow ? pick(a.shadow) : undefined))}
+              // Spread grows the whole silhouette, so a line takes it as well
+              // as a closed shape does.
+              allowSpread={Boolean(capabilities.supportsShadowSpread)}
+              presets
               onChange={setShadow}
             />
           )}
-          {id === 'innerShadow' && appearance.innerShadow && (
+          {id === 'innerShadow' && (
             penShaded ? (
               <Note>
                 Inner shadow needs an inside. Pen shading leaves the shape open, so set the fill to Solid to see it.
@@ -221,8 +286,8 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
             ) : (
               <ShadowFields
                 name="Inner shadow"
-                shadow={appearance.innerShadow}
-                colorMixed={sharedPaint((a) => a.innerShadow?.color).mixed}
+                shadow={appearance.innerShadow ?? DEFAULT_INNER_SHADOW}
+                read={(pick) => sharedPaint((a) => (a.innerShadow ? pick(a.innerShadow) : undefined))}
                 allowSpread
                 onChange={setInnerShadow}
               />

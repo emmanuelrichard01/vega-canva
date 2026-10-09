@@ -61,6 +61,47 @@ export function sheetWidth(size: FlyoutSize): number {
 }
 
 /**
+ * The seat sheets' tile grids: Chart, Grid and Table, on the md step.
+ *
+ * Each grid is laid out for the panel it sits in, as the shape library is (see
+ * `LIBRARY_LAYOUT`): fixed tiles on a 2px gap, the scroll reaching through the
+ * panel's padding to its edges with the scrollbar's gutter reserved on both
+ * sides, and the grid centred in what is left. So the insets are equal with an
+ * overlay scrollbar, a thin one, or a classic one up to `MAX_SCROLLBAR`.
+ *
+ * Before this the sheets stretched their tiles to whatever the panel was
+ * (`minmax(0, 1fr)`): on the md step that made 94-129px cards around 24px
+ * glyphs, and a scrollbar on one side only left the grid 8px from one edge and
+ * 18px from the other.
+ *
+ * - **chart, grid:** four 92px cards, a 44px-tall picture over its name: room
+ *   for the 56 x 42 illustrated tiles the chart and grid kinds wear.
+ * - **table:** three 124px cards, a finished table in miniature over its name:
+ *   a table is recognised by its header row, which needs the width.
+ */
+export interface SheetLayout {
+  cols: number;
+  tile: number;
+  gap: number;
+  /** The picture's box inside a card. */
+  pic: { width: number; height: number };
+}
+
+export const SHEET_LAYOUT = {
+  chart: { cols: 4, tile: 92, gap: 2, pic: { width: 72, height: 44 } },
+  grid: { cols: 4, tile: 92, gap: 2, pic: { width: 72, height: 44 } },
+  table: { cols: 3, tile: 124, gap: 2, pic: { width: 96, height: 56 } },
+} as const satisfies Record<string, SheetLayout>;
+
+/** The widest classic scrollbar the sheets leave room for, on both sides. */
+export const MAX_SCROLLBAR = 13;
+
+/** A sheet's grid width: its tiles and the gaps between them. */
+export function sheetGrid(layout: SheetLayout): number {
+  return layout.cols * layout.tile + (layout.cols - 1) * layout.gap;
+}
+
+/**
  * The drawing tray's geometry, one per breakpoint.
  *
  * Its top row is the rack of six tools, a rule, and the ink well; the well
@@ -81,6 +122,15 @@ export interface TrayLayout {
   width: number;
   inset: number;
   rack: number;
+  /** A pen's slot in the rack. */
+  tool: number;
+  /**
+   * The sticky pad's slot: wider than a pen's with the art, because the pad
+   * is a square of paper drawn in a 40-unit box where a pen is 32, and in a
+   * pen's 36px slot it ran into the gap and the rack's padding. With glyphs
+   * every slot is the same icon button.
+   */
+  stickyTool: number;
   /** Space either side of the rule between the rack and the well. */
   ruleMargin: number;
   well: number;
@@ -104,8 +154,10 @@ export function trayLayout(mode: TrayMode): TrayLayout {
   const size: FlyoutSize = mode === 'art' ? 'lg' : 'md';
   const width = FLYOUT_WIDTHS[size];
   const tool = mode === 'art' ? 36 : 32;
+  const stickyTool = mode === 'art' ? 44 : tool;
   const rackPad = mode === 'art' ? 4 : 0;
-  const rack = TOOLS * tool + (TOOLS - 1) * TOOL_GAP + 2 * rackPad;
+  // Five pens and the pad.
+  const rack = (TOOLS - 1) * tool + stickyTool + (TOOLS - 1) * TOOL_GAP + 2 * rackPad;
   const ruleMargin = mode === 'art' ? 12 : 8;
   const well = width - 2 * FLYOUT_INSET - rack - 2 * ruleMargin - RULE;
   return {
@@ -113,6 +165,8 @@ export function trayLayout(mode: TrayMode): TrayLayout {
     width,
     inset: FLYOUT_INSET,
     rack,
+    tool,
+    stickyTool,
     ruleMargin,
     well,
     // 26 in the narrower tray: still past the 24px target floor.
@@ -129,6 +183,8 @@ export function trayVars(layout: TrayLayout): Record<string, string> {
   return {
     '--tray-w': `${layout.width}px`,
     '--tray-rack-w': `${layout.rack}px`,
+    '--tray-tool-w': `${layout.tool}px`,
+    '--tray-sticky-w': `${layout.stickyTool}px`,
     '--tray-rule-margin': `${layout.ruleMargin}px`,
     '--tray-well-w': `${layout.well}px`,
     '--tray-swatch': `${layout.swatch}px`,

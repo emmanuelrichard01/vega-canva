@@ -5,7 +5,8 @@ import type { StickyNode } from '../../../engine/model/schema';
 import { initialsFor } from '../../../engine/presence/collaborators';
 import { fontEpoch } from '../../../engine/text/fontEpoch';
 import { formatVoterSummary } from '../../../engine/model/voters';
-import { paperOf, STICKY_PADDING, STICKY_RADIUS } from '../../../engine/model/stickyThemes';
+import { faceStops, flapStops, paperOf, paperShadows, STICKY_PADDING, STICKY_RADIUS, type Stops } from '../../../engine/model/stickyThemes';
+import { flapPath, flapPlacement, foldedPaperPath, foldSize, FOLD_LIFT_SCALE } from '../../../engine/model/stickyFold';
 import { authorWidth, FOOTER_BAND, FOOTER_ROW, layoutFooter, PIN_INSET, textBox } from '../../../engine/model/stickyFooter';
 import { CHECK_BOX, CHECK_GAP, toggleCheck } from '../../../engine/model/stickyRich';
 import { STICKY_LINE_HEIGHT } from '../../../engine/model/stickyText';
@@ -33,8 +34,19 @@ interface Props {
 }
 
 
-/** Below this many screen pixels across, the grain is invisible and is not drawn. */
+/**
+ * How much of the paper is worth drawing, by how large the note is on screen.
+ *
+ * - **0**, under `SHADOW_MIN_PX` across: the paper and its fold, no shadows.
+ *   A board of hundreds of notes seen from far out pays for no blur it cannot show.
+ * - **1**: the shadows, the fold's included.
+ * - **2**, from `GRAIN_MIN_PX`: the grain as well, which is invisible below that.
+ */
+const SHADOW_MIN_PX = 36;
 const GRAIN_MIN_PX = 110;
+
+/** Konva's flat colour-stop list, from the shared `[offset, colour]` pairs. */
+const konvaStops = (stops: Stops): Array<number | string> => stops.flatMap(([at, colour]) => [at, colour]);
 
 const SMILE_PLUS =
   'M22 11v1a10 10 0 1 1-9-10M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01M16 5h6M19 2v6';
@@ -42,9 +54,12 @@ const CHECK_MARK = 'M5 12.5l4.2 4.2L19 7';
 
 const subscribeCamera = (fn: () => void) => engineEvents.on('CameraChanged', fn);
 
-/** Whether `worldSize` covers at least `px` screen pixels, re-rendering only when that flips. */
-function useCoversPx(worldSize: number, px: number): boolean {
-  const read = useCallback(() => worldSize * cameraSystem.zoom >= px, [worldSize, px]);
+/** The detail level for a note whose short side is `worldSize`, re-rendering only when it changes. */
+function usePaperDetail(worldSize: number): 0 | 1 | 2 {
+  const read = useCallback(() => {
+    const px = worldSize * cameraSystem.zoom;
+    return px >= GRAIN_MIN_PX ? 2 : px >= SHADOW_MIN_PX ? 1 : 0;
+  }, [worldSize]);
   return useSyncExternalStore(subscribeCamera, read, read);
 }
 
@@ -122,9 +137,11 @@ function clientRectOf(node: Konva.Node): { left: number; top: number; width: num
  * A sticky note: paper, writing, who wrote it, and the stamps on it.
  *
  * Paper is drawn as paper: a faint top-to-bottom sheen, a grain you can see
- * when the note is large on screen, and one soft directional shadow that
- * deepens a little under the pointer, as a sheet would lift. The writing is
- * laid out by `stickyRichLayout` — balanced lines, bold and italic, links,
+ * when the note is large on screen, the bottom-right corner turned over
+ * (`stickyFold`: the sheet is cut along the crease and the corner lies on it),
+ * and a two-layer shadow — contact and ambient — that comes off the board under
+ * the pointer while the corner peels up a little further. The writing is laid
+ * out by `stickyRichLayout` — balanced lines, bold and italic, links,
  * checklists — and the paper's ink is checked against the paper in both themes.
  */
 export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myAuthorId, onToggleReaction, onTogglePin }) => {
@@ -134,15 +151,33 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
   const [isOverflowOpen, setIsOverflowOpen] = useState(false);
   const [isNoteHovered, setIsNoteHovered] = useState(false);
   const [isPinHovered, setIsPinHovered] = useState(false);
-  const paperRef = useRef<Konva.Shape>(null);
+  /** Carries the ambient shadow, under the sheet. */
+  const casterRef = useRef<Konva.Path>(null);
+  /** The sheet itself, carrying the contact shadow. */
+  const paperRef = useRef<Konva.Path>(null);
+  /** The folded corner's frame, scaled to lift it. */
+  const flapFrameRef = useRef<Konva.Group>(null);
+  const flapRef = useRef<Konva.Path>(null);
   const { canEdit, canComment } = useRoomPermissions();
 
   const dark = useChromeDark();
   const paper = paperOf(node.theme, dark);
   const sketchLevel = useSketchLevel(node.appearance);
-  const showGrain = useCoversPx(Math.min(node.width, node.height), GRAIN_MIN_PX);
+  const detail = usePaperDetail(Math.min(node.width, node.height));
+  const showGrain = detail === 2;
+  const showShadows = detail >= 1;
+  // A translucent note would show the caster through the sheet, so it keeps
+  // one shadow (the ambient, on the sheet) instead of two.
+  const layered = (node.opacity ?? 1) >= 1;
   const showAuthor = node.showAuthor !== false;
   const showStamps = node.showStamps !== false;
+
+  const fold = foldSize(node.width, node.height);
+  const place = flapPlacement(node.width, node.height, fold);
+  const sheetPath = useMemo(() => foldedPaperPath(node.width, node.height, STICKY_RADIUS, fold), [node.width, node.height, fold]);
+  const flapData = useMemo(() => flapPath(place.half), [place.half]);
+  const rest = paperShadows(dark, false, fold);
+  const sheetShadow = layered ? rest.contact : rest.ambient;
 
   // The paper cut by hand, from the same builder the exporter uses (`roughStickyPaper`).
   const sketchSeed = node.appearance?.sketchSeed;
@@ -150,23 +185,42 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
     () => (sketchLevel ? roughStickyPaper({ id: node.id, width: node.width, height: node.height, appearance: { sketchSeed } }, sketchLevel) : null),
     [node.id, node.width, node.height, sketchLevel, sketchSeed]
   );
+  /** The sheet's region: hand-cut in sketch mode, crisp otherwise. Either way the corner is cut. */
+  const sheetOutline = sketchPaper?.silhouette ?? sheetPath;
+  const faceStopList = useMemo(() => konvaStops(faceStops(paper)), [paper]);
+  const flapStopList = useMemo(() => konvaStops(flapStops(paper)), [paper]);
 
-  // The lift: the shadow deepens and falls further while the note is pointed at.
+  /**
+   * The lift, under the pointer: the contact shadow softens, the ambient one
+   * widens and falls further, and the corner peels up off the sheet.
+   *
+   * The resting values are the props, so React never re-applies them while the
+   * note is lifted; the tween owns the attributes between the two states.
+   */
   useEffect(() => {
-    const shape = paperRef.current;
-    if (!shape) return;
-    const target = isNoteHovered
-      ? { shadowOffsetY: 7, shadowBlur: 18, shadowOpacity: 0.2 }
-      : { shadowOffsetY: 3, shadowBlur: 10, shadowOpacity: 0.14 };
+    const s = paperShadows(dark, isNoteHovered, fold);
+    const sheet = layered ? s.contact : s.ambient;
+    const targets: Array<[Konva.Node | null, Konva.NodeConfig]> = [
+      [casterRef.current, { shadowOffsetY: s.ambient.offsetY, shadowBlur: s.ambient.blur, shadowOpacity: s.ambient.opacity }],
+      [paperRef.current, { shadowOffsetY: sheet.offsetY, shadowBlur: sheet.blur, shadowOpacity: sheet.opacity }],
+      [flapFrameRef.current, { scaleY: isNoteHovered ? FOLD_LIFT_SCALE : 1 }],
+      [flapRef.current, { shadowOffsetX: s.flap.offsetX, shadowOffsetY: s.flap.offsetY, shadowBlur: s.flap.blur, shadowOpacity: s.flap.opacity }],
+    ];
+    const live = targets.filter((t): t is [Konva.Node, Konva.NodeConfig] => t[0] !== null);
+    if (live.length === 0) return;
     if (prefersReducedMotion()) {
-      shape.setAttrs(target);
-      shape.getLayer()?.batchDraw();
+      for (const [shape, attrs] of live) shape.setAttrs(attrs);
+      live[0][0].getLayer()?.batchDraw();
       return;
     }
-    const tween = new Konva.Tween({ node: shape, duration: 0.16, easing: Konva.Easings.EaseOut, ...target });
-    tween.play();
-    return () => tween.destroy();
-  }, [isNoteHovered]);
+    const tweens = live.map(
+      ([shape, attrs]) => new Konva.Tween({ node: shape, duration: isNoteHovered ? 0.2 : 0.16, easing: Konva.Easings.EaseOut, ...attrs })
+    );
+    for (const t of tweens) t.play();
+    return () => {
+      for (const t of tweens) t.destroy();
+    };
+  }, [isNoteHovered, dark, fold, layered, showShadows, sketchPaper]);
 
   const box = textBox(node.width, node.height, STICKY_PADDING, node.tags.length > 0);
   useSyncExternalStore(fontEpoch.subscribe, fontEpoch.get, fontEpoch.get);
@@ -185,9 +239,10 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
     ? Object.entries(node.reactions).filter(([key, ids]) => ids.length > 0 && (key === STAMP_PLUS_ONE || isEmojiLike(key)))
     : [];
 
-  // Chips start after the author's chip and stop short of the add button.
+  // Chips start after the author's chip and stop short of the add button,
+  // which itself stops short of the folded corner.
   const startX = STICKY_PADDING + authorChipWidth;
-  const availWidth = Math.max(0, node.width - startX - 10 - 24);
+  const availWidth = Math.max(0, node.width - startX - Math.max(10, fold + 6) - 24);
   const footer = layoutFooter(reactions, availWidth);
 
   const quick = QUICK_STAMPS;
@@ -238,76 +293,88 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
         setIsPickerOpen(false);
       }}
     >
-      {/* A soft contact shadow under the bottom edge, so the sheet reads as resting on the board. */}
-      <Rect
-        x={node.width * 0.08}
-        y={node.height - 10}
-        width={node.width * 0.84}
-        height={8}
-        fill="black"
-        opacity={dark ? 0.32 : 0.1}
-        cornerRadius={4}
+      {/* The ambient shadow, cast by a copy of the sheet's outline under it. */}
+      {showShadows && layered && (
+        <Path
+          ref={casterRef}
+          data={sheetOutline}
+          fill={paper.bg}
+          shadowColor="black"
+          shadowOffsetY={rest.ambient.offsetY}
+          shadowBlur={rest.ambient.blur}
+          shadowOpacity={rest.ambient.opacity}
+          shadowForStrokeEnabled={false}
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      )}
+      {/* The sheet, carrying the contact shadow. */}
+      <Path
+        ref={paperRef}
+        data={sheetOutline}
+        fillLinearGradientStartPoint={{ x: 0, y: 0 }}
+        fillLinearGradientEndPoint={{ x: 0, y: node.height }}
+        fillLinearGradientColorStops={faceStopList}
+        shadowEnabled={showShadows}
         shadowColor="black"
-        shadowBlur={10}
-        shadowOffsetY={4}
-        shadowOpacity={1}
-        listening={false}
-        perfectDrawEnabled={false}
+        shadowOffsetY={sheetShadow.offsetY}
+        shadowBlur={sheetShadow.blur}
+        shadowOpacity={sheetShadow.opacity}
+        shadowForStrokeEnabled={false}
       />
+      {grainFill && <Path data={sheetOutline} fillPatternImage={grainFill} opacity={dark ? 0.5 : 0.7} listening={false} perfectDrawEnabled={false} />}
       {sketchPaper ? (
-        <>
-          <Path
-            ref={paperRef as React.Ref<Konva.Path>}
-            data={sketchPaper.silhouette}
-            fillLinearGradientStartPoint={{ x: 0, y: 0 }}
-            fillLinearGradientEndPoint={{ x: 0, y: node.height }}
-            fillLinearGradientColorStops={[0, paper.sheen, 0.35, paper.bg, 1, paper.bg]}
-            shadowColor="black"
-            shadowBlur={10}
-            shadowOffsetY={3}
-            shadowOpacity={0.14}
-          />
-          {grainFill && (
-            <Path data={sketchPaper.silhouette} fillPatternImage={grainFill} opacity={dark ? 0.5 : 0.7} listening={false} perfectDrawEnabled={false} />
-          )}
-          <Path data={sketchPaper.outline} fill="none" stroke={paper.edge} strokeWidth={sketchPaper.edgeWidth} lineCap="round" lineJoin="round" listening={false} />
-        </>
+        // No fill: the outline is open, overshooting strokes, and Konva reads
+        // `fill="none"` as no colour at all and fills the slivers between them black.
+        <Path data={sketchPaper.outline} stroke={paper.edge} strokeWidth={sketchPaper.edgeWidth} lineCap="round" lineJoin="round" listening={false} />
       ) : (
-        <>
-          <Rect
-            ref={paperRef as React.Ref<Konva.Rect>}
-            width={node.width}
-            height={node.height}
-            fillLinearGradientStartPoint={{ x: 0, y: 0 }}
-            fillLinearGradientEndPoint={{ x: 0, y: node.height }}
-            fillLinearGradientColorStops={[0, paper.sheen, 0.35, paper.bg, 1, paper.bg]}
-            cornerRadius={STICKY_RADIUS}
-            shadowColor="black"
-            shadowBlur={10}
-            shadowOffsetY={3}
-            shadowOpacity={0.14}
-          />
-          {grainFill && (
-            <Rect
-              width={node.width}
-              height={node.height}
-              cornerRadius={STICKY_RADIUS}
-              fillPatternImage={grainFill}
-              opacity={dark ? 0.5 : 0.7}
-              listening={false}
-              perfectDrawEnabled={false}
+        // A hairline on screen at any zoom, as the selection ring is; scaled with
+        // the board it reads as a printed border once the note is large.
+        <Path data={sheetPath} stroke={paper.edge} strokeWidth={1} strokeScaleEnabled={false} listening={false} perfectDrawEnabled={false} />
+      )}
+
+      {/* The turned corner, in its own frame (see `stickyFold`): lying on the sheet, lifting with it. */}
+      {fold > 0 && (
+        <Group ref={flapFrameRef} x={place.x} y={place.y} rotation={place.rotation} listening={false}>
+          {sketchPaper ? (
+            // The hand-cut flap is drawn in the note's space, so it is mapped
+            // back into the frame: the frame's inverse, then the frame.
+            <Group rotation={-place.rotation} offsetX={place.x} offsetY={place.y}>
+              <Path
+                ref={flapRef}
+                data={sketchPaper.flap.silhouette}
+                fill={paper.back}
+                shadowEnabled={showShadows}
+                shadowColor="black"
+                shadowOffsetX={rest.flap.offsetX}
+                shadowOffsetY={rest.flap.offsetY}
+                shadowBlur={rest.flap.blur}
+                shadowOpacity={rest.flap.opacity}
+                shadowForStrokeEnabled={false}
+              />
+              <Path data={sketchPaper.flap.outline} stroke={paper.edge} strokeWidth={sketchPaper.edgeWidth} lineCap="round" lineJoin="round" />
+            </Group>
+          ) : (
+            <Path
+              ref={flapRef}
+              data={flapData}
+              fillLinearGradientStartPoint={{ x: 0, y: 0 }}
+              fillLinearGradientEndPoint={{ x: 0, y: place.half }}
+              fillLinearGradientColorStops={flapStopList}
+              stroke={paper.edge}
+              strokeWidth={0.75}
+              strokeScaleEnabled={false}
+              lineJoin="round"
+              shadowEnabled={showShadows}
+              shadowColor="black"
+              shadowOffsetX={rest.flap.offsetX}
+              shadowOffsetY={rest.flap.offsetY}
+              shadowBlur={rest.flap.blur}
+              shadowOpacity={rest.flap.opacity}
+              shadowForStrokeEnabled={false}
             />
           )}
-          <Rect
-            width={node.width}
-            height={node.height}
-            cornerRadius={STICKY_RADIUS}
-            stroke={paper.edge}
-            strokeWidth={1}
-            listening={false}
-            perfectDrawEnabled={false}
-          />
-        </>
+        </Group>
       )}
 
       {showText && (

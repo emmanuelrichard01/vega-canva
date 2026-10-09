@@ -8,7 +8,8 @@
  * objects from one document.
  */
 
-import { rectRing, roughLoop, roughPolyline, roughSilhouette, seedFor, type SketchLevel } from './rough';
+import { roughLoop, roughPolyline, roughSilhouette, seedFor, type SketchLevel } from './rough';
+import { flapRing, foldedRing, foldSize } from './stickyFold';
 import type { Appearance, Point } from './schema';
 
 interface Seeded {
@@ -26,19 +27,35 @@ export interface StickyPaper {
   outline: string;
   /** The width the outline is stroked at. */
   edgeWidth: number;
+  /**
+   * The folded corner lying on the sheet, cut by the same hand: its region and
+   * its edge. Empty strings when the note is too small to fold.
+   */
+  flap: { silhouette: string; outline: string };
 }
 
-/** A sticky's sheet, cut by hand: a wobbly region and the pencil line round it. */
+/**
+ * A sticky's sheet, cut by hand: a wobbly region and the pencil line round it,
+ * with the bottom-right corner turned over as on the crisp paper (`stickyFold`).
+ */
 export function roughStickyPaper(
   node: Seeded & { width: number; height: number },
   level: SketchLevel
 ): StickyPaper {
-  const ring = rectRing(node.width, node.height);
+  const fold = foldSize(node.width, node.height);
+  const ring = foldedRing(node.width, node.height, fold);
+  const flap = flapRing(node.width, node.height, fold);
   const seed = seedFor(node.id, node.appearance?.sketchSeed);
+  // The flap's own seed, so its wobble is not the sheet's corner repeated.
+  const flapSeed = (seed + 0x9e37) >>> 0;
   return {
     silhouette: roughSilhouette(ring, { seed, level, width: STICKY_SKETCH_EDGE }),
     outline: roughPolyline(ring, { seed, level, width: STICKY_SKETCH_EDGE }),
     edgeWidth: STICKY_SKETCH_EDGE,
+    flap: {
+      silhouette: flap.length ? roughSilhouette(flap, { seed: flapSeed, level, width: STICKY_SKETCH_EDGE }) : '',
+      outline: flap.length ? roughPolyline(flap, { seed: flapSeed, level, width: STICKY_SKETCH_EDGE }) : '',
+    },
   };
 }
 

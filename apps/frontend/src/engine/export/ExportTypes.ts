@@ -34,11 +34,36 @@ export interface ExportOptions {
    */
   frameId?: string;
   /**
+   * PDF only: these frames, a page each, in board order. Without it a
+   * whole-board PDF takes every frame; a selection, a single frame or a
+   * visible area is one page.
+   */
+  frameIds?: string[];
+  /**
    * Embed fonts installed on this device into an SVG. Off unless the person
    * chose it: a local font is theirs to share. Uploaded board fonts are always
    * embedded.
    */
   embedLocalFonts?: boolean;
+  /**
+   * Write the app's own typefaces (the bundled ones and those served from
+   * Google Fonts) into an SVG, subset to the scripts the text uses, so the
+   * file renders the same on a machine without them. Costs file size; the
+   * dialog says how much.
+   */
+  embedFonts?: boolean;
+  /**
+   * Draw text objects in an SVG as filled outlines instead of live text, so
+   * the letterforms survive any reader. A face that cannot be outlined stays
+   * live text.
+   */
+  outlineText?: boolean;
+  /** Draw comment pins with the first line of each thread. Off unless asked for. */
+  includeComments?: boolean;
+  /** Stops a long export between steps; it rejects with an `AbortError`. */
+  signal?: AbortSignal;
+  /** Hears about each finished step of a long export (pages, tiles, files). */
+  onProgress?: (progress: { done: number; total: number }) => void;
 }
 
 export interface Exporter {

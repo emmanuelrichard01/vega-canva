@@ -3,7 +3,6 @@ import { TABLE_EXAMPLES, TABLE_EXAMPLE_CATEGORIES } from './tableExamples';
 import { normalizeTableSpec } from './tableTypes';
 import { layoutTable } from './tableLayout';
 import { tableToSvg } from './tableSvg';
-import { TABLE_TEMPLATES } from '../templates/tableTemplates';
 import { evaluateCell, isErr } from './tableFormula';
 
 /**
@@ -62,21 +61,6 @@ describe('table examples', () => {
       const svg = tableToSvg(spec, w, h, { id: e.id, sketch });
       expect(svg.length).toBeGreaterThan(0);
       expect(svg).not.toMatch(/NaN|undefined/);
-    }
-  });
-});
-
-describe('table templates', () => {
-  it.each(TABLE_TEMPLATES.map((t) => [t.id, t] as const))('%s keeps every tile inside its frame', (_, t) => {
-    const nodes = t.build() as Array<{ type: string; x: number; y: number; width: number; height: number }>;
-    const frame = nodes.find((n) => n.type === 'frame')!;
-    const tiles = nodes.filter((n) => n.type === 'table' || n.type === 'chart');
-    expect(tiles.length).toBeGreaterThan(0);
-    for (const n of tiles) {
-      expect(n.x).toBeGreaterThanOrEqual(frame.x);
-      expect(n.y).toBeGreaterThanOrEqual(frame.y);
-      expect(n.x + n.width).toBeLessThanOrEqual(frame.x + frame.width);
-      expect(n.y + n.height).toBeLessThanOrEqual(frame.y + frame.height);
     }
   });
 });

@@ -1,8 +1,5 @@
 import type React from 'react';
 
-/** Arrange in grid from the keyboard (⌥⇧G); bound by the rail's frame while several objects are selected. */
-export const ARRANGE_IN_GRID_KEYS = 'Alt+Shift+G';
-
 /** No rail carries more than this many controls; the rest live in `⋯` and the panel. */
 export const RAIL_CONTROL_CAP = 9;
 

@@ -6,10 +6,28 @@ import { FORMAT_SPECS, type ExportFormat, type ExportOptions } from './ExportTyp
 import { canCopyImage, copyImage, copyVector, type ClipboardResult } from './clipboard';
 import { computeContentBounds } from './bounds';
 import { clipboardScale } from './rasterLimits';
+import { renderSvg, type SvgReport } from './SVGExporter';
+import { zipBlob } from './zipWriter';
+import { uniqueFilenames } from './filenames';
+import { throwIfAborted } from './abort';
 
 // Filenames live in their own module so they can be asserted without the
 // document store this one depends on. Re-exported to keep one import site.
 export { slugify, exportFilename } from './filenames';
+
+/** One file of a multi-file export. */
+export interface ExportJob {
+  format: ExportFormat;
+  options: ExportOptions;
+  filename: string;
+}
+
+export interface ExportFilesResult {
+  /** How many files were written. */
+  files: number;
+  /** True when they went out as one ZIP rather than as a single file. */
+  archive: boolean;
+}
 
 /**
  * Turn `frameId` into the `bounds` and `selectedIds` the exporters understand.
@@ -57,6 +75,47 @@ class ExportServiceClass {
     const exporter = ExportRegistry.get(type);
     if (!exporter) throw new Error(`No exporter found for type: ${type}`);
     return toBlob(await exporter.export(resolveExportTarget(options)), type);
+  }
+
+  /**
+   * An SVG and what went into it: the bytes embedded fonts add, the families
+   * that could not be carried, and the text left live because its face could
+   * not be outlined. The dialog shows these beside the preview.
+   */
+  async renderSvgReport(options: ExportOptions = {}): Promise<SvgReport & { blob: Blob }> {
+    const report = await renderSvg(resolveExportTarget(options));
+    return { ...report, blob: new Blob([report.svg], { type: FORMAT_SPECS.svg.mime }) };
+  }
+
+  /**
+   * Several files at once: one frame per file, or one object in several
+   * presets. Rendered one after another (so a long run reports progress and
+   * can be cancelled between files), then saved as the file itself when
+   * there is only one, or as a single ZIP named `archiveName` when there are
+   * more. Names are made distinct within the archive.
+   */
+  async exportFiles(
+    jobs: readonly ExportJob[],
+    run: { archiveName: string; signal?: AbortSignal; onProgress?: (p: { done: number; total: number }) => void }
+  ): Promise<ExportFilesResult> {
+    if (jobs.length === 0) throw new Error('There is nothing to export. Select a frame or an object first.');
+    const names = uniqueFilenames(jobs.map((j) => j.filename));
+    const files: Array<{ name: string; data: Uint8Array }> = [];
+    for (let i = 0; i < jobs.length; i++) {
+      throwIfAborted(run.signal);
+      const job = jobs[i];
+      const blob = await this.render(job.format, { ...job.options, signal: run.signal });
+      if (jobs.length === 1) {
+        this.save(blob, names[0]);
+        run.onProgress?.({ done: 1, total: 1 });
+        return { files: 1, archive: false };
+      }
+      files.push({ name: names[i], data: new Uint8Array(await blob.arrayBuffer()) });
+      run.onProgress?.({ done: i + 1, total: jobs.length });
+    }
+    throwIfAborted(run.signal);
+    this.save(zipBlob(files), run.archiveName.endsWith('.zip') ? run.archiveName : `${run.archiveName}.zip`);
+    return { files: files.length, archive: true };
   }
 
   /** Render and hand it to the browser to save. */

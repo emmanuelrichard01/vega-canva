@@ -8,6 +8,11 @@ interface Props {
   min?: number;
   max?: number;
   step?: number;
+  /**
+   * What Shift+↑/↓ moves by. Ten steps by default; a field whose step is a
+   * fraction (a 0.25 stroke weight) sets a round unit instead.
+   */
+  coarseStep?: number;
   /** Decimal places kept. Defaults to what `step` and the value itself imply. */
   precision?: number;
   /** The axis letter inside the field: X, Y, W, H, R. */
@@ -69,6 +74,7 @@ export const NumberStepper: React.FC<Props> = ({
   min = -Infinity,
   max = Infinity,
   step = 1,
+  coarseStep,
   precision,
   label,
   className = '',
@@ -115,7 +121,7 @@ export const NumberStepper: React.FC<Props> = ({
   /** An arrow press: relative on a mixed field, absolute otherwise. Shift takes ten. */
   const handleStep = (direction: 1 | -1, coarse = false) => {
     if (disabled) return;
-    const amount = direction * step * (coarse ? 10 : 1);
+    const amount = direction * (coarse ? coarseStep ?? step * 10 : step);
     if (mixed) {
       onNudge?.(amount);
       return;
@@ -274,7 +280,7 @@ export const NumberStepper: React.FC<Props> = ({
           }}
           onBlur={handleBlur}
           onKeyDown={handleKeyDown}
-          title={disabledReason || '↑ ↓ to step · Shift for ten'}
+          title={disabledReason || (coarseStep !== undefined ? `↑ ↓ to step · Shift for ${coarseStep}` : '↑ ↓ to step · Shift for ten')}
         />
         {suffix && !mixed && (
           <span className="stepper__suffix" aria-hidden="true">

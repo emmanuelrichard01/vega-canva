@@ -106,3 +106,24 @@ export function computeContentBounds(
     height: Math.max(1, maxY - minY + pad * 2),
   };
 }
+
+/**
+ * The world rectangle the camera shows: the stage's size divided by its
+ * zoom, from its pan. What "Visible area" exports, so the file is what is on
+ * screen, at any scale.
+ */
+export function viewportBounds(stage: {
+  x(): number;
+  y(): number;
+  scaleX(): number;
+  width(): number;
+  height(): number;
+}): ExportBounds {
+  const zoom = stage.scaleX() || 1;
+  return {
+    x: -stage.x() / zoom,
+    y: -stage.y() / zoom,
+    width: Math.max(1, stage.width() / zoom),
+    height: Math.max(1, stage.height() / zoom),
+  };
+}

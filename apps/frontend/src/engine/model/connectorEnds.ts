@@ -17,6 +17,14 @@ import type { Point } from './connector';
  *    marker on a flowchart.
  *  - **Diamond** — containment or aggregation, straight out of UML.
  *  - **Bar** — a terminator: the line stops here, it does not point anywhere.
+ *  - **Open arrow** — direction, drawn as two strokes rather than a solid. The
+ *    lighter of the two arrows, and the one FigJam and Excalidraw lead with.
+ *  - **Crow's foot** — "many", from entity-relationship notation. Three prongs
+ *    spread against the object the line arrives at.
+ *
+ * The two outline markers (`filled: false`) are open polylines: every renderer
+ * strokes them without closing the path, which is what keeps a chevron from
+ * becoming a triangle outline.
  *
  * ## Why the geometry is here and not in the renderer
  *
@@ -26,17 +34,37 @@ import type { Point } from './connector';
  * agreeing about where a marker actually is, rather than the renderer knowing
  * and everything else guessing.
  */
-export type EndCapKind = 'none' | 'arrow' | 'triangle' | 'circle' | 'diamond' | 'bar';
+export type EndCapKind =
+  | 'none'
+  | 'arrow'
+  | 'open-arrow'
+  | 'triangle'
+  | 'circle'
+  | 'diamond'
+  | 'bar'
+  | 'crow-foot';
 
-export const END_CAP_KINDS: EndCapKind[] = ['none', 'arrow', 'triangle', 'circle', 'diamond', 'bar'];
+/** Every end, in the order the pickers offer them: directions first, then notation. */
+export const END_CAP_KINDS: EndCapKind[] = [
+  'none',
+  'arrow',
+  'open-arrow',
+  'triangle',
+  'circle',
+  'diamond',
+  'bar',
+  'crow-foot',
+];
 
 export const END_CAP_LABELS: Record<EndCapKind, string> = {
   none: 'None',
   arrow: 'Arrow',
+  'open-arrow': 'Open arrow',
   triangle: 'Triangle',
   circle: 'Circle',
   diamond: 'Diamond',
   bar: 'Bar',
+  'crow-foot': "Crow's foot",
 };
 
 /** How a marker is painted: an outline, or a solid. */
@@ -152,6 +180,23 @@ export function endCapShape(kind: EndCapKind, tip: Point, angle: number, size: n
       // Open, not filled: a bar is a stroke across the line, and filling a
       // two-point polygon paints nothing.
       return { points: [x1, y1, x2, y2], circle: null, filled: false, inset: 0 };
+    }
+    case 'open-arrow': {
+      // A chevron: two arms meeting at the tip, stroked at the line's weight.
+      // The line runs into the tip, so nothing is trimmed and the three
+      // strokes join as one mark.
+      const [x1, y1] = at(size * 0.8, size * 0.5);
+      const [x3, y3] = at(size * 0.8, -size * 0.5);
+      return { points: [x1, y1, tip.x, tip.y, x3, y3], circle: null, filled: false, inset: 0 };
+    }
+    case 'crow-foot': {
+      // The prongs spread against the endpoint and meet one marker-depth back
+      // along the line; the middle prong is the line itself.
+      const half = size * 0.5;
+      const [x1, y1] = at(0, half);
+      const [x2, y2] = at(size, 0);
+      const [x3, y3] = at(0, -half);
+      return { points: [x1, y1, x2, y2, x3, y3], circle: null, filled: false, inset: 0 };
     }
     default:
       return null;
@@ -280,16 +325,25 @@ export function connectorCaps(
   const run = polylineLength(points);
   const size = Math.min(endCapSize(spec.strokeWidth, spec.scale ?? 1), Math.max(1, run * MAX_CAP_SHARE));
   if (points.length < 4) return { start: null, end: null, size };
-  return {
-    start: endCapShape(spec.start, { x: points[0], y: points[1] }, endAngle(points, true), size),
-    end: endCapShape(
-      spec.end,
-      { x: points[points.length - 2], y: points[points.length - 1] },
-      endAngle(points, false),
-      size
-    ),
-    size,
+  /**
+   * Flush on the endpoint, as `terminateRun` lands a line's head: the marker
+   * is stroked at the line's weight, so its painted edge sits half a stroke
+   * outside its geometry. The geometric tip goes half a stroke inside the
+   * endpoint and the trim grows by the same amount, so the head touches the
+   * box edge instead of stabbing into it. The canvas, the SVG export and the
+   * stored bounds all read the caps from here.
+   */
+  const pull = Math.max(0, spec.strokeWidth) / 2;
+  const place = (kind: EndCapKind, atStart: boolean): EndCapShape | null => {
+    const angle = endAngle(points, atStart);
+    const end = atStart
+      ? { x: points[0], y: points[1] }
+      : { x: points[points.length - 2], y: points[points.length - 1] };
+    const tip = { x: end.x - Math.cos(angle) * pull, y: end.y - Math.sin(angle) * pull };
+    const cap = endCapShape(kind, tip, angle, size);
+    return cap ? { ...cap, inset: cap.inset + pull } : null;
   };
+  return { start: place(spec.start, true), end: place(spec.end, false), size };
 }
 
 /**
@@ -397,14 +451,27 @@ export function terminateRun(
     };
   }
 
-  // `inside`: the tip stays on the path's last point and the run is pulled
-  // back under the marker, or the stroke draws through the head and out past
-  // its tip.
-  const startCap = endCapShape(spec.start, a, startAngle, size);
-  const endCap = endCapShape(spec.end, b, endAngle, size);
+  /**
+   * `inside`: the marker's outer edge lands on the path's last point, and the
+   * run is pulled back under the marker, or the stroke draws through the head
+   * and out past its tip.
+   *
+   * Every marker is stroked at the line's weight, so its painted edge sits
+   * half a stroke outside its geometry. The geometric tip is therefore placed
+   * half a stroke *inside* the endpoint. Without that, a 6px arrow snapped to a
+   * box edge pushes its point 3px into the box, which is the difference
+   * between a head that touches the edge and one that stabs it.
+   */
+  const pull = Math.max(0, spec.strokeWidth) / 2;
+  const inward = (p: Point, angle: number): Point => ({
+    x: p.x - Math.cos(angle) * pull,
+    y: p.y - Math.sin(angle) * pull,
+  });
+  const startCap = endCapShape(spec.start, inward(a, startAngle), startAngle, size);
+  const endCap = endCapShape(spec.end, inward(b, endAngle), endAngle, size);
   const run = trimPolyline(
-    trimPolyline(points, startCap?.inset ?? 0, true),
-    endCap?.inset ?? 0,
+    trimPolyline(points, startCap ? startCap.inset + pull : 0, true),
+    endCap ? endCap.inset + pull : 0,
     false
   );
   return { run, start: startCap, end: endCap, size };

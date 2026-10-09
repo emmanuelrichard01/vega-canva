@@ -5,14 +5,17 @@ import { cameraSystem } from '../../engine/CameraSystem';
 import { engineEvents } from '../../engine/EventBus';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { claimCursor } from '../../engine/cursor/cursorOverride';
-import { cursorCss } from '../../engine/cursor/cursorCss';
-import { rotateVisual } from '../../engine/cursor/cursorVisual';
+import { rotateCursorCss } from '../../engine/cursor/rotateCursor';
 import {
   angleDelta,
   angleOf,
   centreOf,
   reachAt,
-  rotateCursorAngle,
+  CORNER_SIGNS,
+  corners,
+  inCornerRing,
+  intoFrame,
+  radialAngle,
   rotateZones,
   rotationFor,
   type Box,
@@ -75,12 +78,30 @@ interface Props {
   onStart: (kind: 'rotate' | 'shear') => void;
   onMove: () => void;
   onEnd: () => void;
+  /**
+   * Escape: the turn was abandoned and the object is back where it began, so
+   * nothing is to be written. Absent, a cancelled turn ends through `onEnd`.
+   */
+  onCancel?: () => void;
   /** True while the parent's own transformer is running a resize. */
   transforming: boolean;
 }
 
 /** The same blue every other selection mark on this canvas uses. */
 const ACCENT = '#3B82F6';
+
+/** The radial ticks of the 15° snap grid, as line points about the pivot. */
+export function snapTicks(gridOffset: number, radius: number, px: number): number[][] {
+  const out: number[][] = [];
+  for (let k = 0; k < 360 / SNAP; k += 1) {
+    const rad = ((gridOffset + k * SNAP) * Math.PI) / 180;
+    const inner = radius - (k % 3 === 0 ? 7 : 4) * px;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    out.push([cos * inner, sin * inner, cos * radius, sin * radius]);
+  }
+  return out;
+}
 
 /** Shift squares the result to the world, not to wherever the object already was. */
 const SNAP = 15;
@@ -147,6 +168,7 @@ export const RotateZones: React.FC<Props> = ({
   onStart,
   onMove,
   onEnd,
+  onCancel,
   transforming,
 }) => {
   const gesture = useRef<Gesture | null>(null);
@@ -175,14 +197,20 @@ export const RotateZones: React.FC<Props> = ({
    * So the HUD draws only what the badge *cannot* say: where the rotation
    * began, where it is now, and the angle between them as a shape.
    */
-  const [hud, setHud] = useState<{ from: number; to: number; reach: number } | null>(null);
+  const [hud, setHud] = useState<{
+    from: number;
+    to: number;
+    reach: number;
+    /** While Shift snaps: the ray angle of an object rotation of 0°, so the 15° grid can be drawn. */
+    grid: number | null;
+  } | null>(null);
 
   /**
    * Everything the window listeners need, refreshed every render and read when
    * they fire. This is what lets the effect below have no dependencies.
    */
-  const live = useRef({ box, centre: centreOf(box), proxyRef, onStart, onMove, onEnd });
-  live.current = { box, centre: centreOf(box), proxyRef, onStart, onMove, onEnd };
+  const live = useRef({ box, centre: centreOf(box), proxyRef, onStart, onMove, onEnd, onCancel });
+  live.current = { box, centre: centreOf(box), proxyRef, onStart, onMove, onEnd, onCancel };
 
   /**
    * The zoom, so a zone keeps a constant size on screen.
@@ -199,7 +227,7 @@ export const RotateZones: React.FC<Props> = ({
   }, []);
 
   useEffect(() => {
-    const finish = () => {
+    const finish = (cancelled = false) => {
       const g = gesture.current;
       if (!g) return;
       gesture.current = null;
@@ -208,7 +236,9 @@ export const RotateZones: React.FC<Props> = ({
       // A press that never moved began nothing, so there is nothing to end.
       // Calling `onEnd` here is what committed a transform between two
       // different selections — see the note on `Gesture`.
-      if (g.begun) live.current.onEnd();
+      if (!g.begun) return;
+      if (cancelled && live.current.onCancel) live.current.onCancel();
+      else live.current.onEnd();
     };
 
     const move = (e: PointerEvent) => {
@@ -239,23 +269,46 @@ export const RotateZones: React.FC<Props> = ({
       g.prevAngle = now;
       proxy.rotation(rotationFor(g.startRotation, g.travelled, e.shiftKey ? SNAP : 0));
       notify();
+      // The arrows keep facing the hand as it circles the centre.
+      claimCursor('rotate', rotateCursorCss(radialAngle(centre, world)));
 
       // The ray the hand is on, and the ray it started from. Both in world
       // degrees, so the HUD needs no knowledge of the object's own angle.
+      // Snapping, the live ray shows where the object *is* (the snapped
+      // angle), not where the hand is, so the wedge and the result agree.
+      const from = now - g.travelled;
+      const snapping = e.shiftKey;
       setHud({
-        from: now - g.travelled,
-        to: now,
+        from,
+        to: snapping ? from + (proxy.rotation() - g.startRotation) : now,
         reach: Math.max(Math.hypot(world.x - centre.x, world.y - centre.y), 1),
+        grid: snapping ? from - g.startRotation : null,
       });
     };
 
+    // Escape puts the object back where the turn began, then ends it.
+    const key = (e: KeyboardEvent) => {
+      const g = gesture.current;
+      if (e.key !== 'Escape' || !g) return;
+      if (g.begun) {
+        live.current.proxyRef.current?.rotation(g.startRotation);
+        live.current.onMove();
+      }
+      finish(true);
+    };
+
+    const done = () => finish();
     window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', finish);
-    window.addEventListener('blur', finish);
+    window.addEventListener('pointerup', done);
+    window.addEventListener('pointercancel', done);
+    window.addEventListener('blur', done);
+    window.addEventListener('keydown', key);
     return () => {
+      window.removeEventListener('pointercancel', done);
+      window.removeEventListener('keydown', key);
       window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', finish);
-      window.removeEventListener('blur', finish);
+      window.removeEventListener('pointerup', done);
+      window.removeEventListener('blur', done);
       // A gesture interrupted by this unmounting — a selection change
       // mid-rotation — is committed rather than abandoned half-applied, and
       // the pointer is given back.
@@ -283,6 +336,16 @@ export const RotateZones: React.FC<Props> = ({
    * what keeps a corner zone on its corner once the object is turned.
    */
   const px = 1 / zoom;
+  const cornerPts = corners(box);
+  const screenMin = Math.min(box.width, box.height) * zoom;
+  /** The pointer in world space if it is inside corner `i`'s quarter ring, else null. */
+  const ringHit = (e: Konva.KonvaEventObject<MouseEvent>, i: number) => {
+    const p = e.target.getStage()?.getPointerPosition();
+    if (!p) return null;
+    const world = cameraSystem.screenToWorld(p.x, p.y);
+    const local = intoFrame(centre, world, rotation);
+    return inCornerRing(cornerPts[i], CORNER_SIGNS[i], local, zoom, screenMin) ? world : null;
+  };
 
   /**
    * The rotation HUD.
@@ -330,6 +393,13 @@ export const RotateZones: React.FC<Props> = ({
         strokeWidth={1.4 * px}
       />
       <Circle radius={3.5 * px} fill="#FFFFFF" stroke={ACCENT} strokeWidth={1.4 * px} />
+      {/* The 15° grid Shift snaps to, as protractor ticks round the wedge's
+          rim: longer every 45°, so the snap targets are visible before the
+          hand reaches them. */}
+      {hud.grid !== null &&
+        snapTicks(hud.grid, Math.min(hud.reach, 78 * px), px).map((points, i) => (
+          <Line key={i} points={points} stroke={ACCENT} strokeWidth={1 * px} opacity={i % 3 === 0 ? 0.75 : 0.4} />
+        ))}
     </Group>
   ) : null;
 
@@ -350,17 +420,14 @@ export const RotateZones: React.FC<Props> = ({
           {...zone}
           fill="transparent"
           perfectDrawEnabled={false}
-          onMouseEnter={() =>
-            claimCursor(
-              'rotate',
-              // `grab` rather than `default`: if the image cursor cannot be
-              // used, the fallback should still say "this turns things".
-              cursorCss(rotateVisual(rotateCursorAngle(i, rotation)), 'grab')
-            )
-          }
+          onMouseMove={(e) => {
+            if (gesture.current) return;
+            const world = ringHit(e, i);
+            if (world) claimCursor('rotate', rotateCursorCss(radialAngle(centre, world)));
+            else claimCursor('rotate', null);
+          }}
           onMouseLeave={() => {
-            // Not while dragging: the pointer leaves the little square within a
-            // few degrees of travel, and the cursor must not revert mid-turn.
+            // Not while dragging: the cursor must not revert mid-turn.
             if (!gesture.current) claimCursor('rotate', null);
           }}
           onMouseDown={(e) => {
@@ -368,6 +435,8 @@ export const RotateZones: React.FC<Props> = ({
             const pointer = stage?.getPointerPosition();
             const proxy = proxyRef.current;
             if (!pointer || !stage || !proxy) return;
+            // Off the ring (over a handle, or past the outer edge): not ours.
+            if (!ringHit(e, i)) return;
             // Konva's own drag must not also start: a rotation is not a move.
             e.cancelBubble = true;
             // `getPointerPosition` is already stage-relative, so this one needs

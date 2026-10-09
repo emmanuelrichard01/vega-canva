@@ -51,7 +51,7 @@ export const HomePalette: React.FC<Props> = ({
       id: `template-${t.id}`,
       label: t.name,
       detail: CATEGORIES.find((c) => c.id === t.category)?.label,
-      keywords: `${t.blurb} ${t.teaches.join(' ')}`,
+      keywords: `${t.blurb} ${t.teaches.join(' ')} ${(t.tags ?? []).join(' ')}`,
       group: 'Templates',
       icon: <Compass size={16} />,
       perform: () => onPeekTemplate(t),

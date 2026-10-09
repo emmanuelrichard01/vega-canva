@@ -1,14 +1,5 @@
-import { nanoid } from 'nanoid';
-import { applyNodePatches, doc } from '../document';
-import { editor } from '../api/EditorAPI';
-import { useStore } from '../../hooks/useStore';
-import type { AnyNode, GridNode } from '../model/schema';
-import { nodeBounds } from '../model/selection';
 import { defaultStyle } from './gridStyle';
 import { normalizeRecipe } from './gridNode';
-import { gridCellsOf } from './gridNode';
-import { fitInCell, isSlottable, type ReflowPatch, type SlottableNode } from './gridReflow';
-import { slotBox } from './gridSlot';
 import type { GridRecipe } from './gridBuild';
 
 /**
@@ -171,87 +162,4 @@ export function arrangementRecipe(a: Arrangement): { box: { x: number; y: number
     height
   );
   return { box: { x: a.x, y: a.y, width, height }, recipe };
-}
-
-function itemOf(node: AnyNode): Item {
-  const b = nodeBounds(node);
-  return { id: node.id, cx: b.x + b.width / 2, cy: b.y + b.height / 2, width: b.width, height: b.height };
-}
-
-/**
- * Arrange these objects in a grid. One transaction, so one undo step.
- *
- * Objects that cannot sit in a module (connectors, frames, lines, grids) and
- * locked objects are left where they are. Returns the new grid's id, or null
- * when fewer than two objects could be arranged.
- */
-export function arrangeSelectionInGrid(ids: readonly string[]): string | null {
-  const objects = useStore.getState().objects;
-  const nodes = ids
-    .map((id) => objects[id])
-    .filter((n): n is SlottableNode => isSlottable(n) && !n.locked);
-  const plan = planArrangement(nodes.map(itemOf));
-  if (!plan) return null;
-
-  const { box, recipe } = arrangementRecipe(plan);
-  const id = nanoid();
-  const zIndex = Math.min(...nodes.map((n) => n.zIndex)) - 1;
-  const shared = nodes[0];
-  const grid: GridNode = {
-    id,
-    type: 'grid',
-    ...box,
-    rotation: 0,
-    scaleX: 1,
-    scaleY: 1,
-    opacity: 1,
-    zIndex,
-    locked: false,
-    hidden: false,
-    createdBy: '',
-    createdAt: 0,
-    updatedAt: 0,
-    grid: recipe,
-  };
-
-  const cells = new Map(gridCellsOf(grid).map((c) => [c.index, c]));
-  const patches: ReflowPatch[] = [];
-  for (const node of nodes) {
-    const cell = cells.get(plan.cells[node.id]);
-    if (!cell) continue;
-    const local = fitInCell(node, cell, recipe.spec.contentAlign);
-    const placed = slotBox(grid, local);
-    patches.push({
-      id: node.id,
-      changes: {
-        gridSlot: { gridId: id, cell: plan.cells[node.id] },
-        x: placed.x,
-        y: placed.y,
-        width: placed.width,
-        height: placed.height,
-        rotation: placed.rotation,
-        ...(node.type === 'text' ? { resize: 'fixed' } : null),
-      },
-    });
-  }
-
-  doc.transact(() => {
-    editor.createNode({
-      id,
-      type: 'grid',
-      ...box,
-      rotation: 0,
-      scaleX: 1,
-      scaleY: 1,
-      opacity: 1,
-      zIndex,
-      // The grid lives where its content lives, so it moves with the same
-      // frame and group the objects did.
-      parentId: nodes.every((n) => n.parentId === shared.parentId) ? shared.parentId : undefined,
-      frameId: nodes.every((n) => n.frameId === shared.frameId) ? shared.frameId : undefined,
-      grid: recipe,
-    } as never);
-    applyNodePatches(patches);
-  });
-  return id;
 }

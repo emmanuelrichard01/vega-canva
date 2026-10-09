@@ -30,8 +30,8 @@ describe('editorKeyIntent', () => {
     expect(editorKeyIntent(key('Escape', { isComposing: true }), sticky)).toBeNull();
   });
 
-  it('cancels on Escape and formats on the familiar chords', () => {
-    expect(editorKeyIntent(key('Escape'), text)).toEqual({ kind: 'cancel' });
+  it('commits on Escape (the commit drops an empty box) and formats on the familiar chords', () => {
+    expect(editorKeyIntent(key('Escape'), text)).toEqual({ kind: 'finish' });
     expect(editorKeyIntent(key('b', { metaKey: true }), text)).toEqual({ kind: 'format', command: 'bold' });
     expect(editorKeyIntent(key('b', { metaKey: true }), sticky)).toBeNull();
   });

@@ -593,6 +593,34 @@ interface LegendOverride {
   items: Array<{ label: string; color: string; seriesIndex: number; hidden: boolean }>;
 }
 
+/**
+ * A Gaussian kernel density curve over a histogram's bars.
+ *
+ * Evaluated over the sample range, which is what the buckets span, using the
+ * samples themselves: by the time a layout is drawn the spec holds bucket
+ * counts, and the counts' own domain says nothing about where samples lie.
+ */
+function histogramDensityCurve(raw: ChartSpec, layout: { plot: { x: number; y: number; width: number; height: number }; bars: unknown[] }): Point[] | null {
+  const values = raw.series.flatMap((s) => s.values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v)));
+  if (values.length < 2 || layout.bars.length === 0) return null;
+  const numEval = 40;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const v of values) {
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  const evalPts: number[] = [];
+  for (let i = 0; i <= numEval; i += 1) evalPts.push(lo + (i / numEval) * (hi - lo));
+  const densities = kernelDensityEstimation(values, evalPts);
+  const maxDensity = Math.max(...densities.map((d) => d.density), 1e-6);
+  const { plot } = layout;
+  return densities.map((d, i) => ({
+    x: plot.x + (i / numEval) * plot.width,
+    y: plot.y + plot.height - (d.density / maxDensity) * (plot.height * 0.85),
+  }));
+}
+
 function layoutChartCore(
   rawSpec: ChartSpec,
   width: number,
@@ -835,6 +863,9 @@ function layoutChartCore(
         return layoutCartesian(prepared, opts, usable, height, top, bottomReserved, title, measure, empty);
       })();
 
+  const kdeCurve =
+    rawSpec.kind === 'histogram' && rawSpec.showKde ? histogramDensityCurve(rawSpec, layout) : layout.kdeCurve;
+
   let xAxisTitle: ChartLabel | null = null;
   if (spec.xAxisLabel && layout.plot.width > 0) {
     xAxisTitle = {
@@ -926,6 +957,7 @@ function layoutChartCore(
     xAxisTitle,
     yAxisTitle,
     toleranceBand: layout.toleranceBand ?? toleranceBand,
+    kdeCurve,
     categoryNames: spec.categories,
   };
 }
@@ -1502,25 +1534,8 @@ function layoutCartesian(
     }
   }
 
-  // Gaussian Kernel Density Estimation (KDE) curve for histogram
-  let kdeCurve: Point[] | null = null;
-  if (kind === 'histogram' && spec.showKde && spec.series.length > 0) {
-    const rawValues = spec.series.flatMap((s) => s.values.filter((v): v is number => typeof v === 'number'));
-    if (rawValues.length >= 2 && bars.length > 0) {
-      const numEval = 40;
-      const evalPts: number[] = [];
-      for (let i = 0; i <= numEval; i += 1) {
-        evalPts.push(domain[0] + (i / numEval) * (domain[1] - domain[0]));
-      }
-      const densities = kernelDensityEstimation(rawValues, evalPts);
-      const maxDensity = Math.max(...densities.map((d) => d.density), 1e-6);
-      kdeCurve = densities.map((d, i) => {
-        const screenX = plot.x + (i / numEval) * plot.width;
-        const screenY = plot.y + plot.height - (d.density / maxDensity) * (plot.height * 0.85);
-        return { x: screenX, y: screenY };
-      });
-    }
-  }
+  // The histogram's density curve is drawn by `layoutChartCore`, which still has the samples.
+  const kdeCurve: Point[] | null = null;
 
   // In category order, so "the next column" means what it looks like.
   const columns = [...columnBuild.values()].sort((a, b) => a.categoryIndex - b.categoryIndex);

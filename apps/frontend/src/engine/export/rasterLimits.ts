@@ -100,3 +100,60 @@ export function clipboardScale(
   const banded = Math.min(max, Math.max(min, wanted));
   return fitScale(width, height, banded);
 }
+
+/**
+ * How large a PNG may be when it is drawn in tiles.
+ *
+ * Above the single-canvas ceiling a PNG is drawn a band at a time and its
+ * rows are streamed through the browser's own deflate (`CompressionStream`),
+ * so no canvas ever exceeds the ceiling and the full bitmap never exists in
+ * memory. 64 megapixels (8000 × 8000) is where the guard sits: past it the
+ * file runs to hundreds of megabytes and the draw to minutes, which is a
+ * vector export's job, and the dialog says so.
+ */
+export const MAX_TILED_AREA = 64_000_000;
+/** The longest edge a tiled PNG may have. */
+export const MAX_TILED_EDGE = 32_000;
+
+/** Whether this browser can stream a tiled PNG. */
+export function canTile(): boolean {
+  return typeof CompressionStream !== 'undefined';
+}
+
+/**
+ * The scale an export at these bounds will actually be drawn at, and whether
+ * it will be tiled to get there. PNG tiles past the single-canvas ceiling
+ * where the browser can; other formats are encoded from one canvas and stop
+ * at it.
+ */
+export function plannedScale(
+  width: number,
+  height: number,
+  requested: number,
+  tiling: boolean
+): { scale: number; tiled: boolean } {
+  const w = Math.max(width, 1);
+  const h = Math.max(height, 1);
+  const fitsOneCanvas = (s: number) => w * s * h * s <= MAX_CANVAS_AREA && Math.max(w, h) * s <= MAX_CANVAS_EDGE;
+  if (!tiling || fitsOneCanvas(requested)) return { scale: fitScale(width, height, requested), tiled: false };
+  const byEdge = Math.min(MAX_TILED_EDGE / w, MAX_TILED_EDGE / h);
+  const byArea = Math.sqrt(MAX_TILED_AREA / (w * h));
+  // Never below 1:1, for `fitScale`'s reason: a board already past the guard
+  // at its own size is drawn at its own size, in tiles, rather than shrunk.
+  const scale = Math.max(Math.min(requested, byEdge, byArea), Math.min(requested, 1));
+  return { scale, tiled: !fitsOneCanvas(scale) };
+}
+
+/** Rows drawn per band of a tiled export: about 16 MB of pixels, never fewer than 64 rows. */
+export function bandHeight(width: number): number {
+  return Math.max(64, Math.min(2048, Math.floor(4_194_304 / Math.max(1, width))));
+}
+
+/** The columns one band is drawn in, each within the single-canvas edge. */
+export function bandColumns(width: number, maxEdge = MAX_CANVAS_EDGE): Array<{ x: number; width: number }> {
+  const count = Math.max(1, Math.ceil(width / maxEdge));
+  const each = Math.ceil(width / count);
+  const out: Array<{ x: number; width: number }> = [];
+  for (let x = 0; x < width; x += each) out.push({ x, width: Math.min(each, width - x) });
+  return out;
+}

@@ -27,6 +27,15 @@ interface StoreState {
   /** Latest snapshot of every node, keyed by id. */
   objects: Record<string, AnyNode>;
   /**
+   * How many entries `objects` has, kept in step with it.
+   *
+   * For subscribers that only need the count or emptiness. Reading it off
+   * `objects` (`Object.keys(...).length`, a `for...in`) is a walk over the
+   * whole board, and a selector runs on every store change, so three such
+   * selectors cost several milliseconds per remote edit on a large board.
+   */
+  objectCount: number;
+  /**
    * Latest snapshot of every group, keyed by group id.
    *
    * Separate from `objects` because a group draws nothing and every consumer
@@ -363,6 +372,7 @@ const DEFAULT_PEN_SMOOTHING = 72;
 
 export const useStore = create<StoreState>((set) => ({
   objects: {},
+  objectCount: 0,
   groups: {},
   version: 0,
   lastChangedIds: [],
@@ -390,6 +400,7 @@ export const useStore = create<StoreState>((set) => ({
       // arrived meanwhile are only picked up here.
       set((state) => ({
         objects: live,
+        objectCount: Object.keys(live).length,
         groups: Object.fromEntries(groupsMap.entries()),
         version: state.version + 1,
         lastChangedIds: Object.keys(live),
@@ -437,6 +448,7 @@ export const useStore = create<StoreState>((set) => ({
 
     set((state) => ({
       objects: next,
+      objectCount: Object.keys(next).length,
       version: state.version + 1,
       lastChangedIds: touched,
       lastRemovedIds: removed,
@@ -810,6 +822,7 @@ export const initSyncBridge = () => {
   });
   useStore.setState({
     objects: initialObjects,
+    objectCount: Object.keys(initialObjects).length,
     version: 1,
     lastChangedIds: Object.keys(initialObjects),
     lastRemovedIds: [],
@@ -829,8 +842,10 @@ export const initSyncBridge = () => {
 
     useStore.setState((state) => {
       const objects = { ...state.objects };
+      let objectCount = state.objectCount;
 
       removed.forEach((id) => {
+        if (id in objects) objectCount -= 1;
         delete objects[id];
         sceneGraph.removeNode(id);
       });
@@ -838,12 +853,14 @@ export const initSyncBridge = () => {
       changed.forEach((id) => {
         const node = readCanonical(id);
         if (!node) return;
+        if (!(id in objects)) objectCount += 1;
         objects[id] = node;
         sceneGraph.upsertNode(id, node);
       });
 
       return {
         objects,
+        objectCount,
         version: state.version + 1,
         lastChangedIds: [...changed],
         lastRemovedIds: [...removed],

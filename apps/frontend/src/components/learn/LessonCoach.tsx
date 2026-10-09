@@ -89,7 +89,7 @@ export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
     learnState.getSnapshot,
     learnState.getSnapshot
   );
-  const objectCount = useStore((s) => Object.keys(s.objects).length);
+  const objectCount = useStore((s) => s.objectCount);
 
   /** The lesson currently on screen, which lags the tool by `SETTLE_MS`. */
   const [shown, setShown] = useState<Lesson | null>(null);
@@ -202,9 +202,15 @@ export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
       setPlace(p.tail === null ? null : { left: p.centre - origin, tail: p.tail });
     };
     measure();
+    // The seat that is armed changes with the tool: measure again then, and
+    // once more a frame later in case the dock marks its seat after this card.
+    const frame = requestAnimationFrame(measure);
     window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, [shown, visible]);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', measure);
+    };
+  }, [shown, visible, activeTool]);
 
   if (!visible || !shown) return null;
 

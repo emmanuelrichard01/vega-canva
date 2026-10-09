@@ -645,6 +645,21 @@ The main toolbar, bottom-centre. It answers one question — what is in my hand
   the keyboard. A searchable sheet holds a fixed height so a search never
   resizes the panel under the pointer. Frame keeps its three columns, because
   its groups *are* its columns.
+- **Flyouts come in three widths, open on a click, and share one motion.**
+  Small is 240 (a list of rows), medium 408 (a library or a sheet), large 480
+  (the drawing tray). A panel takes its step and keeps it, so More grows it
+  upward only. They rise and fade on the same short ease, and swap in place
+  when another seat's replaces them.
+- **Every flyout, sheet and shelf is centred on the dock, not on its seat.**
+  They share one axis, so no seat's panel sits left or right of the others,
+  and they stay put when a side panel opens; near a column they are held inside
+  the free strip with 8px to spare. A small notch on the bottom edge points at
+  the seat that opened it, slides along the edge, stays clear of the corners and
+  is absent when the seat is already under the centre. It is the surface colour
+  with the panel's own elevation, and has no border.
+- **The dock fades, never moves, while you work.** When a stroke or a drag
+  begins it steps back in opacity; its place does not change, so it is where
+  the hand expects it when the gesture ends.
 - **Drag off the dock only what needs no size.** A note can be pulled off its
   seat onto the board, because a note's size is not a decision. A shape would
   still need a size and a preset, which is the drag the tool already is.
@@ -687,12 +702,32 @@ The rail answers "what can I change about this" in one glance; the menu answers
   and, when floating, whenever the board moves. When neither side can hold one
   whole, it scrolls on the side away from the artwork rather than spilling onto
   it (`anchoredPopover`).
+- **Long menus can be searched.** Typing in a menu with more than a screenful of
+  rows filters them.
+- **Viewers and commenters get their own menus.** They see what they can do
+  (copy, comment, export, view), not the editor's list with rows greyed out.
+- **Rail controls are 32px.** One height along the rail, so a row of mixed
+  controls (buttons, number fields, swatches) sits on one line.
 - **A locked selection gets a locked rail.** It shows that it is locked, offers
   Unlock, Comment and the `⋯`, and nothing that would restyle it.
 - **Contextual means conditional.** Paste style appears on the rail only while a
   copied style would change the selection, wearing the colour it brings. It is
   hidden, not greyed out, the rest of the time, because it is the second half
   of a gesture already in progress.
+
+### The HUD and stickies
+
+- **One heads-up pill system.** Every live number a gesture shows (a size while
+  drawing a shape, frame or grid, a length and angle, a spacing, the transform
+  badge) goes through `hud.show` and is drawn by one layer: one pill, one type
+  scale with tabular figures, one placement rule. Blue (`--hud-object`) is the
+  thing being drawn or transformed; magenta (`--hud-measure`) is a distance
+  between things. A tick marks a value that has landed on a snap. Tools clear
+  their readout when the gesture ends, is cancelled or the tool is put away;
+  none draws its own label.
+- **A sticky is a piece of paper.** It has a dog-ear fold at one corner and a
+  paper shadow, so it reads as an object on the board and not as a coloured
+  box.
 
 ### Colour
 
@@ -767,6 +802,40 @@ Generated boards must keep **constant extent** when their node count is trimmed
 for a thumbnail. Trimming the count alone shrinks the composition, and the card
 then shows a picture that appears nowhere except on the card.
 
+### Waves 5 to 7: surfaces added since
+
+- **Dock flyouts scale and centre on the dock.** A flyout opens on click (a
+  seat toggles it; hover only previews), is centred on its seat, and rises
+  above the rail and coach card while open. Widths come from the sheet layout
+  scale (sm/md/lg), not per-flyout numbers.
+- **Collapsed panels are pills.** A closed side panel leaves a small pill at
+  its edge; hovering peeks the panel without pinning it, and the rail follows
+  the panel state.
+- **Onboarding is quiet.** A welcome, a Get started checklist and the tour are
+  anchored to real controls (`data-tour`), dismissible, and never cover the
+  canvas centre. Empty boards show hints, not a banner.
+- **Emoji are Fluent (MIT), drawn as SVG** from `public/emoji`, so they look
+  the same on every platform. Frame titles, stickies and comments use the same
+  picker. Never fall back to the OS emoji font in the canvas.
+- **Stickies and frames.** Stickies have a dog-ear, stamps and checklists.
+  Frames carry an emoji icon, a theme and a size preset; the Slides group of
+  presets holds 16:9 and 4:3 only.
+- **Surface-aware ink.** Default and template text ink follows the surface it
+  sits on (the owning frame's fill), not just the board theme, so a card on a
+  dark board reads. Chart and connector-label ink are still being moved over.
+- **Presentation.** Slide view and presenter view are full-bleed with chrome
+  that hides when idle. Transitions (Push, Slide, Zoom) preview on hover in
+  the slide panel.
+- **Menus.** Every popover and menu dismisses through
+  `components/ui/outsidePress.ts`, so the second click on a trigger closes
+  rather than reopens. The right-click menu searches once it has 12 or more
+  commands and has role variants (frame, empty board).
+- **Cursors.** Every tool has an entry in the cursor inventory (a test fails
+  if one is missing). The rotate cursor is a curved arch tangent to the angle,
+  quantised to 5 degrees.
+- **Template covers** are drawn from the template itself (`boardSvg`), in the
+  current theme; there are no hand-made thumbnails.
+
 ## Do's and Don'ts
 
 ### Do:
@@ -802,3 +871,7 @@ then shows a picture that appears nowhere except on the card.
 - **Don't** borrow a force hue or a status colour for emphasis.
 - **Don't** nest cards, or give a card both a border and a shadow.
 - **Don't** write `outline: none` in an inline style.
+
+- **Don't** hard-code a dark ink on a template or default node; derive it from
+  the surface it sits on.
+- **Don't** use the OS emoji font on the canvas; use the Fluent SVGs.

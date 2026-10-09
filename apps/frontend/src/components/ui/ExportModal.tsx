@@ -9,21 +9,24 @@ import {
   FileText,
   Image as ImageIcon,
   Layers,
+  Link2,
   Loader2,
   PenTool,
   RotateCw,
   UploadCloud,
 } from 'lucide-react';
-import { ExportService, FORMAT_SPECS, exportFilename, type ExportBackground, type ExportFormat } from '../../engine/export';
+import { ExportService, FORMAT_SPECS, exportFilename, type ExportBackground, type ExportFormat, type ExportOptions } from '../../engine/export';
 import { Slider } from './Slider';
 import { SegmentedControl } from './SegmentedControl';
 import { Dialog, DialogBody, DialogFooter, DialogHeader, useDialog } from './Dialog';
 import { WorkspaceCover } from '../WorkspaceCover';
 import { parseDocumentExport, describeImport, describeOrigin, isSameRoom } from '../../engine/export/DocumentImport';
 import { restoreDocument } from '../../engine/export/restoreDocument';
-import { computeContentBounds } from '../../engine/export/bounds';
+import { computeContentBounds, viewportBounds } from '../../engine/export/bounds';
 import { exportScope, scopeOptions } from '../../engine/export/exportScope';
-import { fitScale } from '../../engine/export/rasterLimits';
+import { canTile, plannedScale } from '../../engine/export/rasterLimits';
+import { abortError, isAbortError } from '../../engine/export/abort';
+import { deckPages, exportDeckPdf } from '../../engine/export/slideDeckPdf';
 import { familiesInNodes, usesLocalFonts } from '../../engine/text/fontEmbed';
 import { buildPreview } from '../../engine/model/boardPreview';
 import { previewColorOf, previewPointsOf } from '../../engine/model/previewPaint';
@@ -31,6 +34,7 @@ import { descendantsOfFrame } from '../../engine/model/frames';
 import { roomId } from '../../engine/document';
 import { useStore } from '../../hooks/useStore';
 import { storageGetJson, storageSet } from '../../utils/safeStorage';
+import { frameLink } from '../export/frameLink';
 import {
   BACKGROUNDS,
   FORMAT_CARDS,
@@ -38,12 +42,15 @@ import {
   SCALES,
   cardFor,
   estimateBytes,
+  explainError,
   exportLabel,
+  fontCostLabel,
   formatBytes,
   pixelSize,
   prefsKey,
   previewFormat,
   sanitizePrefs,
+  type Area,
   type ExportPrefs,
   type FormatCardId,
 } from './exportModel';
@@ -62,12 +69,14 @@ interface Props {
    * board even when something happens to be selected.
    */
   startWithSelection?: boolean;
+  /** Open on the slide deck, as the slide view's Export asks. Falls back to the board when there is no deck or the format is not PDF. */
+  initialArea?: 'slides';
 }
-
-type Area = 'board' | 'selection' | 'frame';
 
 /** Sentinel for "each frame, as its own file (or page)". */
 const EVERY_FRAME = '__frames__';
+/** Sentinel for "the selected frames, each its own file (or page)". */
+const SELECTED_FRAMES = '__selected__';
 
 const CARD_ICON: Record<FormatCardId, typeof ImageIcon> = {
   image: ImageIcon,
@@ -79,13 +88,16 @@ const CARD_ICON: Record<FormatCardId, typeof ImageIcon> = {
 /** Frames drawn as thumbnails, at most; a board with more lists the rest by name. */
 const THUMBS = 24;
 
+type StageLike = Parameters<typeof viewportBounds>[0];
+const stageOf = () => (window as unknown as { _konva_stage?: StageLike })._konva_stage;
+
 export const ExportModal: React.FC<Props> = (props) => (
   <Dialog onClose={props.onClose} size="lg" className="ex">
     <ExportBody {...props} />
   </Dialog>
 );
 
-const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelection = false, initialFormat }) => {
+const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelection = false, initialFormat, initialArea }) => {
   const { close } = useDialog();
   const saved = useMemo<ExportPrefs>(() => sanitizePrefs(storageGetJson(prefsKey(roomId), null)), []);
 
@@ -95,7 +107,10 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
   const [background, setBackground] = useState<ExportBackground>(saved.background);
   const [padding, setPadding] = useState(saved.padding);
   const [embedLocalFonts, setEmbedLocalFonts] = useState(saved.embedLocalFonts);
-  const [area, setArea] = useState<Area>(startWithSelection && selectionIds.length > 0 ? 'selection' : 'board');
+  const [embedFonts, setEmbedFonts] = useState(saved.embedFonts);
+  const [outlineText, setOutlineText] = useState(saved.outlineText);
+  const [includeComments, setIncludeComments] = useState(saved.includeComments);
+  const [area, setArea] = useState<Area>(initialArea ?? (startWithSelection && selectionIds.length > 0 ? 'selection' : 'board'));
   const [frameChoice, setFrameChoice] = useState<string>(EVERY_FRAME);
 
   const [busy, setBusy] = useState<null | 'export' | 'copy'>(null);
@@ -104,6 +119,7 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
   const [error, setError] = useState<{ message: string; retry?: () => void } | null>(null);
   const [preview, setPreview] = useState<{ url: string; bytes: number } | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  const [fonts, setFonts] = useState<{ bytes: number; missing: string[] } | null>(null);
   const [pendingRestore, setPendingRestore] = useState<{
     summary: string;
     origin: string | null;
@@ -112,10 +128,15 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
   } | null>(null);
   const pendingDocRef = useRef<ReturnType<typeof parseDocumentExport> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const runRef = useRef<AbortController | null>(null);
+
+  // Closing the dialog stops a long export between its steps.
+  useEffect(() => () => runRef.current?.abort(), []);
 
   const spec = FORMAT_SPECS[format];
   const card = cardFor(format);
   const objects = useStore((s) => s.objects);
+  const stage = stageOf();
 
   const frames = useMemo(() => {
     const all = Object.values(objects);
@@ -124,6 +145,9 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
       .map((f) => ({ id: f.id, label: f.title?.trim() || 'Frame', width: f.width, height: f.height }))
       .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
   }, [objects]);
+
+  /** The deck as it is presented: skipped slides out, nested frames part of their slide. */
+  const deck = useMemo(() => deckPages(objects), [objects]);
 
   /** Each frame's picture, drawn from the same summary the board cards use. */
   const thumbs = useMemo(() => {
@@ -137,11 +161,21 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
     return out;
   }, [frames, objects]);
 
+  /** Frames among the selection, offered as their own batch. */
+  const selectedFrames = useMemo(() => {
+    const picked = new Set(selectionIds);
+    return frames.filter((f) => picked.has(f.id));
+  }, [frames, selectionIds]);
+
   // The frame picked, or every frame when the one picked has gone.
   useEffect(() => {
-    if (frameChoice !== EVERY_FRAME && !frames.some((f) => f.id === frameChoice)) setFrameChoice(EVERY_FRAME);
+    const gone =
+      (frameChoice === SELECTED_FRAMES && selectedFrames.length < 2) ||
+      (frameChoice !== EVERY_FRAME && frameChoice !== SELECTED_FRAMES && !frames.some((f) => f.id === frameChoice));
+    if (gone) setFrameChoice(EVERY_FRAME);
     if (area === 'frame' && frames.length === 0) setArea('board');
-  }, [frames, frameChoice, area]);
+    if (area === 'slides' && (format !== 'pdf' || deck.length === 0)) setArea('board');
+  }, [frames, frameChoice, selectedFrames.length, area, format, deck.length]);
 
   /**
    * The selection, resolved the way the right-click copy resolves it, so a
@@ -156,9 +190,13 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
     if (area === 'selection' && !hasSelection) setArea('board');
   }, [area, hasSelection]);
 
-  const isBatch = area === 'frame' && frameChoice === EVERY_FRAME && frames.length > 0;
-  const activeFrame = area === 'frame' ? frames.find((f) => f.id === frameChoice) : undefined;
+  const batchFrames =
+    area === 'frame' ? (frameChoice === EVERY_FRAME ? frames : frameChoice === SELECTED_FRAMES ? selectedFrames : []) : [];
+  const isBatch = batchFrames.length > 0;
+  const isSlides = area === 'slides' && format === 'pdf' && deck.length > 0;
+  const activeFrame = area === 'frame' && !isBatch ? frames.find((f) => f.id === frameChoice) : undefined;
   const isSelection = area === 'selection' && hasSelection;
+  const isView = area === 'view' && Boolean(stage);
 
   /** A format with no alpha channel cannot be left clear; it is honestly white. */
   const bg: ExportBackground = background === 'transparent' && !spec.alpha ? 'paper' : background;
@@ -175,18 +213,24 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
   }, [objects, isSelection, scope.ids, activeFrame]);
   const localFonts = useMemo(() => usesLocalFonts(familiesInNodes(scopeNodes)), [scopeNodes]);
   const offerFontEmbed = format === 'svg' && localFonts;
+  const hasComments = useMemo(() => Object.values(objects).some((n) => n.type === 'comment' && !n.hidden), [objects]);
 
-  const baseOptions = () => ({
+  const baseOptions = (): ExportOptions => ({
     scale,
     quality,
     background: bg,
     padding,
     embedLocalFonts: offerFontEmbed && embedLocalFonts,
-    frameId: activeFrame ? activeFrame.id : undefined,
+    embedFonts: format === 'svg' && embedFonts,
+    outlineText: format === 'svg' && outlineText,
+    includeComments: hasComments && includeComments,
+    // The deck's preview is its first slide.
+    frameId: activeFrame ? activeFrame.id : isSlides ? deck[0].frameId : undefined,
     // Both halves or neither: `selectedOnly` without `selectedIds` is the shape
     // that captured everything else inside the frame.
     ...(isSelection ? scopeOptions(scope) : {}),
-    stage: (window as unknown as { _konva_stage?: unknown })._konva_stage,
+    ...(isView && stage ? { bounds: viewportBounds(stage) } : {}),
+    stage,
   });
 
   /**
@@ -196,7 +240,9 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
    * every pixel, and superseded on each change so a slow render cannot land
    * after a newer one. Each render takes and gives back its own `renderScope`
    * hold inside the exporter; the dialog never holds one, so an export pressed
-   * while a preview is in flight cannot be un-mounted by it.
+   * while a preview is in flight cannot be un-mounted by it. An SVG preview
+   * is rendered with the app's fonts embedded, which is how the dialog learns
+   * what embedding costs before anyone ticks the box.
    */
   const shownAs = previewFormat(format);
   const scopeKey = scope.ids?.join(',');
@@ -210,11 +256,22 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
     setPreviewing(true);
     const timer = window.setTimeout(async () => {
       try {
-        const blob = await ExportService.render(shownAs, { ...baseOptions(), scale: 1 });
+        let blob: Blob;
+        let bytes: number;
+        if (shownAs === 'svg') {
+          const report = await ExportService.renderSvgReport({ ...baseOptions(), outlineText: false, embedFonts: true, scale: 1 });
+          if (cancelled) return;
+          setFonts({ bytes: report.fontBytes, missing: report.unembedded });
+          blob = report.blob;
+          bytes = embedFonts ? report.blob.size : report.blob.size - report.fontBytes;
+        } else {
+          blob = await ExportService.render(shownAs, { ...baseOptions(), scale: 1 });
+          bytes = blob.size;
+        }
         if (cancelled) return;
         setPreview((old) => {
           if (old) URL.revokeObjectURL(old.url);
-          return { url: URL.createObjectURL(blob), bytes: blob.size };
+          return { url: URL.createObjectURL(blob), bytes };
         });
       } catch {
         // A preview that cannot be made is not worth interrupting for; Export
@@ -229,57 +286,92 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shownAs, area, frameChoice, quality, bg, padding, isBatch, isSelection, scopeKey, embedLocalFonts, offerFontEmbed]);
+  }, [shownAs, area, frameChoice, quality, bg, padding, isBatch, isSelection, scopeKey, embedLocalFonts, offerFontEmbed, embedFonts, includeComments]);
 
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
 
   /** The box the size readout describes, measured as the exporter will measure it. */
+  const slide = isSlides ? deck[0] : undefined;
   const exportBox = activeFrame
     ? { width: activeFrame.width, height: activeFrame.height }
-    : computeContentBounds(objects, isSelection ? scope.ids ?? undefined : undefined, padding);
-  const effectiveScale = spec.raster ? fitScale(exportBox.width, exportBox.height, scale) : 1;
-  const scaleClamped = spec.raster && effectiveScale < scale - 1e-6;
-  const estimate = estimateBytes(format, preview?.bytes ?? null, scale);
+    : slide
+      ? { width: slide.width, height: slide.height }
+      : isView && stage
+        ? viewportBounds(stage)
+        : computeContentBounds(objects, isSelection ? scope.ids ?? undefined : undefined, padding);
+  const plan = spec.raster
+    ? plannedScale(exportBox.width, exportBox.height, scale, format === 'png' && canTile())
+    : { scale: 1, tiled: false };
+  const effectiveScale = isSlides ? 1 : plan.scale;
+  const scaleClamped = spec.raster && !isSlides && effectiveScale < scale - 1e-6;
+  const estimate = isSlides ? null : estimateBytes(format, preview?.bytes ?? null, effectiveScale);
 
   const remember = () => {
-    storageSet(prefsKey(roomId), JSON.stringify({ format, scale, background, padding, quality, embedLocalFonts } satisfies ExportPrefs));
+    storageSet(
+      prefsKey(roomId),
+      JSON.stringify({
+        format,
+        scale,
+        background,
+        padding,
+        quality,
+        embedLocalFonts,
+        embedFonts,
+        outlineText,
+        includeComments,
+      } satisfies ExportPrefs)
+    );
   };
 
   const handleExport = async () => {
+    if (busy) return;
+    const controller = new AbortController();
+    runRef.current = controller;
+    const run = { signal: controller.signal, onProgress: (p: { done: number; total: number }) => setProgress(p) };
     setBusy('export');
     setStatus(null);
     setError(null);
     setProgress(null);
     try {
-      if (isBatch && format === 'pdf') {
-        // One document of N pages, not N documents: the PDF exporter makes a
-        // page of each frame.
-        await ExportService.export(format, { ...baseOptions(), frameId: undefined, filename: exportFilename(title, format, scale) });
-        setStatus(`Saved a ${frames.length}-page PDF`);
+      if (isSlides) {
+        // The deck as presented, through the slides' own writer.
+        const blob = await exportDeckPdf(title, run.onProgress);
+        if (controller.signal.aborted) throw abortError();
+        ExportService.save(blob, exportFilename(`${title} slides`, 'pdf'));
+        setStatus(`Saved a ${deck.length}-slide PDF`);
+      } else if (isBatch && format === 'pdf') {
+        // One document of N pages, not N documents.
+        await ExportService.export(format, {
+          ...baseOptions(),
+          ...run,
+          frameId: undefined,
+          frameIds: batchFrames.map((f) => f.id),
+          filename: exportFilename(title, format, scale),
+        });
+        setStatus(`Saved a ${batchFrames.length}-page PDF`);
       } else if (isBatch) {
-        // One file per frame, saved as each is made, so a long run shows
-        // progress and a failure keeps what was already saved.
-        setProgress({ done: 0, total: frames.length });
-        for (let i = 0; i < frames.length; i++) {
-          const frame = frames[i];
-          const blob = await ExportService.render(format, { ...baseOptions(), frameId: frame.id });
-          ExportService.save(blob, exportFilename(frame.label, format, scale));
-          setProgress({ done: i + 1, total: frames.length });
-        }
-        setStatus(`Saved ${frames.length} files`);
+        // One file per frame, named from its title, in a single ZIP.
+        const result = await ExportService.exportFiles(
+          batchFrames.map((frame) => ({
+            format,
+            options: { ...baseOptions(), frameId: frame.id },
+            filename: exportFilename(frame.label, format, scale),
+          })),
+          { archiveName: `${exportFilename(`${title} frames`, 'svg').replace(/\.svg$/, '')}`, ...run }
+        );
+        setStatus(result.archive ? `Saved ${result.files} files in one ZIP` : 'Saved');
       } else {
-        const base = activeFrame?.label ?? (isSelection ? scope.filenameBase : title);
-        await ExportService.export(format, { ...baseOptions(), filename: exportFilename(base, format, scale) });
+        const base = activeFrame?.label ?? (isSelection ? scope.filenameBase : isView ? `${title} view` : title);
+        await ExportService.export(format, { ...baseOptions(), ...run, filename: exportFilename(base, format, scale) });
         setStatus('Saved');
       }
       remember();
       window.setTimeout(close, 900);
     } catch (e) {
-      setError({
-        message: e instanceof Error && e.message ? e.message : 'The export did not finish.',
-        retry: () => void handleExport(),
-      });
+      if (isAbortError(e)) setStatus('Export cancelled');
+      else setError({ message: explainError(e), retry: () => void handleExport() });
     } finally {
+      runRef.current = null;
       setBusy(null);
       setProgress(null);
     }
@@ -300,6 +392,32 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
       setBusy(null);
     }
   };
+
+  /** A link that opens this board on the chosen frame. */
+  const handleCopyLink = async () => {
+    if (!activeFrame) return;
+    setError(null);
+    try {
+      await navigator.clipboard.writeText(frameLink(window.location.origin, roomId, activeFrame.id));
+      setStatus('Link to this frame copied');
+    } catch {
+      setError({ message: 'The clipboard is blocked here. Allow clipboard access for this site, then try again.', retry: () => void handleCopyLink() });
+    }
+  };
+
+  // Ctrl+Enter (⌘ on a Mac) exports from anywhere in the dialog.
+  const exportRef = useRef(handleExport);
+  exportRef.current = handleExport;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !pendingDocRef.current) {
+        e.preventDefault();
+        void exportRef.current();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const handleFile = async (file: File) => {
     setError(null);
@@ -341,6 +459,7 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
   const canCopy = (spec.raster || format === 'svg') && format !== 'pdf' && !isBatch && ExportService.canCopy;
   const checker = bg === 'transparent' && shownAs !== null;
   const objectCount = Object.keys(objects).length;
+  const batchLabel = (n: number) => (format === 'pdf' ? `${n}, one PDF` : `${n}, in one ZIP`);
 
   return (
     <>
@@ -366,12 +485,12 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
                 ) : format === 'pdf' ? (
                   <>
                     <Layers size={22} aria-hidden="true" />
-                    {`One document, ${frames.length} pages, a frame on each.`}
+                    {`One document, ${batchFrames.length} pages, a frame on each.`}
                   </>
                 ) : (
                   <>
                     <Layers size={22} aria-hidden="true" />
-                    {`${frames.length} files, one for each frame.`}
+                    {`${batchFrames.length} files in one ZIP, each named after its frame.`}
                   </>
                 )}
               </span>
@@ -386,18 +505,23 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
             <span>
               {format === 'json'
                 ? 'Backup file'
-                : spec.raster && !isBatch
-                  ? `${pixelSize(exportBox, effectiveScale)} px`
-                  : isBatch
-                    ? `${frames.length} frames`
-                    : 'Vector, any size'}
+                : isSlides
+                  ? `${deck.length} ${deck.length === 1 ? 'slide' : 'slides'}, ${pixelSize(exportBox, 1)} px`
+                  : spec.raster && !isBatch
+                    ? `${pixelSize(exportBox, effectiveScale)} px`
+                    : isBatch
+                      ? `${batchFrames.length} frames`
+                      : 'Vector, any size'}
             </span>
             {estimate !== null && !isBatch && <span>About {formatBytes(estimate)}</span>}
           </div>
+          {plan.tiled && !isBatch && !isSlides && (
+            <p className="ex-hint ex-hint--tight">Drawn in tiles to reach {scale}×, so it takes a few seconds.</p>
+          )}
           {scaleClamped && (
             <p className="ex-warn">
               <AlertTriangle size={13} aria-hidden="true" />
-              Too large for {scale}× in a browser. It will export at {effectiveScale.toFixed(2)}×.
+              Too large for {scale}× in a browser. It will export at {effectiveScale.toFixed(2)}×; SVG has no size limit.
             </p>
           )}
         </div>
@@ -417,6 +541,8 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
                     role="radio"
                     aria-checked={checked}
                     tabIndex={checked ? 0 : -1}
+                    // The dialog opens on the chosen format, not the first card.
+                    data-autofocus={checked ? '' : undefined}
                     className="ex-card"
                     onClick={() => pickCard(c.id)}
                     onKeyDown={(e) => {
@@ -472,9 +598,11 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
                 value={area}
                 onChange={(v) => setArea(v as Area)}
                 segments={[
-                  { value: 'board', label: 'Whole board' },
+                  { value: 'board', label: 'Board', hint: 'Everything, cut to the content' },
                   ...(hasSelection ? [{ value: 'selection', label: scope.count === 1 ? 'Selection' : `Selection (${scope.count})` }] : []),
                   ...(frames.length > 0 ? [{ value: 'frame', label: frames.length === 1 ? 'Frame' : 'Frames' }] : []),
+                  ...(stage ? [{ value: 'view', label: 'View', hint: 'What is on screen now' }] : []),
+                  ...(format === 'pdf' && deck.length > 0 ? [{ value: 'slides', label: 'Slides', hint: 'The deck in presentation order' }] : []),
                 ]}
               />
               {area === 'frame' && frames.length > 0 && (
@@ -482,9 +610,17 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
                   <FrameTile
                     checked={frameChoice === EVERY_FRAME}
                     onPick={() => setFrameChoice(EVERY_FRAME)}
-                    label={format === 'pdf' ? `All ${frames.length}, one PDF` : `All ${frames.length}, a file each`}
+                    label={`All ${batchLabel(frames.length)}`}
                     every
                   />
+                  {selectedFrames.length > 1 && (
+                    <FrameTile
+                      checked={frameChoice === SELECTED_FRAMES}
+                      onPick={() => setFrameChoice(SELECTED_FRAMES)}
+                      label={`Selected ${batchLabel(selectedFrames.length)}`}
+                      every
+                    />
+                  )}
                   {frames.map((f) => (
                     <FrameTile
                       key={f.id}
@@ -498,10 +634,13 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
                   ))}
                 </div>
               )}
+              {isSlides && (
+                <p className="ex-hint">In presentation order. Skipped slides are left out.</p>
+              )}
             </fieldset>
           )}
 
-          {spec.raster && (
+          {spec.raster && !isSlides && (
             <div className="ex-row">
               <span className="ex-row__label">Scale</span>
               <SegmentedControl
@@ -513,7 +652,7 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
             </div>
           )}
 
-          {format !== 'json' && (
+          {format !== 'json' && !isSlides && (
             <div className="ex-row">
               <span className="ex-row__label">Background</span>
               <SegmentedControl
@@ -524,9 +663,11 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
               />
             </div>
           )}
-          {format !== 'json' && !spec.alpha && <p className="ex-hint ex-hint--tight">{spec.label} has no transparency, so the background is always painted.</p>}
+          {format !== 'json' && !spec.alpha && !isSlides && (
+            <p className="ex-hint ex-hint--tight">{spec.label} has no transparency, so the background is always painted.</p>
+          )}
 
-          {format !== 'json' && !activeFrame && !isBatch && (
+          {format !== 'json' && !activeFrame && !isBatch && !isView && !isSlides && (
             <div className="ex-row">
               <span className="ex-row__label">Padding</span>
               <SegmentedControl
@@ -554,6 +695,31 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
             </div>
           )}
 
+          {format === 'svg' && (
+            <>
+              <label className="ex-check">
+                <input type="checkbox" checked={embedFonts} onChange={(e) => setEmbedFonts(e.target.checked)} />
+                <span>
+                  <span className="ex-check__label">Embed fonts</span>
+                  <span className="ex-check__hint">
+                    Carries the board’s typefaces inside the file, so it looks the same where they are not installed.{' '}
+                    {fontCostLabel(fonts ? fonts.bytes : null)}
+                    {fonts && fonts.missing.length > 0 && ` ${fonts.missing.join(', ')} could not be read and stays named only.`}
+                  </span>
+                </span>
+              </label>
+              <label className="ex-check">
+                <input type="checkbox" checked={outlineText} onChange={(e) => setOutlineText(e.target.checked)} />
+                <span>
+                  <span className="ex-check__label">Outline text</span>
+                  <span className="ex-check__hint">
+                    Text objects become shapes: exact anywhere, no longer editable as text. Labels in shapes and notes stay text.
+                  </span>
+                </span>
+              </label>
+            </>
+          )}
+
           {offerFontEmbed && (
             <label className="ex-check">
               <input type="checkbox" checked={embedLocalFonts} onChange={(e) => setEmbedLocalFonts(e.target.checked)} />
@@ -563,6 +729,16 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
                   Some text uses fonts installed on this computer. Embedding them makes the SVG look right anywhere. Check the
                   font’s licence before sharing it.
                 </span>
+              </span>
+            </label>
+          )}
+
+          {format !== 'json' && !isSlides && hasComments && (
+            <label className="ex-check">
+              <input type="checkbox" checked={includeComments} onChange={(e) => setIncludeComments(e.target.checked)} />
+              <span>
+                <span className="ex-check__label">Include comments</span>
+                <span className="ex-check__hint">Draws each thread’s pin and first line where it was left.</span>
               </span>
             </label>
           )}
@@ -581,7 +757,7 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
             e.target.value = '';
           }}
         />
-        <button type="button" className="dlg-btn" onClick={() => fileInputRef.current?.click()}>
+        <button type="button" className="dlg-btn" onClick={() => fileInputRef.current?.click()} disabled={busy !== null}>
           <UploadCloud size={15} aria-hidden="true" /> Restore a backup…
         </button>
 
@@ -596,10 +772,10 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
                 </button>
               )}
             </span>
-          ) : progress ? (
+          ) : progress && progress.total > 1 ? (
             <span className="ex-said__progress">
               <span className="ex-said__text">
-                Exporting {progress.done + (progress.done < progress.total ? 1 : 0)} of {progress.total}
+                Exporting {Math.min(progress.done + 1, progress.total)} of {progress.total}
               </span>
               <span className="ex-bar" aria-hidden="true">
                 <span style={{ transform: `scaleX(${progress.done / Math.max(1, progress.total)})` }} />
@@ -613,13 +789,32 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
           ) : null}
         </span>
 
-        {canCopy && (
-          <button type="button" className="dlg-btn dlg-btn--lg" onClick={() => void handleCopy()} disabled={busy !== null}>
-            {busy === 'copy' ? <Loader2 size={15} className="dlg-spin" aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
-            {format === 'svg' ? 'Copy SVG' : 'Copy image'}
+        {busy === 'export' ? (
+          <button type="button" className="dlg-btn dlg-btn--lg" onClick={() => runRef.current?.abort()}>
+            Cancel
           </button>
+        ) : (
+          <>
+            {activeFrame && (
+              <button type="button" className="dlg-btn dlg-btn--lg" onClick={() => void handleCopyLink()} disabled={busy !== null}>
+                <Link2 size={15} aria-hidden="true" /> Copy link
+              </button>
+            )}
+            {canCopy && (
+              <button type="button" className="dlg-btn dlg-btn--lg" onClick={() => void handleCopy()} disabled={busy !== null}>
+                {busy === 'copy' ? <Loader2 size={15} className="dlg-spin" aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+                {format === 'svg' ? 'Copy SVG' : 'Copy image'}
+              </button>
+            )}
+          </>
         )}
-        <button type="button" className="dlg-btn dlg-btn--lg dlg-btn--primary" onClick={() => void handleExport()} disabled={busy !== null}>
+        <button
+          type="button"
+          className="dlg-btn dlg-btn--lg dlg-btn--primary"
+          onClick={() => void handleExport()}
+          disabled={busy !== null}
+          aria-keyshortcuts="Control+Enter Meta+Enter"
+        >
           {busy === 'export' ? (
             <Loader2 size={15} className="dlg-spin" aria-hidden="true" />
           ) : isBatch ? (
@@ -627,7 +822,11 @@ const ExportBody: React.FC<Props> = ({ title, selectionIds = [], startWithSelect
           ) : (
             <Download size={15} aria-hidden="true" />
           )}
-          {busy === 'export' ? 'Exporting…' : exportLabel(format, isBatch ? { frames: frames.length } : null)}
+          {busy === 'export'
+            ? 'Exporting…'
+            : isSlides
+              ? `Export ${deck.length}-slide PDF`
+              : exportLabel(format, isBatch ? { frames: batchFrames.length } : null)}
         </button>
       </DialogFooter>
 

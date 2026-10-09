@@ -1,4 +1,5 @@
 import { captureRaster, mountForCapture } from './raster';
+import { abortError } from './abort';
 import { type PdfPage } from './pdfWriter';
 import { buildPdfWithWorker, encodeCanvasWithWorker } from './exportWorkerClient';
 import { frameExportBounds } from './bounds';
@@ -6,6 +7,8 @@ import { descendantsOfFrame } from '../model/frames';
 import { compareStacking } from '../model/stacking';
 import { useStore } from '../../hooks/useStore';
 import { FORMAT_SPECS, type Exporter, type ExportFormat, type ExportOptions } from './ExportTypes';
+import { exportIds } from './exportScope';
+
 
 /** PostScript points per inch — the unit a PDF page is measured in. */
 const POINTS_PER_INCH = 72;
@@ -38,8 +41,9 @@ const toPoints = (units: number) => (units / CSS_PIXELS_PER_INCH) * POINTS_PER_I
  * | Asked for | Pages |
  * | --- | --- |
  * | One named frame | that frame, one page |
+ * | Named frames (`frameIds`) | one page per frame, in board order |
  * | A board with frames | one page per frame, in board order |
- * | A board with no frames | one page, cut to the content |
+ * | A board with no frames, a selection, a visible area | one page, cut to it |
  *
  * The no-frames case is not a fallback so much as the honest answer: with no
  * frame to say where the edges are, the content's bounding box is the only
@@ -55,35 +59,39 @@ export class PDFExporter implements Exporter {
     /**
      * `resolveExportTarget` has already run by the time an exporter is called,
      * so a single named frame arrives as resolved `bounds` and `selectedIds`
-     * and needs no special case — it is simply a one-page document.
+     * and is simply a one-page document. Frames become pages only for the
+     * whole board, or for the frames named in `frameIds`; a selection or a
+     * visible area is the one page it asked for.
      */
-    const frames = options.frameId
-      ? []
-      : Object.values(objects)
-          .filter((n) => n.type === 'frame' && !n.hidden)
-          // Board order, so the document reads in the order the frames were
-          // made rather than in whatever order the map happens to iterate.
-          .sort(compareStacking);
+    const wanted = options.frameIds ? new Set(options.frameIds) : null;
+    const wholeBoard = !options.frameId && !options.bounds && !exportIds(options);
+    const frames =
+      wanted || wholeBoard
+        ? Object.values(objects)
+            .filter((n) => n.type === 'frame' && !n.hidden && (!wanted || wanted.has(n.id)))
+            // Board order, so the document reads in the order the frames were made.
+            .sort(compareStacking)
+        : [];
 
-    const pages: PdfPage[] =
+    const jobs: ExportOptions[] =
       frames.length > 0
-        ? await Promise.all(
-            frames.map((frame) =>
-              this.capturePage(
-                {
-                  ...options,
-                  bounds: frameExportBounds(frame),
-                  selectedOnly: true,
-                  // The frame itself is included because its own fill is the
-                  // page's background.
-                  selectedIds: [frame.id, ...descendantsOfFrame(frame.id, Object.values(objects))],
-                },
-                spec,
-                options.quality
-              )
-            )
-          )
-        : [await this.capturePage(options, spec, options.quality)];
+        ? frames.map((frame) => ({
+            ...options,
+            bounds: frameExportBounds(frame),
+            selectedOnly: true,
+            // The frame itself is included because its own fill is the page's background.
+            selectedIds: [frame.id, ...descendantsOfFrame(frame.id, Object.values(objects))],
+          }))
+        : [options];
+
+    // One page at a time, so a long document reports progress, can be
+    // cancelled between pages, and holds one capture in memory, not all.
+    const pages: PdfPage[] = [];
+    for (const job of jobs) {
+      if (options.signal?.aborted) throw abortError();
+      pages.push(await this.capturePage(job, spec, options.quality));
+      options.onProgress?.({ done: pages.length, total: jobs.length });
+    }
 
     return buildPdfWithWorker(pages, {
       title: options.filename ? options.filename.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ') : undefined,

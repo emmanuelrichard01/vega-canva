@@ -175,25 +175,71 @@ export const VectorPenArt = React.memo(function VectorPenArt() {
   );
 });
 
-/** A pad of notes in the current note colour, its top sheet lifting at one corner. */
+/**
+ * A pad of notes in the current note colour: three square sheets fanned a few
+ * degrees from the base, the top one tinted by `--note` with its corner curling
+ * up.
+ *
+ * A sticky note is square and wider than any pen, so the pad has a box of its
+ * own, 40 units across where the barrels share 32, and its sides lean in a
+ * touch towards the top, as a square standing upright and tipped back does.
+ * Only the top shows above the tray's lip, so that part reads as a whole note.
+ *
+ * Lit as the rest of the tray is, from the upper left: a sheen down the sheet,
+ * the family's flat-body gradient across it, and the top sheet's soft shadow on
+ * the two below. The curl shows the paper's underside, shaded at the crease and
+ * lit at the tip, over a small occlusion shadow where it leaves the sheet.
+ *
+ * The top sheet, its shadow and its curl are groups of their own
+ * (`pad-top`, `pad-shadow`, `pad-curl`) so the tray can lift the top note off
+ * the pad on hover while the sheets under it stay put (`toolArt.css`).
+ */
 export const StickyPadArt = React.memo(function StickyPadArt() {
   const id = `ta${useId().replace(/:/g, '')}`;
+  // The sheet under the top one, and the top one with its corner cut along the crease.
+  const sheet = 'M5.4 11 H34.6 Q35.8 11 35.9 12.2 L37.2 104 H2.8 L4.1 12.2 Q4.2 11 5.4 11 Z';
+  const top = 'M5.4 11 H27 L35.9 19.6 L37.2 104 H2.8 L4.1 12.2 Q4.2 11 5.4 11 Z';
   return (
-    <Svg id={id}>
-      <g transform="rotate(-6 16 34)">
-        {/* The sheets under the top one, each edge a little darker. */}
-        <rect className="part" x="4.6" y="17.4" width="23.4" height="80" rx="1.6" fill="var(--note-edge)" />
-        <rect x="4.3" y="15.8" width="23.4" height="80" rx="1.6" fill="var(--note)" />
-        <rect className="shade" x="4.3" y="15.8" width="23.4" height="80" rx="1.6" fill="#000" fillOpacity="0.06" />
-        <rect className="part" x="4" y="14" width="23.4" height="80" rx="1.6" fill="var(--note)" />
-        {/* The adhesive strip at the top of the sheet. */}
-        <rect className="shade" x="4" y="14" width="23.4" height="5.5" rx="1.6" fill="#000" fillOpacity="0.07" />
-        <rect className="shade" x="4" y="14" width="23.4" height="80" rx="1.6" fill={`url(#${id}-flat)`} opacity="0.55" />
-        {/* The lifted corner: the underside, and the shadow it throws. */}
-        <path className="shade" d="M27.4 21.5 L21.2 14.2 L27.4 14 Z" fill="#000" fillOpacity="0.12" />
-        <path className="part" d="M27.4 20.4 Q23.6 19.6 21.6 14 L27.4 14 Z" fill="var(--note-edge)" />
+    <svg className="tool-art tool-art--pad" viewBox="0 0 40 96" width="40" height="96" aria-hidden="true" focusable="false">
+      <Defs id={id} />
+      <defs>
+        <linearGradient id={`${id}-sheet`} x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0" stopColor="#fff" stopOpacity="0.46" />
+          <stop offset="0.2" stopColor="#fff" stopOpacity="0.1" />
+          <stop offset="0.55" stopColor="#fff" stopOpacity="0" />
+          <stop offset="1" stopColor="#000" stopOpacity="0.1" />
+        </linearGradient>
+        {/* Crease (top right) to tip (lower left). */}
+        <linearGradient id={`${id}-curl`} x1="1" y1="0" x2="0.1" y2="0.9">
+          <stop className="curl-crease" offset="0" />
+          <stop className="curl-mid" offset="0.32" />
+          <stop className="curl-tip" offset="1" />
+        </linearGradient>
+        <filter id={`${id}-soft`} x="-30%" y="-30%" width="160%" height="160%">
+          <feGaussianBlur stdDeviation="0.7" />
+        </filter>
+      </defs>
+      {/* The two sheets under the top one, fanned from the base, deeper ones darker. */}
+      <path className="part" d={sheet} transform="translate(0 1) rotate(2.4 20 104)" fill="var(--note-paper)" />
+      <path className="shade" d={sheet} transform="translate(0 1) rotate(2.4 20 104)" fill="#000" fillOpacity="0.13" />
+      <path className="part" d={sheet} transform="translate(0 0.5) rotate(-1.8 20 104)" fill="var(--note-paper)" />
+      <path className="shade" d={sheet} transform="translate(0 0.5) rotate(-1.8 20 104)" fill="#000" fillOpacity="0.06" />
+      {/* The top sheet's shadow on them; it stays on the pad when the sheet lifts. */}
+      <path className="shade pad-shadow" d={top} transform="translate(0.6 1.1)" fill="#000" fillOpacity="0.2" filter={`url(#${id}-soft)`} />
+      <g className="pad-top">
+        <path className="part" d={top} fill="var(--note-paper)" />
+        <path className="shade" d={top} fill={`url(#${id}-sheet)`} />
+        <path className="shade" d={top} fill={`url(#${id}-flat)`} opacity="0.35" />
+        {/* Where the adhesive strip ends. */}
+        <path className="shade" d="M4.4 17.4 H26" stroke="#000" strokeOpacity="0.07" strokeWidth="0.6" />
+        {/* The curl, over the shadow it lifts off the sheet. */}
+        <g className="pad-curl">
+          <path className="shade" d="M27 11 L35.9 19.6 L29.8 21.4 Q25.6 18.9 27 11 Z" fill="#000" fillOpacity="0.3" filter={`url(#${id}-soft)`} />
+          <path className="part curl" d="M27 11 Q26.4 16 28.8 18.1 Q31 20.3 35.9 19.6 Z" fill={`url(#${id}-curl)`} />
+          <path className="shade" d="M27.4 11.4 L35.5 19.2" stroke="#fff" strokeOpacity="0.5" strokeWidth="0.5" strokeLinecap="round" />
+        </g>
       </g>
-    </Svg>
+    </svg>
   );
 });
 

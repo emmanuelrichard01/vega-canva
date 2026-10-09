@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { isPresenting, presenterKeyAction, setPresenterKeys, setPresenting } from './presenting';
+import { createPresenterKeys, DIGIT_TIMEOUT_MS, isPresenting, presenterKeyAction, setPresenterKeys, setPresenting } from './presenting';
 
 afterEach(() => setPresenting(false));
 
@@ -96,5 +96,57 @@ describe('presenterKeyAction', () => {
     expect(presenterKeyAction('Enter', onButton)).toBeNull();
     expect(presenterKeyAction(' ', onButton)).toBeNull();
     expect(presenterKeyAction('ArrowRight', onButton)).toBe('next');
+  });
+});
+
+describe('the presenter keyboard', () => {
+  const free = { focusOwnsKey: false, onControl: false };
+
+  it('jumps to a typed slide number on Enter', () => {
+    const keys = createPresenterKeys();
+    expect(keys.interpret('1', free, 0)).toEqual({ type: 'typing', digits: '1' });
+    expect(keys.interpret('2', free, 100)).toEqual({ type: 'typing', digits: '12' });
+    expect(keys.interpret('Backspace', free, 200)).toEqual({ type: 'typing', digits: '1' });
+    expect(keys.interpret('Enter', free, 300)).toEqual({ type: 'goto', number: 1 });
+    // Without a number waiting, Enter and Backspace move as before.
+    expect(keys.interpret('Enter', free, 400)).toEqual({ type: 'next' });
+    expect(keys.interpret('Backspace', free, 500)).toEqual({ type: 'previous' });
+  });
+
+  it('forgets a number left half-typed', () => {
+    const keys = createPresenterKeys();
+    keys.interpret('4', free, 0);
+    expect(keys.interpret('Enter', free, DIGIT_TIMEOUT_MS + 10)).toEqual({ type: 'next' });
+  });
+
+  it('lets Escape abandon a number before it ends the show', () => {
+    const keys = createPresenterKeys();
+    keys.interpret('7', free, 0);
+    expect(keys.interpret('Escape', free, 10)).toEqual({ type: 'typing', digits: '' });
+    expect(keys.interpret('Escape', free, 20)).toEqual({ type: 'stop' });
+  });
+
+  it('blanks, lights the laser, and still moves through the show', () => {
+    const keys = createPresenterKeys();
+    expect(keys.interpret('b', free, 0)).toEqual({ type: 'blank', blank: 'black' });
+    expect(keys.interpret('.', free, 0)).toEqual({ type: 'blank', blank: 'black' });
+    expect(keys.interpret('W', free, 0)).toEqual({ type: 'blank', blank: 'white' });
+    expect(keys.interpret('l', free, 0)).toEqual({ type: 'laser' });
+    expect(keys.interpret('PageDown', free, 0)).toEqual({ type: 'next' });
+    expect(keys.interpret('Home', free, 0)).toEqual({ type: 'first' });
+  });
+
+  it('stays out of a field being typed in and of shortcuts, but Escape still leaves', () => {
+    const keys = createPresenterKeys();
+    const typing = { focusOwnsKey: true, onControl: false };
+    expect(keys.interpret('b', typing, 0)).toBeNull();
+    expect(keys.interpret('3', typing, 0)).toBeNull();
+    expect(keys.interpret('c', { ...free, mod: true }, 0)).toBeNull();
+    expect(keys.interpret('Escape', typing, 0)).toEqual({ type: 'stop' });
+  });
+
+  it('leaves digits to a focused presenter button, which has no use for them', () => {
+    const keys = createPresenterKeys();
+    expect(keys.interpret('5', { focusOwnsKey: false, onControl: true }, 0)).toBeNull();
   });
 });

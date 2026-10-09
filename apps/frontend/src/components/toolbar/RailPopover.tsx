@@ -1,10 +1,12 @@
 import React, { useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { isInsidePortalSurface } from '../ui/portalSurface';
+import { useOutsidePress } from '../ui/outsidePress';
 import { RailPopoverGroup, RailSideContext } from './railSide';
 import { railSubject } from './railSubject';
-import { anchoredPopover, placeRail, type RailSide } from '../../engine/interaction/railPlacement';
+import { placeRail, type RailSide, type Rect } from '../../engine/interaction/railPlacement';
+import { LIVE_HALO, POPOVER_HALO, placeRailPopover, type PopoverSide } from './rail/popoverPlacement';
 import { engineEvents } from '../../engine/EventBus';
+import './rail/rail.css';
 
 export interface RailPopoverProps {
   label: string;
@@ -32,11 +34,26 @@ export interface RailPopoverProps {
    * same free strip, by the same function.
    */
   float?: boolean;
+  /**
+   * A step on the flyout width scale (`--flyout-w-sm/md/lg`), the widths the
+   * dock's panels take, so a list of rows on the rail is as wide as a list of
+   * rows rising from the dock. Unset, the panel is as wide as what it holds,
+   * which is right for a row of swatches or tiles.
+   */
+  size?: 'sm' | 'md' | 'lg';
+  /**
+   * The panel previews on the board while it is open: alignment ghosts, a
+   * spacing being scrubbed, a live grid and its gap handles. It keeps a wider
+   * halo around the selection clear, because what it draws there is the point.
+   */
+  live?: boolean;
 }
 
 /** The first thing in a panel the keyboard can land on. */
 const FOCUSABLE =
   'input:not([disabled]), button:not([disabled]), select:not([disabled]), textarea, [tabindex]:not([tabindex="-1"])';
+
+const toRect = (r: DOMRect): Rect => ({ x: r.left, y: r.top, width: r.width, height: r.height });
 
 const FLOAT_TRANSLATE: Record<RailSide, string> = {
   top: 'translate(-50%, -100%)',
@@ -56,10 +73,13 @@ const FLOAT_TRANSLATE: Record<RailSide, string> = {
  *   ran off the bottom of the window. A `ResizeObserver` re-places it whenever
  *   its size changes, and when neither side can hold it whole it scrolls on
  *   the side away from the artwork rather than spilling onto it.
- * - **A floating panel follows its object.** Anchored panels ride the rail
- *   because they are inside it; a floating one is fixed to the window, so it
- *   used to stay behind when the board panned. It re-places on the camera and
- *   the object moving now, once per frame at most.
+ * - **It never opens onto the selection when it can help it.** Away from the
+ *   selection first (up when the rail is above it, down when below), beside it
+ *   when that side is full, and only when nothing is clear over it, covering
+ *   as little as possible. See `rail/popoverPlacement`.
+ * - **It follows the board.** A pan or zoom that slides the selection under
+ *   an open panel re-places it, once per frame at most, and a side that still
+ *   works is kept until a better one has room to spare.
  * - **The rail reads like a menu bar.** With one popover open, moving the
  *   pointer onto another trigger — or arrowing to it — opens that one instead.
  *   Setting a stroke and then a sketch level is one sweep, not four clicks.
@@ -74,6 +94,8 @@ export const RailPopover: React.FC<RailPopoverProps> = ({
   placement: placementProp,
   align = 'center',
   float = false,
+  size,
+  live = false,
 }) => {
   const railSide = useContext(RailSideContext);
   const group = useContext(RailPopoverGroup);
@@ -98,14 +120,21 @@ export const RailPopover: React.FC<RailPopoverProps> = ({
   /** Opened by sweeping across from a sibling, which skips the entrance. */
   const [switched, setSwitched] = useState(false);
 
-  const [side, setSide] = useState<'top' | 'bottom'>(placement);
   const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined);
   /**
-   * How far an anchored panel has been slid along the rail to stay on screen,
-   * on top of whatever `align` asked for — alignment stays the intent and this
-   * is only the correction.
+   * Where an anchored panel stands, as an offset from its trigger's box. It
+   * stays a child of the rail (so focus, Escape and outside presses work as
+   * they always have) and moves by `translate`, which leaves its layout, and
+   * so the width it wraps to, exactly what it would be hanging off the button.
    */
-  const [shift, setShift] = useState(0);
+  const [at, setAt] = useState<{ dx: number; dy: number; side: PopoverSide } | null>(null);
+  /**
+   * The side it is on and the size it was placed at, for the placement's
+   * hysteresis. Only a panel of the same size holds its side: hysteresis is
+   * for the board moving under it, and a panel that has just grown (the live
+   * grid replacing its placeholder) is placed afresh.
+   */
+  const last = useRef<{ side: PopoverSide; w: number; h: number } | null>(null);
   /** Where a floating panel has been placed, in viewport pixels. */
   const [spot, setSpot] = useState<{ x: number; y: number; side: RailSide } | null>(null);
 
@@ -141,31 +170,38 @@ export const RailPopover: React.FC<RailPopoverProps> = ({
       return;
     }
 
-    const s = railSubject()?.subject;
-    const decided = anchoredPopover(
-      rect,
-      s ? { top: s.y, bottom: s.y + s.height } : null,
-      natural,
-      placement,
-      window.innerHeight
-    );
-    setSide(decided.side);
-    setMaxHeight(decided.maxHeight);
-
-    // Horizontal: measure where the panel landed and slide it back inside.
-    // Measured rather than computed, because `align` and the translate that
-    // implements it are CSS, and re-deriving them here would be a second copy
-    // of the rule that positions the thing.
-    const box = panel.getBoundingClientRect();
+    // Only a popover on the rail knows a selection; anywhere else it hangs off its button.
+    const railEl = triggerEl.closest<HTMLElement>('.ctx-toolbar');
+    const from = railEl ? railSubject() : null;
     const margin = 8;
-    setShift((current) => {
-      const naturalLeft = box.left - current;
-      const naturalRight = box.right - current;
-      const over = naturalRight - (window.innerWidth - margin);
-      const under = margin - naturalLeft;
-      return over > 0 ? -over : under > 0 ? under : 0;
+    const width = panel.offsetWidth;
+    const held = last.current && last.current.w === width && last.current.h === natural ? last.current.side : undefined;
+    const next = placeRailPopover({
+      rail: toRect(railEl?.getBoundingClientRect() ?? rect),
+      railSide: from?.side ?? placement,
+      prefer: placement,
+      trigger: toRect(rect),
+      align,
+      panel: { width, height: natural },
+      subject: from?.subject ?? null,
+      bounds: from?.room ?? {
+        top: margin,
+        left: margin,
+        right: window.innerWidth - margin,
+        bottom: window.innerHeight - margin,
+      },
+      obstacles: from?.obstacles,
+      halo: live ? LIVE_HALO : POPOVER_HALO,
+      previous: held,
     });
-  }, [float, placement]);
+    last.current = { side: next.side, w: width, h: natural };
+    const dx = Math.round(next.x - rect.left);
+    const dy = Math.round(next.y - rect.top);
+    setAt((current) =>
+      current && current.dx === dx && current.dy === dy && current.side === next.side ? current : { dx, dy, side: next.side }
+    );
+    setMaxHeight(next.maxHeight);
+  }, [float, placement, align, live]);
 
   // Place on open, and again whenever the panel changes size.
   useLayoutEffect(() => {
@@ -173,28 +209,30 @@ export const RailPopover: React.FC<RailPopoverProps> = ({
     place();
     const panel = panelRef.current;
     if (!panel || typeof ResizeObserver === 'undefined') return;
-    let frame = 0;
-    const observer = new ResizeObserver(() => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(place);
-    });
+    // At once, not on the next frame: the observer runs after layout and before
+    // paint, so a panel whose contents arrive just after it opens (the live
+    // grid replacing its placeholder) is never drawn where the smaller one went.
+    const observer = new ResizeObserver(() => place());
     // The content, not the panel: a panel clamped to a max height does not
     // change size when what is inside it grows.
     Array.from(panel.children).forEach((child) => observer.observe(child));
     observer.observe(panel);
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-    };
+    return () => observer.disconnect();
   }, [open, place]);
 
-  // A floating panel follows the board; an anchored one rides the rail already.
+  // Follow the board: a floating panel is fixed to the window, and an anchored
+  // one rides the rail but must step aside if a pan or zoom slides the
+  // selection under it. The rail re-places itself on the same events and
+  // subscribed first, so its frame runs first and this one reads where it went.
   useEffect(() => {
-    if (!open || !float) return;
+    if (!open) return;
     let frame = 0;
     const follow = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(place);
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        place();
+      });
     };
     engineEvents.on('CameraChanged', follow);
     engineEvents.on('ObjectMoved', follow);
@@ -207,7 +245,7 @@ export const RailPopover: React.FC<RailPopoverProps> = ({
       engineEvents.off('ObjectModified', follow);
       window.removeEventListener('resize', follow);
     };
-  }, [open, float, place]);
+  }, [open, place]);
 
   // Hand the keyboard in once the panel is where it will stay.
   useEffect(() => {
@@ -219,35 +257,35 @@ export const RailPopover: React.FC<RailPopoverProps> = ({
 
   useEffect(() => {
     if (!open) {
-      setSide(placement);
-      setShift(0);
+      setAt(null);
+      last.current = null;
       setSpot(null);
       setMaxHeight(undefined);
       setSwitched(false);
     }
   }, [open, placement]);
 
+  // A floating panel is not inside the trigger's subtree, so "outside the
+  // trigger" is no longer the same question as "outside the popover": both are
+  // surfaces. The trigger toggles, so a press on it is left to its click; a
+  // picker or menu opened from inside the panel is a floating child.
+  useOutsidePress({ open, surfaces: [ref, panelRef], triggers: triggerRef, onOutside: () => setOpen(false) });
+
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (isInsidePortalSurface(e.target)) return;
-      // A floating panel is not inside the trigger's subtree, so "outside the
-      // trigger" is no longer the same question as "outside the popover".
-      if (panelRef.current?.contains(e.target as Node)) return;
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       e.stopPropagation();
+      // Safari does not focus a button on click, so focus left on the body
+      // after clicking the trigger still belongs back on it.
+      const active = document.activeElement;
       const hadFocus =
-        panelRef.current?.contains(document.activeElement) || triggerRef.current === document.activeElement;
+        !active || active === document.body || panelRef.current?.contains(active) || triggerRef.current === active;
       setOpen(false);
       if (hadFocus) triggerRef.current?.focus({ preventScroll: true });
     };
-    document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey, true);
     return () => {
-      document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey, true);
     };
   }, [open, setOpen]);
@@ -261,8 +299,9 @@ export const RailPopover: React.FC<RailPopoverProps> = ({
       className="ctx-popover"
       role="dialog"
       aria-label={label}
-      data-side={float ? spot?.side ?? placement : side}
+      data-side={float ? spot?.side ?? placement : at?.side ?? placement}
       data-float={float || undefined}
+      data-size={size}
       data-scrolls={maxHeight !== undefined || undefined}
       data-switched={switched || undefined}
       style={
@@ -277,15 +316,18 @@ export const RailPopover: React.FC<RailPopoverProps> = ({
               // has been measured.
               visibility: spot ? 'visible' : 'hidden',
             } as React.CSSProperties)
-          : ({
-              [side === 'bottom' ? 'top' : 'bottom']: 'calc(100% + 8px)',
-              maxHeight,
-              ...(align === 'center'
-                ? { left: '50%', translate: `calc(-50% + ${shift}px) 0` }
-                : align === 'end'
-                  ? { right: -shift }
-                  : { left: shift }),
-            } as React.CSSProperties)
+          : at
+            ? ({ left: 0, top: 0, maxHeight, translate: `${at.dx}px ${at.dy}px` } as React.CSSProperties)
+            : ({
+                // Before the first measure, which happens before paint: hung
+                // off the rail's edge (4px of its padding, 6px of air).
+                [placement === 'bottom' ? 'top' : 'bottom']: 'calc(100% + 10px)',
+                ...(align === 'center'
+                  ? { left: '50%', translate: '-50% 0' }
+                  : align === 'end'
+                    ? { right: 0 }
+                    : { left: 0 }),
+              } as React.CSSProperties)
       }
     >
       {typeof children === 'function' ? children(() => setOpen(false)) : children}

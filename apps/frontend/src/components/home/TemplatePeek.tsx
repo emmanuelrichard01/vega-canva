@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import {
   BarChart3, ChevronLeft, ChevronRight, Code2, ExternalLink, Frame, Image, LayoutGrid, Link2, MessageSquare, Mic,
-  PenLine, Spline, Square, StickyNote, Table2, Type, X,
+  MousePointerClick, PenLine, Shapes, Spline, Square, StickyNote, Table2, Type, X,
 } from 'lucide-react';
-import { WorkspaceCover } from '../WorkspaceCover';
-import { CATEGORIES, type Template } from '../../engine/templates/templates';
-import type { BoardPreview } from '../../engine/model/boardPreview';
+import type { Template } from '../../engine/templates/templates';
 import { templateContents } from './templateContents';
+import { BoardViewer } from './BoardViewer';
+import { categoryLabel, INTERACTIVE_HINT, isInteractive } from './templateFacts';
 
 const KIND_ICON: Record<string, React.ReactNode> = {
   sticky: <StickyNote size={14} />,
@@ -23,11 +23,11 @@ const KIND_ICON: Record<string, React.ReactNode> = {
   link: <Link2 size={14} />,
   audio: <Mic size={14} />,
   comment: <MessageSquare size={14} />,
+  icon: <Shapes size={14} />,
 };
 
 interface Props {
   template: Template;
-  preview: BoardPreview | null;
   /** Position in the list being browsed, for "3 of 45" and the arrows. */
   index: number;
   count: number;
@@ -40,19 +40,21 @@ interface Props {
 /**
  * A closer look at a template, beside the gallery rather than over it.
  *
- * Not a dialog: the gallery stays scrollable and keyboard focus stays on the
- * cards, so arrowing through them moves the peek with you. Enter uses the
- * template under focus, Escape closes the peek.
+ * Not a dialog: the gallery stays scrollable and keyboard focus can stay on
+ * the cards, so arrowing through them moves the peek with you. The board
+ * itself is live in a window that pans and zooms, so its small print can be
+ * read before it is opened. Enter uses the template under focus, Escape
+ * closes the peek, and ← → step through the list from inside it.
  */
 export const TemplatePeek: React.FC<Props> = ({
-  template, preview, index, count, onStep, onClose, onUse, onUseInNewTab,
+  template, index, count, onStep, onClose, onUse, onUseInNewTab,
 }) => {
   const contents = useMemo(() => templateContents(template), [template]);
-  const category = CATEGORIES.find((c) => c.id === template.category)?.label;
+  const category = categoryLabel(template);
+  const interactive = isInteractive(template);
 
-  // Arrows step through the list while focus is inside the sheet itself.
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.defaultPrevented) return;
     if (e.key === 'ArrowLeft') { e.preventDefault(); onStep(-1); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); onStep(1); }
     else if (e.key === 'Escape') { e.preventDefault(); onClose(); }
@@ -81,7 +83,7 @@ export const TemplatePeek: React.FC<Props> = ({
 
       <div className="tpeek__body" ref={bodyRef}>
         <div className="tpeek__art" key={template.id}>
-          <WorkspaceCover workspaceId={template.id} name={template.name} preview={preview} />
+          <BoardViewer template={template} slot="peek" interactive label={`${template.name}, the whole board`} />
         </div>
 
         <div className="tpeek__titles">
@@ -90,6 +92,22 @@ export const TemplatePeek: React.FC<Props> = ({
         </div>
 
         <p className="tpeek__blurb">{template.blurb}</p>
+
+        {interactive && (
+          <p className="tpeek__hint">
+            <MousePointerClick size={15} aria-hidden="true" />
+            <span>{INTERACTIVE_HINT}</span>
+          </p>
+        )}
+
+        {template.teaches.length > 0 && (
+          <section className="tpeek__section" aria-labelledby="tpeek-teaches">
+            <h3 className="tpeek__subhead" id="tpeek-teaches">Shows off</h3>
+            <ul className="tpeek__chips">
+              {template.teaches.map((chip) => <li key={chip} className="gchip">{chip}</li>)}
+            </ul>
+          </section>
+        )}
 
         <section className="tpeek__section" aria-labelledby="tpeek-contents">
           <h3 className="tpeek__subhead" id="tpeek-contents">
@@ -105,13 +123,6 @@ export const TemplatePeek: React.FC<Props> = ({
             ))}
           </ul>
         </section>
-
-        {template.teaches.length > 0 && (
-          <section className="tpeek__section" aria-labelledby="tpeek-teaches">
-            <h3 className="tpeek__subhead" id="tpeek-teaches">Good for trying</h3>
-            <p className="tpeek__teaches">{template.teaches.join(' · ')}</p>
-          </section>
-        )}
       </div>
 
       <footer className="tpeek__actions">

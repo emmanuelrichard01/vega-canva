@@ -1,59 +1,74 @@
 import type { AnyNode } from './schema';
-import { nodeBounds, selectionBounds, type NodePatch } from './selection';
+import { nodeBounds, selectionBounds, type Box, type NodePatch } from './selection';
 
 /**
  * Aligning and distributing a selection.
  *
- * The one thing a multi-selection is most often selected *in order to do*, and
- * the app has never had it — there is no align, no distribute and no tidy up
- * anywhere in the codebase. Everything here is pure and returns patches, so it
- * runs in Node and so a single `applyNodePatches` call makes the whole
- * arrangement one undo step.
+ * Everything here is pure and returns patches, so it runs in Node and a single
+ * `applyNodePatches` call makes the whole arrangement one undo step.
  *
  * Every function measures the **rendered** box (`nodeBounds`), not the stored
  * `x/width`. Aligning a rotated square by its unrotated box leaves its visible
  * corner hanging over the edge you just aligned it to, which is exactly the
  * thing you were looking at when you pressed the button.
+ *
+ * The functions take nodes, but nothing in them depends on a node being more
+ * than a box: `engine/arrange/units` passes one stand-in per group, so a whole
+ * group lines up as one object instead of having its members collapsed onto
+ * one edge.
  */
 
 export type AlignEdge = 'left' | 'centerX' | 'right' | 'top' | 'middleY' | 'bottom';
 export type DistributeAxis = 'horizontal' | 'vertical';
 
 /**
- * Push every object to one edge of the selection's box.
+ * Push every object to one edge of the selection's own box.
  *
- * The box is the selection's own extent rather than a frame's, which is what
- * makes "align left" mean "line these up with each other" — the reading that
- * applies whether or not the selection happens to sit inside anything.
- *
- * Alignment writes a *delta*, never an absolute coordinate: a node's stored
- * `x` is the corner of its unrotated box, and the thing being lined up is the
- * corner of its rotated one, so the two differ by an offset that is different
- * for every node.
+ * The selection's extent rather than a frame's, which is what makes "align
+ * left" mean "line these up with each other". `alignTo` takes any other
+ * reference: a key object, or the frame they sit in.
  */
 export function alignSelection(nodes: readonly AnyNode[], edge: AlignEdge): NodePatch[] {
-  // One object has nothing to align against — with the selection's own box as
+  // One object has nothing to align against: with the selection's own box as
   // the reference, aligning it to itself is by definition a no-op.
   if (nodes.length < 2) return [];
   const box = selectionBounds(nodes);
   if (!box) return [];
+  return alignTo(nodes, edge, box);
+}
 
+/**
+ * Push every object to one edge of `reference`.
+ *
+ * Alignment writes a *delta*, never an absolute coordinate: a node's stored
+ * `x` is the corner of its unrotated box, and the thing being lined up is the
+ * corner of its rotated one, so the two differ by an offset that is different
+ * for every node. `skip` names an object that stays where it is, which is how
+ * a key object holds still while everything else moves to it.
+ */
+export function alignTo(
+  nodes: readonly AnyNode[],
+  edge: AlignEdge,
+  reference: Box,
+  skip?: string
+): NodePatch[] {
   const patches: NodePatch[] = [];
   nodes.forEach((node) => {
+    if (node.id === skip) return;
     const b = nodeBounds(node);
     let delta = 0;
     let axis: 'x' | 'y' = 'x';
 
     switch (edge) {
-      case 'left': delta = box.x - b.x; break;
-      case 'centerX': delta = box.x + (box.width - b.width) / 2 - b.x; break;
-      case 'right': delta = box.x + box.width - b.width - b.x; break;
-      case 'top': axis = 'y'; delta = box.y - b.y; break;
-      case 'middleY': axis = 'y'; delta = box.y + (box.height - b.height) / 2 - b.y; break;
-      case 'bottom': axis = 'y'; delta = box.y + box.height - b.height - b.y; break;
+      case 'left': delta = reference.x - b.x; break;
+      case 'centerX': delta = reference.x + (reference.width - b.width) / 2 - b.x; break;
+      case 'right': delta = reference.x + reference.width - b.width - b.x; break;
+      case 'top': axis = 'y'; delta = reference.y - b.y; break;
+      case 'middleY': axis = 'y'; delta = reference.y + (reference.height - b.height) / 2 - b.y; break;
+      case 'bottom': axis = 'y'; delta = reference.y + reference.height - b.height - b.y; break;
     }
 
-    if (delta === 0) return;
+    if (Math.abs(delta) < 1e-9) return;
     patches.push({ id: node.id, changes: { [axis]: node[axis] + delta } });
   });
   return patches;
@@ -147,4 +162,64 @@ export function tidyUp(nodes: readonly AnyNode[], axis: DistributeAxis, gap = 24
     cursor += item.box[sizeKey] + gap;
   });
   return patches;
+}
+
+/**
+ * Space the objects at one exact gap along an axis.
+ *
+ * Illustrator's "distribute spacing" with a value: sorted along the axis, each
+ * object starts `gap` after the previous one ends. The anchor, the first in
+ * order unless one is named, holds still and the rest are laid out on either
+ * side of it, so typing a gap with a key object chosen spaces everything off
+ * that object. The cross axis is left alone: this changes spacing, not
+ * alignment. A negative gap overlaps them evenly, which is a legitimate
+ * arrangement.
+ */
+export function distributeSpacing(
+  nodes: readonly AnyNode[],
+  axis: DistributeAxis,
+  gap: number,
+  anchor?: string
+): NodePatch[] {
+  if (nodes.length < 2 || !Number.isFinite(gap)) return [];
+  const sizeKey = axis === 'horizontal' ? 'width' : 'height';
+  const posKey = axis === 'horizontal' ? 'x' : 'y';
+  const ordered = nodes
+    .map((node) => ({ node, box: nodeBounds(node) }))
+    .sort((a, b) => a.box[posKey] - b.box[posKey] || (a.node.id < b.node.id ? -1 : 1));
+
+  const at = Math.max(0, anchor === undefined ? 0 : ordered.findIndex((i) => i.node.id === anchor));
+  const start = new Array<number>(ordered.length);
+  start[at] = ordered[at].box[posKey];
+  for (let i = at + 1; i < ordered.length; i++) start[i] = start[i - 1] + ordered[i - 1].box[sizeKey] + gap;
+  for (let i = at - 1; i >= 0; i--) start[i] = start[i + 1] - gap - ordered[i].box[sizeKey];
+
+  const patches: NodePatch[] = [];
+  ordered.forEach((item, i) => {
+    const delta = start[i] - item.box[posKey];
+    if (Math.abs(delta) < 1e-9) return;
+    patches.push({ id: item.node.id, changes: { [posKey]: item.node[posKey] + delta } });
+  });
+  return patches;
+}
+
+/**
+ * The gap the objects already share along an axis, or null when it differs.
+ *
+ * Read edge to edge in axis order, to the half pixel: that is what a field
+ * showing "24" promises. Null for fewer than two objects, and for any spacing
+ * that is not one value, which the field shows as Mixed.
+ */
+export function measureSpacing(nodes: readonly AnyNode[], axis: DistributeAxis): number | null {
+  if (nodes.length < 2) return null;
+  const sizeKey = axis === 'horizontal' ? 'width' : 'height';
+  const posKey = axis === 'horizontal' ? 'x' : 'y';
+  const boxes = nodes.map(nodeBounds).sort((a, b) => a[posKey] - b[posKey]);
+  let first: number | null = null;
+  for (let i = 1; i < boxes.length; i++) {
+    const gap = boxes[i][posKey] - (boxes[i - 1][posKey] + boxes[i - 1][sizeKey]);
+    if (first === null) first = gap;
+    else if (Math.abs(gap - first) > 0.5) return null;
+  }
+  return first === null ? null : Math.round(first * 10) / 10;
 }

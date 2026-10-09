@@ -17,11 +17,11 @@ import { applyFormat, detectListShortcut, undoListShortcut } from '../../engine/
 import { editorKeyIntent } from './nodeEditorKeys';
 import type { Typography } from '../../engine/model/schema';
 import { domTextStyle } from './renderers/shared';
+import { lineLabelWorld } from '../../engine/model/lineLabel';
 
 interface Props {
   node: TextBearingNode;
   onCommit: (text: string, size?: { width: number; height: number }) => void;
-  onCancel: () => void;
 }
 
 /**
@@ -51,11 +51,10 @@ const FOCUS_GRACE_MS = 600;
 /** Enough for the gesture's own blur, not enough to trap the caret. */
 const MAX_FOCUS_RECOVERIES = 2;
 
-export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
+export const NodeEditor: React.FC<Props> = ({ node, onCommit }) => {
   const dark = useChromeDark();
   const [value, setValue] = useState(node.text ?? '');
   const [, forceReposition] = useState(0);
-  const cancelledRef = React.useRef(false);
   const chainRef = React.useRef<ChainDirection | null>(null);
   /** The prefix a typed list shortcut consumed, until anything else is typed. */
   const listPrefixRef = React.useRef<string | null>(null);
@@ -205,11 +204,14 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
       }
     : null;
 
-  const screenX = runBox
-    ? stageOrigin.left + (node.x + node.width / 2) * zoom + cameraSystem.x - (runBox.width * zoom) / 2
+  // An open run's label sits at its distance along the run, not the box centre:
+  // on a bent line the two are far apart. See `lineLabel.ts`.
+  const labelAt = runBox ? lineLabelWorld(node as Parameters<typeof lineLabelWorld>[0]) : null;
+  const screenX = labelAt && runBox
+    ? stageOrigin.left + labelAt.x * zoom + cameraSystem.x - (runBox.width * zoom) / 2
     : stageOrigin.left + node.x * zoom + cameraSystem.x;
-  const screenY = runBox
-    ? stageOrigin.top + (node.y + node.height / 2) * zoom + cameraSystem.y - (runBox.height * zoom) / 2
+  const screenY = labelAt && runBox
+    ? stageOrigin.top + labelAt.y * zoom + cameraSystem.y - (runBox.height * zoom) / 2
     : stageOrigin.top + node.y * zoom + cameraSystem.y;
 
   const isSticky = node.type === 'sticky';
@@ -298,12 +300,6 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
   };
 
   const handleBlur = () => {
-    if (cancelledRef.current) {
-      cancelledRef.current = false;
-      onCancel();
-      return;
-    }
-
     /**
      * Take the caret back rather than commit an empty note out of existence.
      *
@@ -440,10 +436,7 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
           );
           if (intent) {
             e.preventDefault();
-            if (intent.kind === 'cancel') {
-              cancelledRef.current = true;
-              target.blur();
-            } else if (intent.kind === 'chain') {
+            if (intent.kind === 'chain') {
               chainRef.current = intent.direction;
               target.blur();
             } else if (intent.kind === 'finish') {

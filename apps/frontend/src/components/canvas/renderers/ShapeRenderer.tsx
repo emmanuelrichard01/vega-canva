@@ -2,14 +2,17 @@ import React from 'react';
 import { labelInk, solidFillOf } from '../../../engine/model/labelInk';
 import { Circle, Ellipse, Group, Label, Line, Path, Rect, Tag, Text } from 'react-konva';
 import { DEFAULT_INK, isOpenShape, type ShapeNode } from '../../../engine/model/schema';
-import { canvasFontFamily, konvaFontStyle, konvaTextDecoration, shadowProps, shadowSpreadProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
+import { canvasFontFamily, konvaFontStyle, konvaTextDecoration, strokeColor, strokeDashProps, strokeWidth } from './shared';
 import { useFillProps } from './useFillProps';
-import { AlignedStroke, BackdropBlur, InnerShadow } from './ShapeEffects';
+import { AlignedStroke, BackdropBlur, DropShadow, InnerShadow, strokeInk, type ShadowSilhouette } from './ShapeEffects';
+import { capSilhouette, mergeSilhouettes, pointsBox, polylinePath, strokeReach } from './shadowInk';
+import { castsShadow, inkOf, needsKnockout, paintDraws } from '../../../engine/model/dropShadow';
 import { shapePath2D } from './shapePath2D';
 import { shapeToPath } from '../../../engine/model/shapeToPath';
 import { defaultEndAlign } from '../../../engine/model/linePath';
 import { runPoints } from '../../../engine/model/lineEnds';
-import { terminateRun } from '../../../engine/model/connectorEnds';
+import { LABEL_PAD, labelFraction, lineLabelBox, lineStrokeEnds, pointAlongRun } from '../../../engine/model/lineLabel';
+import { capExtentPoints, terminateRun } from '../../../engine/model/connectorEnds';
 import { contourData } from '../../../engine/model/pathGeometry';
 import { shapeFeaturePaths } from '../../../engine/model/shapeOutline';
 import { labelPlated, shapeLabelBox } from '../../../engine/model/shapes/labelBox';
@@ -93,11 +96,11 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
   // Dash pattern and the cap that goes with it. Spread rather than passed as
   // two props, because a dotted pattern draws nothing without its round cap.
   const dashProps = strokeDashProps(node.appearance);
-  // The shadow rides on the shape itself unless it has spread, which Konva has
-  // no property for — then it rides on a copy drawn behind, and the shape
-  // itself casts none.
-  const spread = shadowSpreadProps(node.appearance);
-  const shadow = spread ? {} : shadowProps(node.appearance);
+  // The drop shadow is cast once, from the whole silhouette, by `DropShadow`.
+  // No primitive here carries Konva's own shadow props: a fill and its stroke
+  // would each cast one, and an outline with no fill would cast none.
+  const shadowSpec = node.appearance?.shadow;
+  const dropShadow = castsShadow(shadowSpec) ? shadowSpec : undefined;
 
   // An inside or outside stroke is not something a Konva primitive can draw,
   // so the primitive draws no stroke at all and `AlignedStroke` draws it
@@ -139,10 +142,10 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
   // twice is how a clip and a fill end up describing marginally different
   // shapes. Only built when something needs it.
   const path = React.useMemo(
-    () => (offCentre || innerShadow || backdropBlur > 0 ? shapePath2D(effectiveNode) : null),
+    () => (offCentre || innerShadow || backdropBlur > 0 || (dropShadow && !open) ? shapePath2D(effectiveNode) : null),
     // The outline depends on the node's form and box, not on its paint.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [offCentre, Boolean(innerShadow), backdropBlur > 0, effectiveNode.geometry, w, h, radius]
+    [offCentre, Boolean(innerShadow), backdropBlur > 0, Boolean(dropShadow) && !open, effectiveNode.geometry, w, h, radius]
   );
   const primitiveStroke = offCentre ? undefined : stroke;
 
@@ -244,23 +247,18 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
   const points = profile.flatMap((p) => [p.x, p.y]);
 
   /**
-   * Where a line's label rides: the midpoint of the run it belongs to.
+   * Where a line's label rides: its place along the run, the middle unless it
+   * has been dragged.
    *
-   * Taken from the profile's own points, so it follows a wave or a coil rather
-   * than floating at the centre of the rectangle that contains one.
+   * Taken from the profile's own points and measured by distance, so it
+   * follows a wave or a run of corners rather than floating at the centre of
+   * the box — see `lineLabel.pointAlongRun`, which the exporter and the label
+   * editor ask too.
    */
-  const labelAt = ((): { x: number; y: number } => {
-    if (!open || profile.length === 0) return { x: w / 2, y: h / 2 };
-    // Interpolated rather than indexed. A straight line is *two* points, so
-    // `points[length / 2]` is its second one — the label sat on the far end,
-    // past the arrowhead. Halfway along the indices lands in the middle of a
-    // two-point run and on the middle sample of a hundred-point one.
-    const mid = (profile.length - 1) / 2;
-    const lo = profile[Math.floor(mid)];
-    const hi = profile[Math.ceil(mid)];
-    const t = mid - Math.floor(mid);
-    return { x: lo.x + (hi.x - lo.x) * t, y: lo.y + (hi.y - lo.y) * t };
-  })();
+  const labelAt =
+    !open || profile.length === 0
+      ? { x: w / 2, y: h / 2 }
+      : pointAlongRun(profile, labelFraction(node.geometry));
 
   const plateFill = ThemeService.getCanvasPlateFill();
   const label =
@@ -268,80 +266,58 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
       open ? (
         /**
          * A label on a line sits on a plate the colour of the board, so it cuts
-         * the stroke it crosses rather than fighting it.
-         *
-         * The ink is **checked against that plate rather than taken on trust**.
-         * A line's label inherits the shape's typography colour, which is
-         * arbitrary user colour, and a pale label on a light board is invisible
-         * — the plate solves the *line* crossing the words and does nothing
-         * about the words themselves. `readableOn` lifts the author's colour
-         * toward legibility while keeping its hue, so a dark red label stays
-         * recognisably red instead of being replaced with black.
+         * the stroke it crosses rather than fighting it, at its place along the
+         * run (`labelAt`).
          */
-        <Label
-          /**
-           * The middle of the **run**, not the middle of the box.
-           *
-           * These were the same thing while a line's box was its endpoint
-           * diagonal. They stopped being the same when the box became the
-           * extent of what is drawn: a coil's box is as tall as its loops, so
-           * the box centre is up among them, and a straight line's box is now
-           * barely thicker than its stroke, so the centre is fine there and
-           * nowhere else. Halfway along the drawn points is what "the middle
-           * of this line" has always meant.
-           */
-          x={labelAt.x}
-          y={labelAt.y}
-          listening={false}
-          // Counter-rotated so the words stay upright whatever the object does.
-          // A label inherits the node's rotation and flips, and a line flipped
-          // on both axes — which is simply a line drawn up-and-left — arrives
-          // rotated 180°, so its label read upside down. Nobody wants a label
-          // that tracks the geometry; a label is for reading.
-          rotation={-(node.rotation ?? 0)}
-          scaleX={node.scaleX < 0 ? -1 : 1}
-          scaleY={node.scaleY < 0 ? -1 : 1}
-          offsetX={0}
-          offsetY={0}
-        >
-          <Tag fill={plateFill} cornerRadius={3} />
-          {/*
-            A tag, not a text block.
-
-            This used to take its size, family, weight and colour from the
-            node's full typography — the same machinery a paragraph uses. A
-            line's label is not a paragraph. It is one or two words riding a
-            hairline to say what the edge *means*: yes, no, retry, 40ms. Giving
-            it a font picker, a weight, an alignment, a line height, a list
-            style and a colour ramp offers a dozen decisions for a thing with
-            one right answer, and every one of them is a way to make the label
-            outweigh the line it belongs to.
-
-            So it is fixed: small, semibold, upper case, on a plate. Upper case
-            because at this size it is what reads as a *label* rather than as
-            stray prose, and because it makes a two-letter tag hold its own
-            against the run crossing behind it.
-
-            The ink still tracks the line's own colour so the tag belongs to
-            it, and is still lifted by `readableOn` — the plate solves the line
-            crossing the words and does nothing about the words themselves, so
-            a pale stroke's label would otherwise be invisible on a light
-            board. Hue is kept; only lightness moves.
-          */}
-          <Text
-            text={node.text.toUpperCase()}
-            padding={3}
-            fontSize={11}
-            fontStyle="600"
-            letterSpacing={0.4}
-            // Against the *plate*, not against the board. `readableOn` assumes
-            // a near-white or near-black surface; the plate is a mid-tone
-            // panel, and a colour that clears 3:1 on white can be nearly
-            // invisible on it. 4.5 rather than 3.2 because this is small text
-            // now — 11px semibold is not the "large text" the lower bar is for.
-            fill={readableOnSurface(stroke ?? DEFAULT_INK, plateFill)}
-          />
-        </Label>
+        (() => {
+          const box = lineLabelBox(node.text, sw || 2);
+          return (
+            <Group
+              x={labelAt.x}
+              y={labelAt.y}
+              listening={false}
+              // Counter-rotated and un-flipped so the words stay upright
+              // whatever the object does: a label is for reading.
+              rotation={-(node.rotation ?? 0)}
+              scaleX={node.scaleX < 0 ? -1 : 1}
+              scaleY={node.scaleY < 0 ? -1 : 1}
+            >
+              {/* Centred on the run, so the plate knocks the stroke out
+                  behind the words rather than hanging off one side of it. */}
+              <Rect
+                x={-box.width / 2}
+                y={-box.height / 2}
+                width={box.width}
+                height={box.height}
+                cornerRadius={3}
+                fill={plateFill}
+              />
+              {/*
+                The connector label's type: a line drawn between two objects
+                becomes a connector, and the label should not change on the
+                way. A word or two saying what the edge means, not a
+                paragraph, so it takes no typography controls.
+              */}
+              <Text
+                x={-box.width / 2}
+                y={-box.height / 2}
+                width={box.width}
+                height={box.height}
+                align="center"
+                verticalAlign="middle"
+                text={node.text}
+                fontSize={box.fontSize}
+                fontStyle="500"
+                fontFamily="Inter, system-ui, sans-serif"
+                padding={LABEL_PAD}
+                wrap="none"
+                // Against the plate, not the board: lifted toward legibility
+                // with its hue kept, so a pale stroke's label still reads.
+                fill={readableOnSurface(stroke ?? DEFAULT_INK, plateFill)}
+              />
+            </Group>
+          );
+        })()
       ) : node.typography ? (
         <>
         {/* On a shape with interior detail, the label sits on a plate of the
@@ -427,7 +403,6 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
      * does, and absent means absent everywhere.
      */
     ...dashProps,
-    ...shadow,
     // The grab area for a hairline is otherwise the hairline itself.
     hitStrokeWidth: Math.max(20, sw),
   };
@@ -479,8 +454,35 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
     const hachureColor =
       fillPaint && fillPaint.type === 'solid' ? fillPaint.color : undefined;
 
+    /**
+     * The drop shadow of a drawing: the sketched silhouette where there is a
+     * fill, and the hand-drawn strokes themselves, so a sketched outline with
+     * no fill casts the shadow of its wobble rather than of a ruled box.
+     * Hachure and dots leave the interior see-through, so their shadow is cut
+     * away from under the shape like any translucent fill's.
+     */
+    const sketchInk = dropShadow ? inkOf(node.appearance, { absentFill: false, stroked: true }) : null;
+    const sketchShadow =
+      dropShadow && sketchInk
+        ? {
+            box: { x: -(nib * 2 + 12), y: -(nib * 2 + 12), width: w + nib * 4 + 24, height: h + nib * 4 + 24 },
+            silhouette: {
+              fills: !open && hasFill && paintDraws(fillPaint) && sketch.silhouette ? [{ path: new Path2D(sketch.silhouette) }] : [],
+              strokes: [sketch.outline, sketch.features, ...sketchCaps]
+                .filter((d): d is string => Boolean(d))
+                .map((d) => ({ path: new Path2D(d), width: nib, cap: 'round' as const, join: 'round' as const, dash: d === sketch.outline ? dashProps.dash : undefined })),
+            },
+            knockout: needsKnockout(
+              open
+                ? { ...sketchInk, filled: false, fillOpaque: false }
+                : { ...sketchInk, fillOpaque: sketchInk.fillOpaque && fillsInterior(fillStyle) }
+            ),
+          }
+        : null;
+
     return (
       <Group>
+        {sketchShadow && <DropShadow shadow={dropShadow!} {...sketchShadow} />}
         {/**
           * The hit region: the silhouette, painted in nothing.
           *
@@ -639,7 +641,6 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
           // and a sketched outline that silently ignored the dash would make
           // that pair of controls a lie.
           dash={dashProps.dash}
-          {...shadow}
           // The grab area for a set of loose strokes is otherwise the strokes
           // themselves, which is a much worse target than the crisp shape had.
           hitStrokeWidth={Math.max(20, nib * 3)}
@@ -651,6 +652,8 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
   }
 
   let shape: React.ReactElement;
+  /** The crisp drop shadow, when there is one: what casts it, and where. */
+  let crispShadow: { box: { x: number; y: number; width: number; height: number }; silhouette: ShadowSilhouette; knockout: boolean } | null = null;
 
   if (open) {
     // Corner to corner of the box. Konva's `Arrow` is a `Line` that also draws
@@ -690,25 +693,49 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
     };
 
     /**
-     * Round joins on a *sampled* profile.
+     * The cap and join, from the one rule the exporter also reads.
      *
-     * A wave is drawn as a run of short straight segments, and a mitred join
-     * between two of them spikes wherever the direction changes quickly —
-     * visible as a burr on every crest. A zigzag is exempt: its corners are
-     * the shape, and rounding them is rounding the thing itself. The document
-     * still decides for a straight line, which is where the cap and join
-     * controls apply and where absent has always meant butt and mitre.
+     * A sampled profile draws round (a mitred join between two short samples
+     * spikes on every crest); a dotted pattern draws round caps; otherwise the
+     * document decides. See `lineStrokeEnds`.
      */
-    const sampled = (node.geometry.lineProfile ?? 'straight') !== 'straight'
-      && node.geometry.lineProfile !== 'zigzag';
+    const ends = lineStrokeEnds(node.appearance, node.geometry.lineProfile);
+    // Whether the run is drawn from samples (the case `lineStrokeEnds` rounds);
+    // the shadow below strokes its silhouette by the same rule.
+    const sampled = (node.geometry.lineProfile ?? 'straight') !== 'straight' && node.geometry.lineProfile !== 'zigzag';
 
     shape = (
       <Group>
-        <Line {...common} points={run} {...(sampled ? { lineJoin: 'round' as const, lineCap: 'round' as const } : null)} />
+        <Line {...common} points={run} lineCap={ends.cap} lineJoin={ends.join} />
         {marker(startCap, 'start')}
         {marker(endCap, 'end')}
       </Group>
     );
+
+    // The run and its markers cast one shadow between them, joined and
+    // capped exactly as the run above is drawn.
+    if (dropShadow) {
+      const lineWidth = sw || 2;
+      crispShadow = {
+        box: pointsBox([...run, ...capExtentPoints(startCap), ...capExtentPoints(endCap)], lineWidth * 2 + 2),
+        silhouette: mergeSilhouettes(
+          {
+            strokes: [{
+              path: polylinePath(run),
+              width: lineWidth,
+              cap: sampled ? 'round' : (dashProps.lineCap ?? 'butt'),
+              join: sampled ? 'round' : (dashProps.lineJoin ?? 'miter'),
+              miterLimit: dashProps.miterLimit,
+              dash: dashProps.dash,
+            }],
+          },
+          capSilhouette(startCap, lineWidth),
+          capSilhouette(endCap, lineWidth)
+        ),
+        // A run has no interior, whatever fill it happens to carry.
+        knockout: needsKnockout({ ...inkOf(node.appearance, { stroked: true }), filled: false, fillOpaque: false }),
+      };
+    }
   } else if (node.geometry.kind === 'rect') {
     /**
      * A number when the four agree, the array only when they do not.
@@ -731,7 +758,6 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
         width={w}
         height={h}
         {...rectFill}
-        {...shadow}
         stroke={primitiveStroke}
         strokeWidth={sw}
         {...dashProps}
@@ -746,7 +772,6 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
         radiusX={w / 2}
         radiusY={h / 2}
         {...ellipseFill}
-        {...shadow}
         stroke={primitiveStroke}
         strokeWidth={sw}
         {...dashProps}
@@ -777,7 +802,6 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
         data={pathD}
         fillRule="evenodd"
         {...rectFill}
-        {...shadow}
         stroke={primitiveStroke}
         strokeWidth={sw}
         {...dashProps}
@@ -806,15 +830,37 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
     }
   }
 
+  /**
+   * A closed shape's silhouette is its outline filled where the fill draws,
+   * plus its stroke where the stroke draws — inside, centred or outside, the
+   * same `Path2D` the aligned stroke and the inner shadow clip to. Spread is
+   * applied by `DropShadow` to the whole of it, so it now grows a hollow
+   * outline as well as a filled one.
+   */
+  if (dropShadow && !open && path) {
+    const ink = inkOf(node.appearance, { absentFill: true });
+    const s = node.appearance?.stroke;
+    const reach = stroke ? strokeReach(sw, align, s?.join ?? 'miter', s?.miterLimit) : 0;
+    const kind = node.geometry.kind;
+    crispShadow = {
+      box: { x: -reach, y: -reach, width: w + reach * 2, height: h + reach * 2 },
+      silhouette: {
+        fills: ink.filled ? [{ path, rule: kind === 'rect' || kind === 'ellipse' ? 'nonzero' : 'evenodd' }] : [],
+        strokes: stroke
+          ? [
+              ...strokeInk(path, s ? { ...s, width: sw } : undefined),
+              ...shapeFeaturePaths(effectiveNode, 0, 0).map((d) => ({ path: new Path2D(d), width: sw, dash: dashProps.dash })),
+            ]
+          : [],
+      },
+      knockout: needsKnockout(ink),
+    };
+  }
+
   return (
     <Group>
-      {/* Spread is the shadow cast by a *grown* silhouette, so it is the same
-          shape drawn once more underneath with a `2 * spread` stroke, in the
-          shadow's colour, carrying the shadow props. Cloning rather than
-          rebuilding keeps the two silhouettes identical by construction —
-          a second hand-written copy is a second place for the star's point
-          count to be forgotten. */}
-      {spread && React.cloneElement(shape, spread)}
+      {/* Beneath everything the shape draws, cast by all of it at once. */}
+      {crispShadow && <DropShadow shadow={dropShadow!} {...crispShadow} />}
       {/* Beneath the fill, because frosted glass is the board seen *through*
           the shape — drawn on top it would hide the fill instead of sitting
           behind it. */}

@@ -226,6 +226,16 @@ database has already recorded it and will not run it again, so an edit changes
 what *new* databases get and nothing else. That is how two environments end up
 with different schemas and the same version number.
 
+### Version history (migration #5)
+
+Old `room_updates` rows are no longer only deleted. Retention folds them into
+`auto` rows of `room_versions`, one per working session, each a full encoded
+Yjs document, and editors can keep `named` versions that are never trimmed.
+Routes in `apps/server/src/routes/versions.ts`: `GET /rooms/:id/versions` and
+`GET /rooms/:id/versions/:versionId` (viewer); `POST`, `PUT` and `DELETE`
+(editor); all behind the room limiter. Rows hold whole documents, so watch
+table size on busy databases. Deleting a room cascades its versions.
+
 ---
 
 ## 6. Share cards, and what crawlers see

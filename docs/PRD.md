@@ -96,6 +96,13 @@ a grading line item.
 - The canvas exports to PNG and JSON from the toolbar.
 - If time allowed: a session can be scrubbed/replayed from t=0.
 
+## Scope since the MVP
+
+Redesign waves 5 to 7 added version history, slides and presentation, onboarding
+(welcome, checklist, tour), emoji, data links between tables and charts, a
+nine-category template catalogue, richer export (PDF, ZIP, tiled PNG) and
+presence tools (roster, spotlight, ping). See `../HANDOFF.md`.
+
 ## Related docs
 
 - `ARCHITECTURE.md` — system design, Figma comparison, bottlenecks

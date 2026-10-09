@@ -30,3 +30,9 @@ If you are developing a production application, we recommend enabling type-aware
 ```
 
 See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+
+## Where the product docs are
+
+This file is the stock Vite template notes. The app itself is described in the
+repository `README.md`, `DESIGN.md` and `docs/`; redesign waves 5 to 7 are
+summarised in `HANDOFF.md`.

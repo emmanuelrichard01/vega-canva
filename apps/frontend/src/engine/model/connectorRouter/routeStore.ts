@@ -90,8 +90,12 @@ export interface RouteOutput {
 
 export interface RouteEnv {
   getObjects: () => Record<string, AnyNode>;
-  /** Ids that changed in the latest snapshot, or null when unknown (route everything). */
-  getChanges: () => { changed: readonly string[]; removed: readonly string[] } | null;
+  /**
+   * Ids that changed in the latest snapshot, or null when unknown (route
+   * everything). `version` numbers the snapshots, so a store that skipped one
+   * can tell its change list is not the whole story.
+   */
+  getChanges: () => { changed: readonly string[]; removed: readonly string[]; version?: number } | null;
   subscribeObjects: (fn: () => void) => () => void;
   getLive: (id: string) => LiveTransform | undefined;
   liveIds: () => string[];
@@ -215,6 +219,20 @@ function boundsOfSegments(segs: readonly Segment[]): Rect | null {
 
 const byId = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
+/** Whether a change added, removed or edited a connector, judged on both sides of it. */
+function touchesConnector(
+  changes: { changed: readonly string[]; removed: readonly string[] },
+  before: Record<string, AnyNode>,
+  after: Record<string, AnyNode>
+): boolean {
+  for (const list of [changes.changed, changes.removed]) {
+    for (const id of list) {
+      if (before[id]?.type === 'connector' || after[id]?.type === 'connector') return true;
+    }
+  }
+  return false;
+}
+
 export class RouteStore {
   private entries = new Map<string, Entry>();
   private outputs = new Map<string, RouteOutput>();
@@ -222,6 +240,7 @@ export class RouteStore {
   private urgent = new Set<string>();
   private pending = new Set<string>();
   private snapshot: Record<string, AnyNode> | null = null;
+  private snapshotVersion: number | undefined = undefined;
   private shifts = new Map<string, number>();
   private moving = new Set<string>();
   private lastLive = new Map<string, Rect>();
@@ -370,7 +389,22 @@ export class RouteStore {
   private objects(): Record<string, AnyNode> {
     const current = this.env.getObjects();
     if (current !== this.snapshot) {
+      const before = this.snapshot;
+      const changes = this.env.getChanges();
+      const version = changes?.version;
+      const consecutive =
+        before !== null && version !== undefined && this.snapshotVersion !== undefined && version === this.snapshotVersion + 1;
       this.snapshot = current;
+      this.snapshotVersion = version;
+      /**
+       * The connector index — ids, what each end is bound to, the lane shifts
+       * — depends on connectors and nothing else. A snapshot one step on from
+       * the last, whose change touched no connector (a shape dragged, a sticky
+       * typed in, a peer moving things), leaves all of it as it was. Rebuilding
+       * it anyway was a walk over the whole board on every change: about 4 ms
+       * a change at 2,000 objects, paid at the rate a collaborator streams.
+       */
+      if (consecutive && changes && !touchesConnector(changes, before, current)) return current;
       this.shifts = pairShifts(current);
       const ids: string[] = [];
       const bound = new Map<string, string[]>();

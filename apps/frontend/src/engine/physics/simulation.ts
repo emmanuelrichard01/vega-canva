@@ -34,6 +34,8 @@ const CAT_OUT_OF_SCOPE = 0x0002;
 const CAT_ALL = 0xFFFFFFFF;
 
 const VELOCITY_EPSILON = 0.1;
+/** Radians per step below which a body counts as not spinning. */
+const ANGULAR_EPSILON = 0.01;
 const SETTLE_FRAMES = 10;
 const TIMEOUT_MS = 5000;
 
@@ -83,7 +85,7 @@ const MAX_STEP_DISTANCE = 120;
  * annotates is a correctness bug, not a fun interaction. Frames are the
  * background objects sit on top of.
  */
-const NON_PHYSICAL_TYPES = new Set(['comment', 'artboard', 'frame']);
+const NON_PHYSICAL_TYPES = new Set(['comment', 'artboard', 'frame', 'connector']);
 export const isPhysicalType = (type: string) => !NON_PHYSICAL_TYPES.has(type);
 
 /** The subset of a node the simulation cares about. */
@@ -917,7 +919,10 @@ export class PhysicsSimulation {
 
       const speed = Matter.Body.getSpeed(body);
 
-      if (finite(speed) && speed < VELOCITY_EPSILON) entry.framesSettled++;
+      // A body still spinning is not at rest, however slowly it is travelling.
+      const spinning = !finite(body.angularSpeed) || Math.abs(body.angularSpeed) >= ANGULAR_EPSILON;
+
+      if (finite(speed) && speed < VELOCITY_EPSILON && !spinning) entry.framesSettled++;
       else entry.framesSettled = 0;
 
       /**

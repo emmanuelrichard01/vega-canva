@@ -1,4 +1,4 @@
-import type { Bounds, Rect } from '../../engine/interaction/railPlacement';
+import type { Bounds, RailSide, Rect } from '../../engine/interaction/railPlacement';
 
 /**
  * Where the artwork the rail is attached to is, and what free screen there is.
@@ -27,6 +27,15 @@ export interface RailSubject {
   subject: Rect;
   /** The free strip: inside the panels, under the top bar, above the dock. */
   bounds: Bounds;
+  /** Which side of the selection the rail is standing on. */
+  side?: RailSide;
+  /**
+   * Where a popover may stand: the same chrome with an 8px margin rather than
+   * the rail's 16, since a panel is reached for and the rail rests.
+   */
+  room?: Bounds;
+  /** Chrome inside that strip a popover must also keep off: the board pills. */
+  obstacles?: readonly Rect[];
 }
 
 let current: RailSubject | null = null;

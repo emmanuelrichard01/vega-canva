@@ -262,3 +262,66 @@ export function shearCursorAngle(edge: ShearEdge, rotationDeg: number): number {
   const base = edge === 'top' || edge === 'bottom' ? 0 : 90;
   return (((base + rotationDeg) % 360) + 360) % 360;
 }
+
+/* ------------------------------------------------ screen-space quarter ring */
+
+/** Ring depth beyond the resize handle, in screen px. */
+export const RING_DEPTH = 16;
+/** The resize handle's reach from its corner point, in screen px. */
+export const HANDLE_REACH = 8;
+/** Below this on-screen size the ring shrinks so the resize handles stay reachable. */
+export const SMALL_OBJECT = 24;
+
+/** Inner and outer radius (screen px) of a corner's quarter ring. */
+export function ringRadii(screenMinSide: number): { inner: number; outer: number } {
+  const small = screenMinSide < SMALL_OBJECT;
+  const inner = small ? HANDLE_REACH + 2 : HANDLE_REACH;
+  return { inner, outer: inner + (small ? RING_DEPTH / 2 : RING_DEPTH) };
+}
+
+/**
+ * Is a point inside a corner's quarter ring? `corner` and `point` are in the
+ * selection's own (unrotated) frame, `outward` is the corner's (sx, sy) signs;
+ * distances are in world units and `zoom` converts them to screen px.
+ */
+export function inCornerRing(
+  corner: Point,
+  outward: { sx: number; sy: number },
+  point: Point,
+  zoom: number,
+  screenMinSide: number
+): boolean {
+  const dx = (point.x - corner.x) * zoom;
+  const dy = (point.y - corner.y) * zoom;
+  const { inner, outer } = ringRadii(screenMinSide);
+  const d = Math.hypot(dx, dy);
+  // Quarter: both components on the outward side, or one outward and one tiny.
+  const okX = dx * outward.sx >= -inner * 0.5;
+  const okY = dy * outward.sy >= -inner * 0.5;
+  return okX && okY && d >= inner && d <= outer;
+}
+
+export const CORNER_SIGNS = [
+  { sx: -1, sy: -1 },
+  { sx: 1, sy: -1 },
+  { sx: 1, sy: 1 },
+  { sx: -1, sy: 1 },
+] as const;
+
+/** Radial (outward) bearing of the pointer about the centre, clockwise from east. */
+export function radialAngle(centre: Point, point: Point): number {
+  return (angleOf(centre, point) + 360) % 360;
+}
+
+/** Quantise to `step` degrees, wrapped to [0, 360). */
+export function quantiseAngle(deg: number, step = 5): number {
+  return ((Math.round(deg / step) * step) % 360 + 360) % 360;
+}
+
+/** Undo a rotation about `centre`, putting a world point in the selection's own frame. */
+export function intoFrame(centre: Point, point: Point, rotationDeg: number): Point {
+  const r = (-rotationDeg * Math.PI) / 180;
+  const dx = point.x - centre.x;
+  const dy = point.y - centre.y;
+  return { x: centre.x + dx * Math.cos(r) - dy * Math.sin(r), y: centre.y + dx * Math.sin(r) + dy * Math.cos(r) };
+}

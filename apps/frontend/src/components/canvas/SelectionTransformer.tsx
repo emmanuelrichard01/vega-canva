@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type Konva from 'konva';
-import { Group, Rect, Text, Transformer } from 'react-konva';
+import { Rect, Transformer } from 'react-konva';
 import { applyNodePatches } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { useStore } from '../../hooks/useStore';
@@ -30,6 +30,10 @@ import { layoutCode, measureCharWidth } from '../../engine/code/codeLayout';
 import { CODE_FONT } from '../../engine/code/codeThemes';
 import { canvasChromeContrast, useContrast } from '../../engine/ui/contrast';
 import { chromeSurfaceColor, useChromeDark } from '../../engine/interaction/chromeHalo';
+import { hud } from '../../engine/ui/hud';
+import { normaliseDegrees, onSnapAngle } from '../../engine/ui/hudFormat';
+import { rotatedBounds } from '../../engine/ui/hudPlace';
+import { clientToWorld } from '../../engine/interaction/clientToWorld';
 
 interface Props {
   selectedIds: string[];
@@ -76,15 +80,22 @@ const uniformDrag = (sx: number, sy: number): boolean =>
 const ACCENT = '#3B82F6';
 
 /**
- * How far the readout sits below the selection, in screen pixels.
+ * The HUD channels this component speaks on.
  *
- * Divided by the zoom at every use, so the badge keeps the same distance from
- * the box whatever the camera is doing — it is a label about the board, not a
- * thing on it. Named because two call sites need the identical number and
- * they had drifted apart: 22 in one and 26 in the other, which the badge
- * expressed as a small hop at the start and end of every gesture.
+ * The size badge and the move readout are separate channels so the end of a
+ * move can take its X/Y down without racing the size badge coming back.
  */
-const BADGE_DROP = 26;
+const SIZE_HUD = 'selection';
+const MOVE_HUD = 'selection-move';
+
+/** Modifier and pointer state the readouts need between pointer events. */
+interface HudInput {
+  alt: boolean;
+  shift: boolean;
+  /** Caps Lock: the precision mode, which also shows the position while moving. */
+  caps: boolean;
+  client: { x: number; y: number } | null;
+}
 
 /**
  * 1 at rest, 0 while moving, and a ramp back up when the move ends.
@@ -202,8 +213,14 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     tr.forceUpdate();
     tr.getLayer()?.batchDraw();
   }, [halo, dark, selectedIds]);
-  /** Live dimensions (e.g. 240 × 180) or angle (e.g. 45°) HUD badge while transforming. */
-  const [liveBadge, setLiveBadge] = useState<{ text: string; x: number; y: number } | null>(null);
+  /**
+   * Modifiers and the last pointer position, for the readouts.
+   *
+   * A ref fed by window listeners: the readouts are written from Konva and
+   * store callbacks, outside React, and need the keys as they are now rather
+   * than as of the last render.
+   */
+  const hudInput = useRef<HudInput>({ alt: false, shift: false, caps: false, client: null });
 
   // The handles must re-fit when a *selected* node's geometry changes from
   // elsewhere (the Properties panel, a remote peer). Subscribing to the whole
@@ -269,10 +286,10 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
    * real node — so it holds an invisible rectangle, which may scale as freely as
    * Konva likes because nobody ever sees it.
    */
-  const fitProxy = useCallback(() => {
+  const fitProxy = useCallback((): { box: Box; rotation: number } | null => {
     const tr = trRef.current;
     const proxy = proxyRef.current;
-    if (!tr || !proxy) return;
+    if (!tr || !proxy) return null;
 
     const store = useStore.getState().objects;
     const boxes = selectedIds
@@ -311,7 +328,35 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     tr.nodes(bounds ? [proxy] : []);
     tr.forceUpdate();
     tr.getLayer()?.batchDraw();
+    // The live box for the move readout, lines included: a line has no handles
+    // but it does have a position.
+    const live = bounds ?? selectionBox(boxes);
+    return live ? { box: live, rotation: boxes.length === 1 ? boxes[0].rotation || 0 : 0 } : null;
   }, [selectedIds]);
+
+  /**
+   * X and Y while moving, when Alt or Caps Lock (precision) is down.
+   *
+   * Off by default because during an ordinary move the smart guides are the
+   * measurement that matters, and a number under the object would compete with
+   * them. Held, it is the exact placement, as the position fields would say it.
+   */
+  const lastMoveBox = useRef<{ box: Box; rotation: number } | null>(null);
+  const showMoveReadout = useCallback((live: { box: Box; rotation: number } | null) => {
+    lastMoveBox.current = live;
+    const { alt, caps } = hudInput.current;
+    if (!live || !railVeil.getMoveSnapshot() || !(alt || caps)) {
+      hud.hide(MOVE_HUD);
+      return;
+    }
+    hud.show({
+      source: MOVE_HUD,
+      kind: 'position',
+      value: { x: live.box.x, y: live.box.y },
+      at: { x: live.box.x, y: live.box.y },
+      box: rotatedBounds(live.box, live.rotation),
+    });
+  }, []);
 
   /**
    * Follow a drag, without a React render per frame.
@@ -324,8 +369,39 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
    */
   useEffect(() => liveTransformStore.subscribeGlobal(() => {
     if (transformingRef.current) return;
-    fitProxy();
-  }), [fitProxy]);
+    showMoveReadout(fitProxy());
+  }), [fitProxy, showMoveReadout]);
+
+  /** Keep the modifiers and the pointer current for the readouts. */
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const read = (e: KeyboardEvent | PointerEvent) => {
+      const input = hudInput.current;
+      const caps = typeof e.getModifierState === 'function' ? e.getModifierState('CapsLock') : false;
+      const changed = input.alt !== e.altKey || input.caps !== caps;
+      input.alt = e.altKey;
+      input.shift = e.shiftKey;
+      input.caps = caps;
+      if ('clientX' in e) input.client = { x: e.clientX, y: e.clientY };
+      // A key pressed or released mid-move, with the pointer still: the
+      // readout answers the key now rather than on the next pointer move.
+      if (changed && railVeil.getMoveSnapshot()) showMoveReadout(lastMoveBox.current);
+    };
+    const reset = () => {
+      Object.assign(hudInput.current, { alt: false, shift: false, caps: false });
+      hud.hide(MOVE_HUD);
+    };
+    window.addEventListener('pointermove', read, { passive: true });
+    window.addEventListener('keydown', read);
+    window.addEventListener('keyup', read);
+    window.addEventListener('blur', reset);
+    return () => {
+      window.removeEventListener('pointermove', read);
+      window.removeEventListener('keydown', read);
+      window.removeEventListener('keyup', read);
+      window.removeEventListener('blur', reset);
+    };
+  }, [showMoveReadout]);
 
   useEffect(() => {
     const tr = trRef.current;
@@ -709,27 +785,61 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
 
     const box = readProxy();
     if (box) {
-      const deg = Math.round(((proxy.rotation() % 360) + 360) % 360);
-      setLiveBadge({
-        text: rotating
-          ? `${deg}°`
-          : `${Math.round(box.to.width)} × ${Math.round(box.to.height)}`,
-        x: box.to.x + box.to.width / 2,
-        // The same offset the resting badge uses, in the same units. These
-        // were 22 world units here and 26 screen pixels there, so the badge
-        // hopped a few pixels at the start of every gesture and back at the
-        // end — a movement with no meaning, on the one element that is
-        // supposed to be the fixed thing you read while everything else moves.
-        y: box.to.y + box.to.height + BADGE_DROP / (stageRef.current?.scaleX() || 1),
-      });
+      const bottom = { x: box.to.x + box.to.width / 2, y: box.to.y + box.to.height };
+      if (rotating) {
+        // Beside the hand rather than under the box: a turning box's bounds
+        // change every frame, and a pill riding them would wander while the
+        // number it carries is the thing being read.
+        const deg = normaliseDegrees(proxy.rotation());
+        const client = hudInput.current.client;
+        hud.show({
+          source: SIZE_HUD,
+          kind: 'angle',
+          value: deg,
+          at: client ? clientToWorld(client.x, client.y) : bottom,
+          placement: 'pointer',
+          // Shift is what snaps a turn to 15°, so the tick says the snap is
+          // holding rather than that the angle happens to be round.
+          snapped: hudInput.current.shift && onSnapAngle(deg),
+        });
+      } else {
+        hud.show({
+          source: SIZE_HUD,
+          kind: 'size',
+          value: { width: box.to.width, height: box.to.height },
+          at: bottom,
+          box: rotatedBounds(box.to, proxy.rotation()),
+        });
+      }
     }
+  };
+
+  /**
+   * A rotation abandoned with Escape: the proxy is back at its starting angle,
+   * so there is nothing to commit and nothing may reach the document, or a turn
+   * that changed nothing would still leave an undo step.
+   */
+  const handleTransformCancel = () => {
+    window.dispatchEvent(new CustomEvent('canvas-drag-end'));
+    transformingRef.current = false;
+    setTransforming(false);
+    liveTransformStore.deleteBatch(selectedIds);
+    activeAnchor.current = '';
+    const proxy = proxyRef.current;
+    if (proxy) {
+      proxy.scaleX(1);
+      proxy.scaleY(1);
+    }
+    initialNodesMap.current = {};
   };
 
   const handleTransformEnd = () => {
     window.dispatchEvent(new CustomEvent('canvas-drag-end'));
     transformingRef.current = false;
     setTransforming(false);
-    setLiveBadge(null);
+    // The live readout is left up: the resting badge effect takes the same
+    // channel over on the next render, so the pill updates in place rather
+    // than vanishing and arriving again.
 
     const placements = placeAll();
     liveTransformStore.deleteBatch(selectedIds);
@@ -913,27 +1023,21 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
   }, [selectedIds, selectionGeometry]);
 
   /**
-   * The size readout, shown whenever there is a selection.
+   * The size readout under a resting selection, on the HUD's `selection` channel.
    *
-   * It used to appear only *during* a transform, which is the moment it is
-   * least needed — the object is visibly changing, so the number is confirming
-   * something already on screen. The question it actually answers is "how big
-   * is this", and that is asked while looking at a thing, not while dragging
-   * it. Every reference for this selection box shows it under a resting
-   * selection.
+   * Shown whenever there is a selection, because "how big is this" is asked
+   * while looking at a thing, as in every reference for this selection box.
+   * Derived from the same bounds the handles are placed from, so it cannot
+   * disagree with the box it sits under, and placed under what is actually
+   * drawn when the object is turned.
    *
-   * The live text wins while a gesture is running, because that is a *changing*
-   * number and the resting one would be stale for the length of the drag.
-   * Otherwise it is derived from the same bounds the handles are placed from,
-   * so it cannot disagree with the box it sits under.
+   * A multi-selection also says how many it holds, counted in units as a
+   * person counts them (a group or a frame is one), so a marquee that caught
+   * one object too many shows before anything moves.
    *
-   * Suppressed for a multi-selection: a combined bounding box has a width and
-   * a height, but they are not the size of anything the user selected, and a
-   * number under a group of objects reads as a claim about each of them.
+   * During a resize or rotation `handleTransform` owns the channel; during a
+   * move it is taken down, since the badge describes a resting selection.
    */
-  // A multi-selection says how many it holds as well as how big it is, so a
-  // marquee that caught one object too many is visible before anything moves.
-  // Counted in units, as a person counts: a group or a frame is one.
   const unitCount =
     selectedIds.length > 1
       ? (() => {
@@ -941,60 +1045,34 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
           return countSelectionUnits(Object.keys(objects), objects as never, groups, selectedIds);
         })()
       : 1;
-  const restingBadge =
-    !transforming && selectionBounds && selectedIds.length >= 1
-      ? {
-          text: `${unitCount > 1 ? `${unitCount} objects · ` : ''}${Math.round(selectionBounds.bounds.width)} × ${Math.round(selectionBounds.bounds.height)}`,
-          x: selectionBounds.bounds.x + selectionBounds.bounds.width / 2,
-          // Below the box, clear of the bottom handles and their padding.
-          y: selectionBounds.bounds.y + selectionBounds.bounds.height + BADGE_DROP / (stageRef.current?.scaleX() || 1),
-        }
-      : null;
+  useEffect(() => {
+    if (transforming) return;
+    if (moving || !selectionBounds) {
+      hud.hide(SIZE_HUD);
+      return;
+    }
+    const { bounds, rotation } = selectionBounds;
+    hud.show({
+      source: SIZE_HUD,
+      kind: 'size',
+      value: { width: bounds.width, height: bounds.height, count: unitCount },
+      at: { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height },
+      box: rotatedBounds(bounds, rotation),
+    });
+  }, [transforming, moving, selectionBounds, unitCount]);
 
-  const badge = transforming ? liveBadge : restingBadge;
+  // A move readout outlives nothing: it goes when the move does.
+  useEffect(() => {
+    if (!moving) hud.hide(MOVE_HUD);
+  }, [moving]);
 
-  const hudBadge = badge ? (() => {
-    const scale = 1 / (stageRef.current?.scaleX() || 1);
-    // Measured from the string rather than fixed, so a short value gets a short
-    // pill. `6.4` is Inter's advance at 11px for the digits and the separator,
-    // which is all this ever shows.
-    const width = Math.max(46, badge.text.length * 6.4 + 18);
-    return (
-      <Group
-        x={badge.x}
-        y={badge.y}
-        scaleX={scale}
-        scaleY={scale}
-        opacity={chromeOpacity}
-        listening={false}
-        name={EXPORT_CHROME}
-      >
-        <Rect
-          x={-width / 2}
-          y={-11}
-          width={width}
-          height={22}
-          cornerRadius={11}
-          fill={ACCENT}
-          shadowColor="rgba(15, 23, 42, 0.28)"
-          shadowBlur={6}
-          shadowOffsetY={2}
-        />
-        <Text
-          x={-width / 2}
-          y={-4.5}
-          width={width}
-          text={badge.text}
-          fontSize={11}
-          fontFamily="Inter, -apple-system, BlinkMacSystemFont, sans-serif"
-          fontStyle="500"
-          fill="#FFFFFF"
-          align="center"
-          letterSpacing={0.2}
-        />
-      </Group>
-    );
-  })() : null;
+  useEffect(
+    () => () => {
+      hud.hide(SIZE_HUD);
+      hud.hide(MOVE_HUD);
+    },
+    []
+  );
 
   const transformerEl = (
     <Transformer
@@ -1102,11 +1180,11 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
           onStart={beginExternalGesture}
           onMove={handleTransform}
           onEnd={handleTransformEnd}
+          onCancel={handleTransformCancel}
           transforming={transforming}
         />
       )}
       {transformerEl}
-      {hudBadge}
     </>
   );
 };

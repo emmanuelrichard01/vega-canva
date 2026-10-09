@@ -1,10 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
+  END_CAP_KINDS,
+  END_CAP_LABELS,
   capExtentPoints,
   connectorCaps,
+  endCapShape,
   endCapSize,
   polylineLength,
+  terminateRun,
   trimPolyline,
+  type EndCapShape,
 } from './connectorEnds';
 import { connectorPoints, type Box } from './connector';
 
@@ -126,5 +131,83 @@ describe('capExtentPoints', () => {
     const caps = connectorCaps(route, { start: 'none', end: 'triangle', strokeWidth: 2, scale: 4 });
     const ys = capExtentPoints(caps.end).filter((_, i) => i % 2 === 1);
     expect(Math.max(...ys.map(Math.abs))).toBeGreaterThan(1);
+  });
+});
+
+describe('the head set', () => {
+  it('labels every head and offers each once', () => {
+    expect(new Set(END_CAP_KINDS).size).toBe(END_CAP_KINDS.length);
+    expect(Object.keys(END_CAP_LABELS).sort()).toEqual([...END_CAP_KINDS].sort());
+    expect(END_CAP_KINDS).toEqual(
+      expect.arrayContaining(['none', 'arrow', 'open-arrow', 'triangle', 'circle', 'diamond', 'bar', 'crow-foot'])
+    );
+  });
+
+  it('draws the open arrow as a chevron through the tip, not a closed triangle', () => {
+    const cap = endCapShape('open-arrow', { x: 100, y: 0 }, 0, 10)!;
+    expect(cap.filled).toBe(false);
+    expect(cap.points).toHaveLength(6);
+    // The middle point is the tip; both arms trail back from it.
+    expect(cap.points!.slice(2, 4)).toEqual([100, 0]);
+    expect(cap.points![0]).toBeLessThan(100);
+    expect(cap.points![4]).toBeLessThan(100);
+  });
+
+  it("spreads the crow's foot against the end and meets one depth back", () => {
+    const cap = endCapShape('crow-foot', { x: 100, y: 0 }, 0, 10)!;
+    expect(cap.filled).toBe(false);
+    const [x1, y1, x2, y2, x3, y3] = cap.points!;
+    expect([x1, x3]).toEqual([100, 100]);
+    expect(y1).toBeCloseTo(-y3, 9);
+    expect(x2).toBe(90);
+    expect(y2).toBeCloseTo(0, 9);
+  });
+
+  it('grows with the stroke it terminates', () => {
+    expect(endCapSize(8)).toBeGreaterThan(endCapSize(2));
+  });
+});
+
+describe('terminateRun: a head sits flush on the end of the line', () => {
+  /** The furthest the painted head reaches along +x: its geometry plus half the stroke. */
+  const reach = (cap: EndCapShape, sw: number) => {
+    const xs = cap.circle ? [cap.circle.x + cap.circle.radius] : [];
+    for (let i = 0; cap.points && i < cap.points.length; i += 2) xs.push(cap.points[i]);
+    return Math.max(...xs) + sw / 2;
+  };
+
+  for (const kind of END_CAP_KINDS.filter((k) => k !== 'none')) {
+    it(`${kind}: the painted tip lands on the endpoint, and the run stops under it`, () => {
+      const sw = 6;
+      const { run, end } = terminateRun([0, 0, 200, 0], { start: 'none', end: kind, strokeWidth: sw });
+      expect(reach(end!, sw)).toBeCloseTo(200, 6);
+      // The run's own round cap must not poke out past the head either.
+      expect(run[run.length - 2] + sw / 2).toBeLessThanOrEqual(200 + 1e-6);
+    });
+  }
+
+  it('leaves a line without heads exactly as long as it was', () => {
+    const { run } = terminateRun([0, 0, 200, 0], { start: 'none', end: 'none', strokeWidth: 6 });
+    expect(run).toEqual([0, 0, 200, 0]);
+  });
+
+  it('lands a connector head flush on the endpoint, half a stroke inside it', () => {
+    const points = [0, 0, 200, 0];
+    const { end } = connectorCaps(points, { start: 'none', end: 'triangle', strokeWidth: 6 });
+    const tip = end!.points!;
+    // The geometric tip sits half a stroke short of the endpoint, so the painted edge touches it.
+    expect(tip[0]).toBeCloseTo(197);
+    expect(tip[1]).toBeCloseTo(0);
+    // And the run is trimmed under the head and that half stroke.
+    expect(end!.inset).toBeCloseTo(endCapShape('triangle', { x: 197, y: 0 }, 0, endCapSize(6))!.inset + 3);
+  });
+
+  it('agrees with terminateRun about where the head is', () => {
+    const points = [0, 0, 120, 80, 300, 80];
+    const spec = { start: 'arrow' as const, end: 'diamond' as const, strokeWidth: 4 };
+    const caps = connectorCaps(points, spec);
+    const run = terminateRun(points, spec);
+    expect(caps.end!.points!.map((n) => Math.round(n * 100))).toEqual(run.end!.points!.map((n) => Math.round(n * 100)));
+    expect(caps.start!.points![0]).toBeCloseTo(run.start!.points![0]);
   });
 });

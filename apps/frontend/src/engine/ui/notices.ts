@@ -218,6 +218,15 @@ let timer: number | undefined;
 let heldAt: number | null = null;
 
 function emit() {
+  /**
+   * An empty stack holds nothing.
+   *
+   * The hold is released by the pointer leaving the stack — and when the last
+   * notice goes while the pointer is on it (its own Undo or close pressed), the
+   * rows unmount under the pointer and no leave ever arrives. A hold that
+   * outlived its stack froze every later notice on screen for good.
+   */
+  if (notices.length === 0) heldAt = null;
   listeners.forEach((fn) => fn());
 }
 

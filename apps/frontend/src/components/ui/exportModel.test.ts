@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PREFS, cardFor, estimateBytes, exportLabel, formatBytes, pixelSize, previewFormat, sanitizePrefs } from './exportModel';
+import {
+  DEFAULT_PREFS, cardFor, estimateBytes, explainError, exportLabel, fontCostLabel, formatBytes, pixelSize, previewFormat, sanitizePrefs,
+} from './exportModel';
 
 describe('export decisions', () => {
   it('files each format under its card', () => {
@@ -13,19 +15,38 @@ describe('export decisions', () => {
 
   it('keeps remembered settings that are still valid and drops the rest', () => {
     expect(sanitizePrefs(null)).toEqual(DEFAULT_PREFS);
-    expect(sanitizePrefs({ format: 'webp', scale: 3, background: 'ink', padding: 0, quality: 0.5, embedLocalFonts: true })).toEqual({
+    expect(
+      sanitizePrefs({ format: 'webp', scale: 4, background: 'ink', padding: 0, quality: 0.5, embedLocalFonts: true, embedFonts: true, includeComments: true })
+    ).toEqual({
       format: 'webp',
-      scale: 3,
+      scale: 4,
       background: 'ink',
       padding: 0,
       quality: 0.5,
       embedLocalFonts: true,
+      embedFonts: true,
+      outlineText: false,
+      includeComments: true,
     });
-    // 4× was offered once; a format that is not one; a quality off the scale.
-    expect(sanitizePrefs({ format: 'gif', scale: 4, padding: 13, quality: 9, embedLocalFonts: 'yes' })).toEqual({
+    // A scale never offered; a format that is not one; a quality off the scale; flags that are not booleans.
+    expect(sanitizePrefs({ format: 'gif', scale: 5, padding: 13, quality: 9, embedLocalFonts: 'yes', outlineText: 1 })).toEqual({
       ...DEFAULT_PREFS,
       quality: 1,
     });
+  });
+
+  it('starts with comments, font embedding and outlining off', () => {
+    expect(DEFAULT_PREFS.includeComments).toBe(false);
+    expect(DEFAULT_PREFS.embedFonts).toBe(false);
+    expect(DEFAULT_PREFS.outlineText).toBe(false);
+  });
+
+  it('turns known failures into the fix', () => {
+    expect(explainError(new Error('Out of memory'))).toMatch(/smaller scale/);
+    expect(explainError(new DOMException('The canvas has been tainted', 'SecurityError'))).toMatch(/re-upload/);
+    expect(explainError(new Error('This browser cannot encode image/webp. Try PNG instead.'))).toMatch(/Try PNG/);
+    expect(explainError(null)).toMatch(/did not finish/);
+    expect(fontCostLabel(50 * 1024)).toBe('Adds about 50 KB to the file.');
   });
 
   it('estimates pixel formats by the square of the scale, and does not guess the others', () => {

@@ -6,12 +6,12 @@ import { ChevronDown, ChevronUp, Lock, LockOpen } from 'lucide-react';
  *
  * ## Why not the whole sheet straight away
  *
- * These menus open when the pointer *rests* on a seat, and the pointer rests
- * on seats on its way to somewhere else. Opening straight into every shape,
- * every chart, every table put a 340px panel over the board for a glance --
- * and the commonest choice in each is one of a handful. So the row comes
- * first: a few fixed choices, the way to see all of them, and the padlock.
- * FigJam and Miro open their shape menus the same way.
+ * These menus open on every click of their seat (see `seatMenuModel`), so
+ * they have to cost the board almost nothing: opening straight into every
+ * shape, every chart, every table would put a tall panel over the work each
+ * time a tool is picked up -- and the commonest choice in each is one of a
+ * handful. So the row comes first: a few fixed choices, the way to see all of
+ * them, and the padlock. FigJam and Miro open their shape menus the same way.
  *
  * ## The row
  *
@@ -29,11 +29,15 @@ import { ChevronDown, ChevronUp, Lock, LockOpen } from 'lucide-react';
  * moves. The sheet takes the keyboard when it opens, because pressing More is
  * a decision to go looking.
  *
- * The row hugs its own buttons, and is centred under a wider sheet. It first
- * took the sheet's width in both states, to stop the panel widening sideways
- * -- which pushed the tiles left and More right with a hole between them, a
- * row that looked broken to fix a movement that centring already prevents:
- * the flyout is centred on its seat, so a centred row is where it was.
+ * The row hugs its own buttons, More and the padlock trailing the choices at
+ * one fixed gap, and the panel hugs the row (see `dock.css`). Stretched to
+ * the sheet's width it pushed More and the padlock to the far edge with a
+ * hole between them and the choices. Open, the sheet takes the panel's step
+ * on the flyout scale and the row is centred under it; the flyout is centred
+ * on its seat, so the row does not move.
+ *
+ * A pick from the sheet folds it back to the row: the choice is made, and the
+ * row keeps it one click from changing without covering the board.
  *
  * ## Why the shelf no longer carries these
  *
@@ -63,8 +67,8 @@ interface Props<T extends string> {
   wideTiles?: boolean;
   locked: boolean;
   onLock: () => void;
-  /** The full sheet. */
-  sheet: React.ReactNode;
+  /** The full sheet. Given `fold`, which a pick in it calls to go back to the row. */
+  sheet: React.ReactNode | ((fold: () => void) => React.ReactNode);
   /** Above the row: a switch between the tools one seat carries. */
   header?: React.ReactNode;
   /** After the common few, behind a rule: tools the seat carries beside its own. */
@@ -102,7 +106,9 @@ export function SeatMenu<T extends string>({
   return (
     <div className="seat-menu">
       {header && <div className="seat-menu__header">{header}</div>}
-      {expanded && <div className="seat-menu__sheet">{sheet}</div>}
+      {expanded && (
+        <div className="seat-menu__sheet">{typeof sheet === 'function' ? sheet(() => setExpanded(false)) : sheet}</div>
+      )}
 
       <div className="seat-menu__row" onKeyDown={onRowKey}>
         <div className="seat-menu__quick" role="group" aria-label={`Common ${noun}`}>

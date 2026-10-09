@@ -23,6 +23,8 @@ export interface NumberFieldProps {
   min?: number;
   max?: number;
   step?: number;
+  /** What Shift+↑/↓ moves by; ten steps when absent. */
+  coarseStep?: number;
   precision?: number;
   unit?: string;
   scrub?: boolean;
@@ -44,6 +46,7 @@ export const NumberField: React.FC<NumberFieldProps> = ({
   min,
   max,
   step,
+  coarseStep,
   precision,
   unit,
   scrub = true,
@@ -63,6 +66,7 @@ export const NumberField: React.FC<NumberFieldProps> = ({
       min={min}
       max={max}
       step={step}
+      coarseStep={coarseStep}
       precision={precision}
       suffix={unit}
       scrub={scrub}

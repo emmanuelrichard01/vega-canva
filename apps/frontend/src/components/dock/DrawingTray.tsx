@@ -21,7 +21,8 @@ import {
   StickyGlyph,
   VectorPenGlyph,
 } from './glyphs';
-import { trayLayout, trayVars } from './flyoutScale';
+import { FLYOUT_WIDTHS, trayLayout, trayVars } from './flyoutScale';
+import { FLYOUT_EDGE, useFreeStrip } from '../workspace/boardLayout';
 import { TRAY_GLYPH_QUERY, useMediaQuery, useThemeInk } from './useDockEnv';
 import './dock.css';
 
@@ -202,7 +203,10 @@ export interface DrawingTrayProps {
 
 export const DrawingTray: React.FC<DrawingTrayProps> = ({ activeToolId, onArm, onStickyPointerDown, stickyCarryEnded }) => {
   const themeInk = useThemeInk();
-  const glyphs = useMediaQuery(TRAY_GLYPH_QUERY);
+  // Glyphs on a narrow window, and also where open columns leave the art tray
+  // (lg + the flyout edge either side) no room: it would run under a panel.
+  const free = useFreeStrip();
+  const glyphs = useMediaQuery(TRAY_GLYPH_QUERY) || free < FLYOUT_WIDTHS.lg + 2 * FLYOUT_EDGE;
   const layout = trayLayout(glyphs ? 'glyph' : 'art');
   const settings = useSyncExternalStore(drawSettings.subscribe, drawSettings.get, drawSettings.get);
   const stickyTheme = useStore((s) => s.stickyTheme);

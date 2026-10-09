@@ -6,7 +6,8 @@ import { nextCommit, renderScope } from './renderScope';
 import { expectedImages, waitForImages } from './imagesReady';
 import { resolveBackground, type ExportOptions, type FormatSpec } from './ExportTypes';
 import { exportIds, exportIdSet } from './exportScope';
-import { fitScale } from './rasterLimits';
+import { bandColumns, fitScale } from './rasterLimits';
+import { commentPin, commentsWithin, drawCommentPins, type CommentPin } from './commentPins';
 import { ensureFamiliesLoaded, familiesInNodes } from '../text/fontEmbed';
 
 // Re-exported so importers keep one name for the cap, while the arithmetic
@@ -69,18 +70,7 @@ export function captureRaster(options: ExportOptions, spec: FormatSpec): RasterC
     throw new Error('Raster export needs a Konva stage. Try SVG or JSON instead.');
   }
 
-  const bounds =
-    options.bounds ??
-    computeContentBounds(
-      // Read here rather than defaulted inside `computeContentBounds`, so that
-      // module stays free of the store and can be asserted in Node.
-      useStore.getState().objects,
-      // `?? undefined` because `computeContentBounds` distinguishes "no ids
-      // given" from an empty list, and `exportIds` already collapsed the
-      // empty list into `null`. See its docstring for why that matters.
-      exportIds(options) ?? undefined,
-      options.padding
-    );
+  const bounds = exportBounds(options);
 
   const requested = options.scale ?? 2;
   const scale = fitScale(bounds.width, bounds.height, requested);
@@ -121,7 +111,8 @@ export function captureRaster(options: ExportOptions, spec: FormatSpec): RasterC
   }
 
   const background = resolveBackground(options.background, spec);
-  if (!background) {
+  const pins = pinsFor(options, bounds);
+  if (!background && pins.length === 0) {
     return { canvas: source, scale, bounds, clamped: scale < requested };
   }
 
@@ -140,11 +131,101 @@ export function captureRaster(options: ExportOptions, spec: FormatSpec): RasterC
   if (!ctx) return { canvas: source, scale, bounds, clamped: scale < requested };
 
   ctx.drawImage(source, 0, 0);
-  ctx.globalCompositeOperation = 'destination-over';
-  ctx.fillStyle = background;
-  ctx.fillRect(0, 0, out.width, out.height);
+  if (background) {
+    ctx.globalCompositeOperation = 'destination-over';
+    ctx.fillStyle = background;
+    ctx.fillRect(0, 0, out.width, out.height);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  drawCommentPins(ctx, pins, bounds.x, bounds.y, scale);
 
   return { canvas: out, scale, bounds, clamped: scale < requested };
+}
+
+/**
+ * The world rectangle an export covers: the caller's, or the content's own
+ * with the padding asked for. Read from the store here so `bounds.ts` stays
+ * assertable in Node.
+ */
+export function exportBounds(options: ExportOptions): ExportBounds {
+  return (
+    options.bounds ??
+    // `?? undefined`: `computeContentBounds` tells "no ids" from an empty
+    // list, and `exportIds` has already collapsed the empty list to `null`.
+    computeContentBounds(useStore.getState().objects, exportIds(options) ?? undefined, options.padding)
+  );
+}
+
+/** The comment pins an export asked for: those anchored inside it. Comments are DOM, so the stage never holds them. */
+function pinsFor(options: ExportOptions, bounds: ExportBounds): CommentPin[] {
+  if (!options.includeComments) return [];
+  return commentsWithin(Object.values(useStore.getState().objects), bounds).map(commentPin);
+}
+
+/**
+ * One band of a tiled export, as RGBA rows `width` pixels wide.
+ *
+ * The same stage dance as `captureRaster`, once per band: chrome hidden, the
+ * export isolated, the stage reframed onto each column of the band in turn
+ * (no column wider than a canvas may be), drawn, read, and everything put
+ * back before returning. Synchronous, so the live camera cannot be re-applied
+ * mid-band; the caller awaits between bands, never inside one.
+ */
+export function captureBand(
+  options: ExportOptions,
+  spec: FormatSpec,
+  bounds: ExportBounds,
+  scale: number,
+  y: number,
+  rows: number,
+  width: number
+): Uint8ClampedArray {
+  const stage = options.stage;
+  if (!stage) throw new Error('Raster export needs a Konva stage. Try SVG or JSON instead.');
+  const previous = {
+    x: stage.x(),
+    y: stage.y(),
+    scaleX: stage.scaleX(),
+    scaleY: stage.scaleY(),
+    width: stage.width(),
+    height: stage.height(),
+  };
+  const background = resolveBackground(options.background, spec);
+  const pins = pinsFor(options, bounds);
+  const out = new Uint8ClampedArray(width * rows * 4);
+  const restoreChrome = hideExportChrome(stage);
+  const restoreIsolation = isolateObjects(stage, exportIdSet(options));
+  try {
+    stage.scale({ x: scale, y: scale });
+    for (const column of bandColumns(width)) {
+      stage.position({ x: -bounds.x * scale - column.x, y: -bounds.y * scale - y });
+      stage.size({ width: column.width, height: rows });
+      stage.draw();
+      const tile: HTMLCanvasElement = stage.toCanvas({ pixelRatio: 1 });
+      const flat = document.createElement('canvas');
+      flat.width = column.width;
+      flat.height = rows;
+      const ctx = flat.getContext('2d', { willReadFrequently: true });
+      if (!ctx) throw new Error('This browser cannot render an image export.');
+      if (background) {
+        ctx.fillStyle = background;
+        ctx.fillRect(0, 0, column.width, rows);
+      }
+      ctx.drawImage(tile, 0, 0);
+      drawCommentPins(ctx, pins, bounds.x + column.x / scale, bounds.y + y / scale, scale);
+      const data = ctx.getImageData(0, 0, column.width, rows).data;
+      const span = column.width * 4;
+      for (let r = 0; r < rows; r++) out.set(data.subarray(r * span, (r + 1) * span), (r * width + column.x) * 4);
+    }
+  } finally {
+    restoreIsolation();
+    restoreChrome();
+    stage.size({ width: previous.width, height: previous.height });
+    stage.position({ x: previous.x, y: previous.y });
+    stage.scale({ x: previous.scaleX, y: previous.scaleY });
+    stage.draw();
+  }
+  return out;
 }
 
 /**

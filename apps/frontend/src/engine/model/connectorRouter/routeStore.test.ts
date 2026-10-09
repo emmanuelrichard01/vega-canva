@@ -492,3 +492,41 @@ describe('router scratch buffers', () => {
     expect(sizes.heap).toBeLessThanOrEqual(1 << 18);
   });
 });
+
+describe('RouteStore connector index across versioned snapshots', () => {
+  /** Publish a snapshot with a numbered change, as the live store does. */
+  const publish = (board: FakeBoard, objects: Record<string, AnyNode>, changed: string[], version: number, removed: string[] = []) => {
+    board.objects = objects;
+    board.changes = { changed, removed, version } as FakeBoard['changes'];
+    (board as unknown as { objectListeners: Set<() => void> }).objectListeners.forEach((f) => f());
+  };
+
+  it('keeps routing bound connectors after shape-only changes, and picks up a connector added later', () => {
+    const board = new FakeBoard();
+    const store = new RouteStore(board.env());
+    let objects: Record<string, AnyNode> = { a: shape('a', 0, 0), b: shape('b', 400, 0), c: connector('c', 'a', 'b', { avoid: false }) };
+    publish(board, objects, ['a', 'b', 'c'], 1);
+    store.subscribe('c', () => {});
+    board.tick();
+    expect(store.get('c')!.flat).toEqual([100, 30, 400, 30]);
+
+    // A shape-only change: the index is reused, and the bound connector still follows.
+    objects = { ...objects, b: shape('b', 400, 200) };
+    publish(board, objects, ['b'], 2);
+    board.tick();
+    expect(store.get('c')!.flat.slice(-2)).toEqual([400, 230]);
+
+    // A connector arriving on the next step is indexed and routed.
+    objects = { ...objects, d: shape('d', 0, 400), e: connector('e', 'a', 'd', { avoid: false, from: { nodeId: 'a', port: 'bottom' }, to: { nodeId: 'd', port: 'top' } }) };
+    publish(board, objects, ['d', 'e'], 3);
+    store.subscribe('e', () => {});
+    board.tick();
+    expect(store.get('e')).not.toBeNull();
+
+    // Moving `d` reroutes `e`, which only works if `e` is in the bound index.
+    objects = { ...objects, d: shape('d', 0, 600) };
+    publish(board, objects, ['d'], 4);
+    board.tick();
+    expect(store.get('e')!.flat.slice(-1)[0]).toBe(600);
+  });
+});

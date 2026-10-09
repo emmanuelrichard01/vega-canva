@@ -1,5 +1,5 @@
 import React, { Suspense, lazy } from 'react';
-import { Check, ChevronDown, Crop, Play, Shrink, SmilePlus } from 'lucide-react';
+import { Check, ChevronDown, Crop, LayoutGrid, Play, Shrink, SmilePlus } from 'lucide-react';
 import {
   FRAME_PRESETS,
   FRAME_PRESET_GROUPS,
@@ -16,6 +16,7 @@ import { requestPresentation, resizeFramesToFit } from '../../canvas/useContentS
 import { Emoji } from '../../emoji/Emoji';
 import { FramePresetIcon } from '../../panel/sections/framePresetIcons';
 import { RailButton } from '../RailBase';
+import { openSlideView } from '../../slides/useSlides';
 import { RailPopover } from '../RailPopover';
 import { RailAnatomy } from './anatomy';
 import { updateNode, type SingleRail } from './types';
@@ -38,6 +39,7 @@ const FrameSizeControl: React.FC<{ node: FrameNode; canEdit: boolean }> = ({ nod
   return (
     <RailPopover
       label="Frame size"
+      size="sm"
       align="start"
       trigger={
         <span className="rail-kind">
@@ -217,6 +219,20 @@ export const FrameRail: SingleRail<FrameNode> = ({ node, conditional, tail, tail
             </RailButton>
           ),
         },
+        // Only a top-level frame is a slide; one inside another is part of it.
+        ...(node.frameId
+          ? []
+          : [
+              {
+                id: 'slides',
+                controls: 1,
+                node: (
+                  <RailButton label="Slide view" hint="Every slide as a grid, to order, skip and theme" onClick={() => openSlideView(node.id)}>
+                    <LayoutGrid size={16} />
+                  </RailButton>
+                ),
+              },
+            ]),
       ]}
       conditional={conditional}
       tail={tail}

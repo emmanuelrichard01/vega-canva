@@ -80,10 +80,6 @@ export const INK_FAINT = '#94A3B8';
 export const BRAND = '#F3A024';
 export const BRAND_INK = '#161616';
 
-/** DESIGN.md's `signal-online` and `signal-danger`, for a board that reports a state. */
-export const SIGNAL_OK = '#10B981';
-export const SIGNAL_BAD = '#EF4444';
-
 /**
  * A card that sits *on* a tinted ground rather than being one.
  *
@@ -426,69 +422,6 @@ export const glyph = (
       cornerRadius: 0,
     },
   });
-
-/**
- * A wide labelled row with a small square icon at its left.
- *
- * ## Why an icon cannot just be the box
- *
- * `glyph` fills its whole box with the geometry, which is right for the shapes
- * that are *containers* — a cylinder, a document, a folder — because those are
- * drawn wide in every diagram ever made. It is wrong for the ones that are
- * **pictures of a thing**. A `bolt` stretched to 300×74 is not a lightning
- * bolt, it is a smear; a `globe` at 2:1 is an ellipse; a `mobile` in landscape
- * is a television. The geometry stops carrying the meaning it was chosen for,
- * which is the entire reason to use it over a rectangle.
- *
- * So the icon keeps its own square and the label gets the rest of the row.
- * Three nodes instead of one, and each is still an ordinary object that can be
- * picked up on its own.
- *
- * Returns the ground as `node` — connectors attach to that — and `nodes` to
- * push, in draw order.
- */
-export function iconRow(
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  kind: string,
-  text: string,
-  tint: Tint | string = 'slate',
-  extra: Extra = {}
-): { node: NewNodeInput; nodes: NewNodeInput[] } {
-  const ICON = Math.min(44, height - 20);
-  const PAD = 16;
-
-  const ground = box(x, y, width, height, '', tint, extra);
-  const icon: NewNodeInput = {
-    id: nanoid(),
-    type: 'shape',
-    x: x + PAD,
-    y: y + (height - ICON) / 2,
-    width: ICON,
-    height: ICON,
-    geometry: { kind },
-    appearance: {
-      fill: [{ type: 'solid', color: strokeOf(tint) }],
-      stroke: { color: strokeOf(tint), width: 1 },
-      opacity: 0.85,
-      cornerRadius: 0,
-    },
-  };
-  const label: NewNodeInput = {
-    id: nanoid(),
-    type: 'text',
-    x: x + PAD * 2 + ICON,
-    y: y + height / 2 - 18,
-    width: Math.max(50, width - PAD * 3 - ICON),
-    height: 36,
-    text,
-    resize: 'none',
-    typography: { fontSize: 15, fontWeight: 600, color: INK, align: 'left', verticalAlign: 'middle', lineHeight: 1.3 },
-  };
-  return { node: ground, nodes: [ground, icon, label] };
-}
 
 /** A small pill: a status, a tag, a lane marker. */
 export const pill = (x: number, y: number, width: number, text: string, tint: Tint | string = 'slate'): NewNodeInput =>
@@ -860,3 +793,85 @@ export function rng(seed: number): () => number {
     return ((state >>> 0) % 100000) / 100000;
   };
 }
+
+// ---------------------------------------------------------------------------
+// Measuring text without a canvas
+// ---------------------------------------------------------------------------
+
+/**
+ * Inter advance widths in em, by glyph class.
+ *
+ * Checked against the bundled variable Inter in a real canvas: across prose,
+ * caps, digits and names these land within about 5% of the true width at 400,
+ * 600 and 700. Close enough to lay a template out with, and to tell a real
+ * overflow from a near miss in `templates.test.ts`.
+ */
+function interAdvance(ch: string): number {
+  if (ch === ' ') return 0.286;
+  if ("iljI.,:;'|!`".includes(ch)) return 0.275;
+  if ('ftr()[]{}"-/'.includes(ch)) return 0.374;
+  if ('mwMW@%'.includes(ch)) return 0.88;
+  if (ch >= 'A' && ch <= 'Z') return 0.682;
+  if (ch >= '0' && ch <= '9') return 0.605;
+  if (ch >= 'a' && ch <= 'z') return 0.55;
+  // Emoji and pictographs are about a square; other symbols about a digit.
+  return (ch.codePointAt(0) ?? 0) > 0x2000 ? 1.1 : 0.605;
+}
+
+/** Width of one line of Inter at `fontSize`, a little wider from semibold up. */
+export function textWidth(text: string, fontSize: number, fontWeight = 400): number {
+  let em = 0;
+  for (const ch of text) em += interAdvance(ch);
+  return em * fontSize * (fontWeight >= 600 ? 1.04 : 1);
+}
+
+/** Lines `text` takes when wrapped greedily at `width`, the way Konva wraps words. */
+export function wrappedLines(text: string, width: number, measure: (run: string) => number): number {
+  let lines = 0;
+  const space = measure(' ');
+  for (const paragraph of text.split('\n')) {
+    lines += 1;
+    let used = 0;
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      const w = measure(word);
+      if (used > 0 && used + space + w > width) {
+        lines += 1;
+        used = w;
+      } else used += (used > 0 ? space : 0) + w;
+    }
+  }
+  return lines;
+}
+
+/** Height of `text` in Inter wrapped at `width`. Lay a paragraph's box out with this. */
+export function textHeight(text: string, width: number, fontSize: number, fontWeight = 400, lineHeight = 1.4): number {
+  return wrappedLines(text, width, (run) => textWidth(run, fontSize, fontWeight)) * fontSize * lineHeight;
+}
+
+/**
+ * A wrapping paragraph whose box is already the height its words need.
+ *
+ * Use it for anything longer than a label. `note` and `caption` grow
+ * sideways and never wrap, so a sentence in one runs straight off the side
+ * of whatever it was meant to sit beside.
+ */
+export const paragraph = (
+  x: number,
+  y: number,
+  text: string,
+  width = 320,
+  fontSize = 15,
+  color = INK_SOFT,
+  fontWeight = 450,
+  lineHeight = 1.5
+): NewNodeInput => ({
+  id: nanoid(),
+  type: 'text',
+  x,
+  y,
+  width,
+  height: Math.ceil(textHeight(text, width, fontSize, fontWeight, lineHeight)),
+  text,
+  resize: 'height',
+  typography: { fontSize, fontWeight, color, lineHeight },
+});

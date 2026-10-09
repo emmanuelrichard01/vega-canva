@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import { placeFloating, type Box, type FloatPlacement, type FloatSide } from '../../engine/interaction/floatingPlacement';
 import { railSubject } from '../toolbar/railSubject';
 import { engineEvents } from '../../engine/EventBus';
-import { isInsidePortalSurface } from './portalSurface';
+import { useOutsidePress } from './outsidePress';
 
 /**
  * A panel that floats beside the control that opened it, and keeps itself placed.
@@ -118,20 +118,13 @@ export function useFloatingPanel({
     };
   }, [open, panel, place]);
 
+  // The trigger toggles, so a press on it is left to its click. A surface
+  // portalled from *inside* this panel (opened after it) is still this panel;
+  // the parent it was itself portalled from is not.
+  useOutsidePress({ open, surfaces: () => [panel], triggers: () => trigger, onOutside: () => onClose('outside') });
+
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (panel?.contains(target) || trigger?.contains(target)) return;
-      // A surface portalled from *inside* this panel is still this panel. One
-      // portalled from outside it — which is what this panel is to its parent
-      // — would also match, so only surfaces that are not this panel count.
-      const surface = (target as Element).closest?.('[data-portal-surface]');
-      if (surface && surface !== panel && isInsidePortalSurface(target)) {
-        if (panel && surface.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_PRECEDING) return;
-      }
-      onClose('outside');
-    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       e.stopPropagation();
@@ -139,10 +132,8 @@ export function useFloatingPanel({
       onClose('escape');
       trigger?.focus({ preventScroll: true });
     };
-    document.addEventListener('mousedown', onDown);
     window.addEventListener('keydown', onKey, true);
     return () => {
-      document.removeEventListener('mousedown', onDown);
       window.removeEventListener('keydown', onKey, true);
     };
   }, [open, panel, trigger, onClose]);

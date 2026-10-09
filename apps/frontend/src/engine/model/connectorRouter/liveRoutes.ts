@@ -15,7 +15,7 @@ export const routeStore = new RouteStore({
   getObjects: () => useStore.getState().objects,
   getChanges: () => {
     const s = useStore.getState();
-    return { changed: s.lastChangedIds ?? [], removed: s.lastRemovedIds ?? [] };
+    return { changed: s.lastChangedIds ?? [], removed: s.lastRemovedIds ?? [], version: s.version };
   },
   subscribeObjects: (fn) => {
     let last = useStore.getState().objects;

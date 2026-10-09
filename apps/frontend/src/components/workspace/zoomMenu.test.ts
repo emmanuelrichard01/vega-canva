@@ -66,3 +66,25 @@ describe('zoomMenuEntries', () => {
     expect(a.setZoom).toHaveBeenCalledWith(0.5);
   });
 });
+
+describe('zoomMenuEntries at the edges', () => {
+  const noop = { zoomIn() {}, zoomOut() {}, fitAll() {}, zoomToSelection() {}, setZoom() {} };
+  const row = (entries: ReturnType<typeof zoomMenuEntries>, id: string) =>
+    entries.find((e): e is MenuItemEntry => e.kind === 'item' && e.id === id)!;
+
+  it('turns off the step that cannot go further, saying why', () => {
+    const atMax = zoomMenuEntries({ hasSelection: false, percent: 500, atMax: true }, noop);
+    expect(row(atMax, 'zoom-in').disabled).toBe(true);
+    expect(row(atMax, 'zoom-in').disabledReason).toBe('Already at the closest zoom');
+    expect(row(atMax, 'zoom-out').disabled).toBeUndefined();
+    const atMin = zoomMenuEntries({ hasSelection: false, percent: 5, atMin: true }, noop);
+    expect(row(atMin, 'zoom-out').disabledReason).toBe('Already at the farthest zoom');
+  });
+
+  it('offers Fit all only when there is something to fit', () => {
+    expect(row(zoomMenuEntries({ hasSelection: false, percent: 100, hasContent: false }, noop), 'zoom-fit').disabledReason).toBe(
+      'Nothing on the board yet'
+    );
+    expect(row(zoomMenuEntries({ hasSelection: false, percent: 100 }, noop), 'zoom-fit').disabled).toBeUndefined();
+  });
+});

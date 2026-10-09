@@ -5,7 +5,10 @@ import { DEFAULT_INK } from '../../../engine/model/schema';
 import { contourData } from '../../../engine/model/pathGeometry';
 import { roughPencil } from '../../../engine/model/roughNodes';
 import { loopPath } from '../../../engine/model/freehandLoop';
-import { shadowProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
+import { strokeColor, strokeDashProps, strokeWidth } from './shared';
+import { DropShadow, type ShadowSilhouette } from './ShapeEffects';
+import { strokeReach } from './shadowInk';
+import { castsShadow, inkOf, needsKnockout } from '../../../engine/model/dropShadow';
 import { useFillProps } from './useFillProps';
 import { useDarkTheme } from './useDarkTheme';
 import { brushPaint } from '../../../engine/tools/brushes';
@@ -19,11 +22,24 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
   // path take the same fill, and a conditional hook is not a thing React
   // permits even when the condition never changes for a given node.
   const pathFill = useFillProps(node.appearance, { x: 0, y: 0, width: node.width, height: node.height }, DEFAULT_INK);
-  // No spread here: the grown-silhouette trick strokes the path, and a
-  // freehand blob is already a filled outline while a pen path is already
-  // stroked — in both cases a second stroke changes the shape rather than the
-  // shadow. `supportsShadowSpread` is therefore false for paths.
-  const shadow = shadowProps(node.appearance);
+  // Cast once from everything the path inks — the interior and the line
+  // together — by `DropShadow`. A pen path with no fill is all line, and used
+  // to cast nothing at all, because Konva skips a stroke's shadow by default.
+  const shadowSpec = node.appearance?.shadow;
+  const dropShadow = castsShadow(shadowSpec) ? shadowSpec : undefined;
+  /** `filled` is whether an interior is actually drawn: a pencil stroke's fill is only used by a closed loop. */
+  const castBy = (silhouette: ShadowSilhouette, pad: number, filled: boolean) => {
+    if (!dropShadow) return null;
+    const ink = inkOf(node.appearance, { absentFill: false, stroked: true });
+    return (
+      <DropShadow
+        shadow={dropShadow}
+        box={{ x: -pad, y: -pad, width: node.width + pad * 2, height: node.height + pad * 2 }}
+        silhouette={silhouette}
+        knockout={needsKnockout(filled ? ink : { ...ink, filled: false, fillOpaque: false })}
+      />
+    );
+  };
   const dark = useDarkTheme();
 
   /**
@@ -105,17 +121,24 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
         ? loopPath(node.geometry.points)
         : '';
 
+    const interiorInk = interior ? [{ path: new Path2D(interior) }] : [];
+    const stretch = node.geometry.strokeSize + 4;
+
     if (pencil) {
       return (
         <>
-          {interior && <Path data={interior} {...pathFill} {...shadow} listening={false} />}
+          {castBy(
+            { fills: interiorInk, strokes: [{ path: new Path2D(pencil.d), width: pencil.nib, cap: 'round', join: 'round' }] },
+            stretch,
+            Boolean(interior)
+          )}
+          {interior && <Path data={interior} {...pathFill} listening={false} />}
           <Path
             data={pencil.d}
             stroke={ink}
             strokeWidth={pencil.nib}
             lineCap="round"
             lineJoin="round"
-            {...(interior ? null : shadow)}
             hitStrokeWidth={Math.max(20, node.geometry.strokeSize)}
             perfectDrawEnabled={false}
           />
@@ -125,6 +148,7 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
 
     return (
       <>
+        {castBy({ fills: [...interiorInk, { path: new Path2D(node.geometry.svgPath) }] }, stretch, Boolean(interior))}
         {/*
           The area the loop encloses, under the ink.
 
@@ -133,16 +157,14 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
           The two differ by half the nib all the way round, and that overlap is
           what makes the fill meet the ink with no seam between them.
 
-          It takes the shadow, and the outline above it does not — a closed
-          stroke's silhouette is the filled region, and casting from the ring
-          alone would put a shadow inside the shape as well as outside it.
+          The shadow is cast above from the region and the ink together, so
+          the loop casts one shadow and not a ring inside a disc.
         */}
-        {interior && <Path data={interior} {...pathFill} {...shadow} listening={false} />}
+        {interior && <Path data={interior} {...pathFill} listening={false} />}
         <Path
           data={node.geometry.svgPath}
           fill={ink}
           {...brushPaint(node.geometry.brush, dark)}
-          {...(interior ? null : shadow)}
           hitStrokeWidth={Math.max(20, node.geometry.strokeSize)}
         />
       </>
@@ -156,23 +178,42 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
   const stroke = sw > 0 ? (explicitColor ?? DEFAULT_INK) : undefined;
 
   const dash = strokeDashProps(node.appearance);
+  const contour = contourData(node.geometry);
+  const evenOdd = node.geometry.kind === 'compound';
 
-  return (
+  const body = (
     <Path
-      data={contourData(node.geometry)}
+      data={contour}
       // No fill means no fill: the paint fallback is the ink, which would
       // flood the area under every open pen path.
       {...(hasFill ? pathFill : { fillEnabled: false })}
-      {...shadow}
       stroke={stroke}
       strokeWidth={sw}
       {...dash}
       lineJoin={dash.lineJoin}
       // Several contours filled as one: the inner ones are holes, and only the
       // even-odd rule says so regardless of which way they happen to wind.
-      fillRule={node.geometry.kind === 'compound' ? 'evenodd' : undefined}
+      fillRule={evenOdd ? 'evenodd' : undefined}
       hitStrokeWidth={Math.max(20, sw || 1)}
     />
+  );
+  if (!dropShadow) return body;
+
+  const outline = new Path2D(contour);
+  return (
+    <>
+      {castBy(
+        {
+          fills: hasFill ? [{ path: outline, rule: evenOdd ? 'evenodd' : 'nonzero' }] : [],
+          strokes: stroke
+            ? [{ path: outline, width: sw, cap: dash.lineCap, join: dash.lineJoin, miterLimit: dash.miterLimit, dash: dash.dash }]
+            : [],
+        },
+        strokeReach(sw, 'center', dash.lineJoin ?? 'miter', dash.miterLimit) + 4,
+        hasFill
+      )}
+      {body}
+    </>
   );
 });
 

@@ -3,7 +3,8 @@ import ReactDOM from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
 import { canvasFontFamily } from '../canvas/renderers/shared';
 import { weightName, weightsFor } from '../../engine/text/fontCatalogue';
-import { PORTAL_SURFACE_ATTR, isInsidePortalSurface } from './portalSurface';
+import { PORTAL_SURFACE_ATTR } from './portalSurface';
+import { useOutsidePress } from './outsidePress';
 
 /**
  * The weight, chosen by name, from the weights the face actually has.
@@ -84,14 +85,10 @@ export const FontWeightSelect: React.FC<{
     if (!open) return;
     const i = weights.indexOf(value);
     setCursor(i >= 0 ? i : 0);
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (popRef.current?.contains(t) || triggerRef.current?.contains(t) || isInsidePortalSurface(t)) return;
-      setOpen(false);
-    };
-    window.addEventListener('mousedown', onDown);
-    return () => window.removeEventListener('mousedown', onDown);
   }, [open, weights, value]);
+
+  // The trigger toggles; a press on it is left to its click.
+  useOutsidePress({ open, surfaces: [popRef], triggers: triggerRef, onOutside: () => setOpen(false) });
 
   const pick = (w: number) => {
     onChange(w);

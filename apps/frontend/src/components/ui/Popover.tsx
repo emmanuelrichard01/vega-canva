@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState
 import { createPortal } from 'react-dom';
 import { placeAtRect, type Placement } from '../menu/menuModel';
 import { PORTAL_SURFACE_ATTR } from './portalSurface';
+import { useOutsidePress } from './outsidePress';
 import { useSuppressTooltips } from './Tooltip';
 import './popover.css';
 
@@ -91,24 +92,20 @@ export const Popover: React.FC<PopoverProps> = ({
     };
   }, [open, place]);
 
+  // The anchor is the trigger and toggles, so a press on it is left to its click.
+  useOutsidePress({ open, surfaces: [surface], triggers: anchor, onOutside: () => onClose() });
+
   useEffect(() => {
     if (!open) return;
     const trigger = anchor.current;
-    const onDown = (e: PointerEvent) => {
-      const target = e.target as Node | null;
-      if (surface.current?.contains(target) || trigger?.contains(target)) return;
-      onClose();
-    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       e.stopPropagation();
       onClose();
       trigger?.focus();
     };
-    window.addEventListener('pointerdown', onDown, true);
     window.addEventListener('keydown', onKey, true);
     return () => {
-      window.removeEventListener('pointerdown', onDown, true);
       window.removeEventListener('keydown', onKey, true);
     };
   }, [open, anchor, onClose]);

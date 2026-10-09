@@ -1,5 +1,7 @@
-import { captureRaster, mountForCapture } from './raster';
+import { captureBand, captureRaster, exportBounds, mountForCapture } from './raster';
 import { encodeCanvasWithWorker } from './exportWorkerClient';
+import { bandHeight, canTile, plannedScale } from './rasterLimits';
+import { encodeTiledPng } from './tiledPng';
 import { FORMAT_SPECS, type Exporter, type ExportFormat, type ExportOptions } from './ExportTypes';
 
 /**
@@ -10,6 +12,11 @@ import { FORMAT_SPECS, type Exporter, type ExportFormat, type ExportOptions } fr
  * `quality` means anything — everything up to that point is the same capture,
  * and three copies of it is three chances for the PNG and the JPEG of the same
  * frame to be framed differently.
+ *
+ * A PNG too large for one canvas is drawn in bands and streamed through
+ * `encodeTiledPng`, so it arrives at the density asked for (up to the tiled
+ * guard in `rasterLimits`). JPEG and WebP are encoded by the browser from one
+ * canvas and stop at its ceiling.
  */
 export class RasterExporter implements Exporter {
   type: ExportFormat;
@@ -22,6 +29,14 @@ export class RasterExporter implements Exporter {
 
   async export(options: ExportOptions): Promise<Blob> {
     const spec = FORMAT_SPECS[this.type];
+    const requested = options.scale ?? 2;
+
+    if (this.type === 'png' && options.stage) {
+      const bounds = exportBounds(options);
+      const plan = plannedScale(bounds.width, bounds.height, requested, canTile());
+      if (plan.tiled) return this.tiled(options, bounds, plan.scale);
+    }
+
     /**
      * Mounted first, awaited, and only then captured.
      *
@@ -37,10 +52,25 @@ export class RasterExporter implements Exporter {
     } finally {
       release();
     }
-    // Passing a quality to a lossless encoder is not harmless — Chrome ignores
-    // it for PNG but the argument is meaningless, and being explicit keeps the
-    // control and the format honest about each other.
+    // A quality means nothing to a lossless encoder, so none is passed.
     const quality = spec.lossy ? (options.quality ?? 0.92) : undefined;
     return encodeCanvasWithWorker(canvas, null, spec.mime, quality);
+  }
+
+  /** A PNG past the single-canvas ceiling, a band at a time. */
+  private async tiled(options: ExportOptions, bounds: { x: number; y: number; width: number; height: number }, scale: number): Promise<Blob> {
+    const width = Math.max(1, Math.round(bounds.width * scale));
+    const height = Math.max(1, Math.round(bounds.height * scale));
+    const release = await mountForCapture(options);
+    try {
+      return await encodeTiledPng(
+        width,
+        height,
+        (y, rows) => captureBand(options, FORMAT_SPECS.png, bounds, scale, y, rows, width),
+        { bandHeight: bandHeight(width), signal: options.signal, onProgress: options.onProgress }
+      );
+    } finally {
+      release();
+    }
   }
 }

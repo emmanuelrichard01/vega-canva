@@ -294,6 +294,13 @@ first impression than no template, in the feature's own words — and the
 every-shape assertion is what stops a shape being added to the table and never
 shown to anybody.
 
+Wave 7 replaced the template catalogue. The old 45-template library is gone,
+and the diagram teaching boards now live in the `diagrams` category
+(`engine/templates/catalogue/diagrams.ts`), beside `systems`, `product`,
+`design`, `data`, `science`, `physics`, `slides` and `art`. `templates.test.ts`
+now checks every template for text fit, overlap, build time and links; the
+diagram-specific assertions live in `diagrams.test.ts`.
+
 ### On the UI
 
 It is better than the old plan credited: live preview on shared geometry, five

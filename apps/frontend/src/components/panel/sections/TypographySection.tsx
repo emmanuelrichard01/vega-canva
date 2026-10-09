@@ -127,9 +127,12 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
           <FontSelector
             value={typography.fontFamily}
             mixed={family.mixed}
-            onChange={(fontFamily) => {
-              const fontWeight = nearestWeight(fontFamily, typography.fontWeight ?? 400);
-              setTypography(fontWeight === typography.fontWeight ? { fontFamily } : { fontFamily, fontWeight });
+            preview
+            weight={weight.value ?? 400}
+            onWeightChange={(fontWeight) => setTypography({ fontWeight })}
+            onChange={(fontFamily, baseWeight) => {
+              const fontWeight = nearestWeight(fontFamily, baseWeight ?? typography.fontWeight ?? 400);
+              setTypography(fontWeight === (baseWeight ?? typography.fontWeight) ? { fontFamily } : { fontFamily, fontWeight });
             }}
           />
         </Row>

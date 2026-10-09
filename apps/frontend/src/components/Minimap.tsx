@@ -59,7 +59,7 @@ export const Minimap: React.FC<MinimapProps> = ({ onCollapse, onHelp }) => {
   const darkTheme = useStore((s) => s.darkTheme);
   // Counted, not the map itself: subscribing to `objects` would re-render the
   // radar shell on every drag frame, and the canvas paints from its own loop.
-  const objectCount = useStore((s) => Object.keys(s.objects).length);
+  const objectCount = useStore((s) => s.objectCount);
 
   const navigate = useCallback((x: number, y: number, zoom?: number) => {
     window.dispatchEvent(

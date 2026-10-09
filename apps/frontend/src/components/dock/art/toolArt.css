@@ -22,7 +22,67 @@
   --ink-deep: color-mix(in srgb, var(--ink, #1f2937) 82%, #000);
   --hl-cap: color-mix(in srgb, var(--hl, #fde047) 62%, #fff);
   --hl-tip: color-mix(in srgb, var(--hl, #fde047) 74%, #000);
-  --note-edge: color-mix(in srgb, var(--note, #fde68a) 84%, #000);
+  /* The sticky pad: the sheet, and its curled corner's underside, shaded at
+     the crease and lit at the tip. */
+  --note-paper: var(--note, #ffe9a8);
+  --note-crease: color-mix(in srgb, var(--note-paper) 76%, #000);
+  --note-back: color-mix(in srgb, var(--note-paper) 42%, #fff);
+}
+
+.tool-art .curl-crease { stop-color: var(--note-crease); }
+.tool-art .curl-mid { stop-color: color-mix(in srgb, var(--note-crease) 30%, var(--note-back)); }
+.tool-art .curl-tip { stop-color: var(--note-back); }
+
+/* The sticky pad does not rise as one piece the way the pens do: the pad stays
+   on the tray and only its top note comes up off it, tipping a little, its
+   corner curling further, while the shadow it leaves on the pad spreads and
+   fades. The tray's own rise is cancelled for this one tool (hence the tray
+   selectors, which the override has to out-rank); the armed note stands
+   higher than the hovered one, as an armed pen does. */
+.dock-tray__tool .tool-art.tool-art--pad,
+.dock-tray__tool:hover .tool-art.tool-art--pad,
+.dock-tray__tool[aria-checked='true'] .tool-art.tool-art--pad {
+  transform: translateY(12px);
+}
+
+.tool-art--pad .pad-top,
+.tool-art--pad .pad-curl,
+.tool-art--pad .pad-shadow {
+  transform-box: fill-box;
+  transition:
+    transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.tool-art--pad .pad-top { transform-origin: 50% 100%; }
+.tool-art--pad .pad-curl { transform-origin: 100% 0; }
+.tool-art--pad .pad-shadow { transform-origin: 50% 0; }
+
+.dock-tray__tool:hover .tool-art--pad .pad-top {
+  transform: translateY(-4px) rotate(-1.2deg);
+}
+
+.dock-tray__tool[aria-checked='true'] .tool-art--pad .pad-top {
+  transform: translateY(-7px) rotate(-1.2deg);
+}
+
+.dock-tray__tool:hover .tool-art--pad .pad-curl,
+.dock-tray__tool[aria-checked='true'] .tool-art--pad .pad-curl {
+  transform: scale(1.14);
+}
+
+.dock-tray__tool:hover .tool-art--pad .pad-shadow,
+.dock-tray__tool[aria-checked='true'] .tool-art--pad .pad-shadow {
+  opacity: 0.7;
+  transform: scale(1.04, 1.02);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-art--pad .pad-top,
+  .tool-art--pad .pad-curl,
+  .tool-art--pad .pad-shadow {
+    transition: none;
+  }
 }
 
 .dark-theme .tool-art {
@@ -66,6 +126,11 @@
 :root[data-contrast='more'] .tool-art {
   --art-plastic: #ffffff;
   --art-label: #ffffff;
+}
+
+/* The pad's curl keeps its shape as one flat tone a step off the sheet. */
+:root[data-contrast='more'] .tool-art .curl {
+  fill: var(--note-back);
 }
 
 :root[data-contrast='more'] .dark-theme .tool-art {

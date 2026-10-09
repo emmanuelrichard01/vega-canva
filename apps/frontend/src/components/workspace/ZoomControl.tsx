@@ -19,6 +19,17 @@ const FIT_PADDING = 64;
 /** The dock floats over the bottom of the board; a fit keeps work above it. */
 const DOCK_CLEARANCE = 48;
 
+type ZoomEdge = 'min' | 'max' | null;
+
+/** Whether the camera is at either end of its range, within a rounding hair. */
+function zoomEdge(): ZoomEdge {
+  const { minZoom, maxZoom } = cameraSystem.zoomLimits;
+  const z = cameraSystem.zoom;
+  if (z <= minZoom * 1.001) return 'min';
+  if (z >= maxZoom * 0.999) return 'max';
+  return null;
+}
+
 /**
  * The zoom readout, which is also where zoom is set.
  *
@@ -29,12 +40,15 @@ const DOCK_CLEARANCE = 48;
  */
 export const ZoomControl: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   const [percent, setPercent] = useState(() => Math.round(cameraSystem.reportedZoom * 100));
+  const [edge, setEdge] = useState<ZoomEdge>(() => zoomEdge());
   useEffect(() => {
-    const sync = () =>
+    const sync = () => {
       setPercent((prev) => {
         const next = Math.round(cameraSystem.reportedZoom * 100);
         return next === prev ? prev : next;
       });
+      setEdge(zoomEdge());
+    };
     sync();
     engineEvents.on('CameraChanged', sync);
     return () => engineEvents.off('CameraChanged', sync);
@@ -42,10 +56,11 @@ export const ZoomControl: React.FC<{ compact?: boolean }> = ({ compact = false }
 
   const [draft, setDraft] = useState<string | null>(null);
   const [invalid, setInvalid] = useState(false);
-  const [menuRect, setMenuRect] = useState<{ rect: DOMRect; keyboard: boolean; selection: string[] } | null>(null);
+  const [menuRect, setMenuRect] = useState<{ rect: DOMRect; keyboard: boolean; selection: string[]; hasContent: boolean } | null>(null);
   const groupRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const justClosed = useRef(0);
+  /** The chevron: the menu hangs from the whole group, but only this opens it. */
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
 
   /**
    * What is selected, read when the menu opens. The canvas owns selection and
@@ -56,7 +71,11 @@ export const ZoomControl: React.FC<{ compact?: boolean }> = ({ compact = false }
     return Array.isArray(selection) ? selection.filter((id): id is string => typeof id === 'string') : [];
   };
 
-  const zoomBy = (factor: number) => cameraSystem.zoomBy(factor, cameraSystem.width / 2, cameraSystem.height / 2);
+  const zoomBy = (factor: number) => {
+    // At a limit the step does nothing; saying so beats a silent press.
+    if ((factor > 1 && zoomEdge() === 'max') || (factor < 1 && zoomEdge() === 'min')) return;
+    cameraSystem.zoomBy(factor, cameraSystem.width / 2, cameraSystem.height / 2);
+  };
 
   /** About the middle of what is on screen, so a stop never jumps somewhere else. */
   const setZoom = (factor: number) => cameraSystem.zoomToLevel(factor);
@@ -92,9 +111,8 @@ export const ZoomControl: React.FC<{ compact?: boolean }> = ({ compact = false }
   };
 
   const openMenu = (keyboard: boolean) => {
-    if (performance.now() - justClosed.current < 300) return;
     const rect = groupRef.current?.getBoundingClientRect();
-    if (rect) setMenuRect({ rect, keyboard, selection: currentSelection() });
+    if (rect) setMenuRect({ rect, keyboard, selection: currentSelection(), hasContent: editor.contentBounds() !== null });
   };
 
   return (
@@ -105,7 +123,10 @@ export const ZoomControl: React.FC<{ compact?: boolean }> = ({ compact = false }
           className="btn-icon zoom-ctl__step"
           onClick={() => zoomBy(1 / STEP)}
           aria-label="Zoom out"
-          data-tooltip={withShortcut('Zoom out', 'Mod+-')}
+          // aria-disabled rather than disabled: the button stays pointable and
+          // focusable, so the reason it is off can still be read.
+          aria-disabled={edge === 'min' || undefined}
+          data-tooltip={edge === 'min' ? 'Already at the farthest zoom' : withShortcut('Zoom out', 'Mod+-')}
         >
           <Minus size={14} />
         </button>
@@ -117,7 +138,7 @@ export const ZoomControl: React.FC<{ compact?: boolean }> = ({ compact = false }
           type="text"
           inputMode="decimal"
           spellCheck={false}
-          aria-label="Zoom level. Type a percentage and press Enter"
+          aria-label="Zoom level. Type a percentage and press Enter, or use the arrow keys to step"
           aria-invalid={invalid || undefined}
           value={draft ?? `${percent}%`}
           // The live value shows until something is typed, so a wheel or pinch
@@ -150,11 +171,18 @@ export const ZoomControl: React.FC<{ compact?: boolean }> = ({ compact = false }
             } else if (e.key === 'ArrowDown' && e.altKey) {
               e.preventDefault();
               openMenu(true);
+            } else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && draft === null) {
+              // A number field steps with the arrows; this one steps the zoom,
+              // the same step as the buttons, and keeps focus for the next press.
+              e.preventDefault();
+              zoomBy(e.key === 'ArrowUp' ? STEP : 1 / STEP);
+              requestAnimationFrame(() => inputRef.current?.select());
             }
           }}
         />
         <button
           type="button"
+          ref={menuButtonRef}
           className="zoom-ctl__menu"
           aria-label="Zoom options"
           aria-haspopup="menu"
@@ -170,7 +198,8 @@ export const ZoomControl: React.FC<{ compact?: boolean }> = ({ compact = false }
           className="btn-icon zoom-ctl__step"
           onClick={() => zoomBy(STEP)}
           aria-label="Zoom in"
-          data-tooltip={withShortcut('Zoom in', 'Mod+=')}
+          aria-disabled={edge === 'max' || undefined}
+          data-tooltip={edge === 'max' ? 'Already at the closest zoom' : withShortcut('Zoom in', 'Mod+=')}
         >
           <Plus size={14} />
         </button>
@@ -180,7 +209,13 @@ export const ZoomControl: React.FC<{ compact?: boolean }> = ({ compact = false }
         <Menu
           label="Zoom"
           entries={zoomMenuEntries(
-            { hasSelection: menuRect.selection.length > 0, percent },
+            {
+              hasSelection: menuRect.selection.length > 0,
+              percent,
+              hasContent: menuRect.hasContent,
+              atMin: edge === 'min',
+              atMax: edge === 'max',
+            },
             {
               zoomIn: () => zoomBy(STEP),
               zoomOut: () => zoomBy(1 / STEP),
@@ -196,10 +231,10 @@ export const ZoomControl: React.FC<{ compact?: boolean }> = ({ compact = false }
           )}
           anchor={{ kind: 'rect', rect: menuRect.rect, prefer: compact ? 'below' : 'above', align: compact ? 'end' : 'start' }}
           focusFirst={menuRect.keyboard}
-          onClose={() => {
-            justClosed.current = performance.now();
-            setMenuRect(null);
-          }}
+          // A press on the chevron closes the menu and eats its click; one on
+          // the zoom steps or the field closes it and still does its job.
+          trigger={menuButtonRef}
+          onClose={() => setMenuRect(null)}
         />
       )}
     </div>

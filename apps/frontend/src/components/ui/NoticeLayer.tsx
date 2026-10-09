@@ -1,4 +1,4 @@
-import React, { useSyncExternalStore } from 'react';
+import React, { useEffect, useRef, useSyncExternalStore } from 'react';
 import { AlertTriangle, Check, Info, X, XCircle } from 'lucide-react';
 import { notices$, type Notice, type NoticeTone } from '../../engine/ui/notices';
 
@@ -39,26 +39,15 @@ const ICON: Record<NoticeTone, React.ReactNode> = {
   error: <XCircle size={15} />,
 };
 
-/**
- * The politeness of the announcement follows the tone.
- *
- * An error interrupts, because it is the one case where waiting for a pause
- * means the person carries on working on the assumption that it went well.
- * Everything else waits its turn — a screen reader narrating "Copied" over the
- * top of what someone is reading is worse than silence.
- */
-const LIVENESS: Record<NoticeTone, 'polite' | 'assertive'> = {
-  info: 'polite',
-  success: 'polite',
-  warning: 'polite',
-  error: 'assertive',
-};
-
 const NoticeRow: React.FC<{ notice: Notice }> = ({ notice }) => (
   <div
     className={`notice notice--${notice.tone}`}
-    role={notice.tone === 'error' ? 'alert' : 'status'}
-    aria-live={LIVENESS[notice.tone]}
+    /* The politeness follows the tone. An error interrupts (an alert is
+       assertive), because waiting for a pause means the person carries on as
+       if it went well. Everything else is read by the layer's polite region
+       in its turn: "Copied" narrated over what someone is reading is worse
+       than silence. */
+    role={notice.tone === 'error' ? 'alert' : undefined}
   >
     <span className="notice__icon" aria-hidden>
       {ICON[notice.tone]}
@@ -107,15 +96,45 @@ const NoticeRow: React.FC<{ notice: Notice }> = ({ notice }) => (
 
 export const NoticeLayer: React.FC = () => {
   const notices = useSyncExternalStore(notices$.subscribe, notices$.getSnapshot, notices$.getSnapshot);
-  if (notices.length === 0) return null;
+  /**
+   * Why the clock is held: the pointer is over the stack, or focus is in it.
+   * Either one holds it; it runs again only when both have gone, so tabbing
+   * to Undo and then moving the mouse away does not start the countdown under
+   * a focused button.
+   */
+  const reasons = useRef({ pointer: false, focus: false });
+  const update = (key: 'pointer' | 'focus', on: boolean) => {
+    reasons.current[key] = on;
+    if (reasons.current.pointer || reasons.current.focus) notices$.hold();
+    else notices$.release();
+  };
+  // The store drops a hold when the stack empties; the reasons go with it.
+  useEffect(() => {
+    if (notices.length === 0) reasons.current = { pointer: false, focus: false };
+  }, [notices.length]);
 
+  /**
+   * Always mounted, and the polite live region itself.
+   *
+   * A live region that is inserted already holding its text is announced
+   * unreliably, and that is exactly what a layer that rendered nothing until
+   * the first notice did. Mounted empty from the start, each row added to it
+   * is announced. Errors carry `role="alert"` on the row, which is assertive
+   * on insertion by definition.
+   */
   return (
     <div
       className="notice-layer"
-      onPointerEnter={notices$.hold}
-      onPointerLeave={notices$.release}
-      onFocus={notices$.hold}
-      onBlur={notices$.release}
+      aria-live="polite"
+      aria-relevant="additions text"
+      onPointerEnter={() => update('pointer', true)}
+      onPointerLeave={() => update('pointer', false)}
+      onFocus={() => update('focus', true)}
+      onBlur={(e) => {
+        // Focus moving between the stack's own buttons is still focus in it.
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        update('focus', false);
+      }}
     >
       {/* Oldest at the top, so the newest sits nearest the dock and nothing
           that is already on screen moves down into the reader's eye line. */}

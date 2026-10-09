@@ -7,7 +7,7 @@ import type { ChartInk } from '../../../engine/chart/chartInk';
 import { CHART_FONT_FAMILY, measureChartText } from '../../../engine/chart/chartMeasure';
 import { ThemeService } from '../../../engine/ThemeService';
 import { EXPORT_CHROME } from '../../../engine/export/chrome';
-import { currentChartInk, featureInk } from '../../../engine/chart/chartInk';
+import { chartInkFor, featureInk } from '../../../engine/chart/chartInk';
 import { chartHitTest, placeReadout, type ChartHit } from '../../../engine/chart/chartHitTest';
 import {
   formatValue,
@@ -28,6 +28,7 @@ import { updateChart } from '../../../engine/chart/chartApply';
 import { useCanEditData } from '../../data/dataActions';
 import { proposeWriteBack } from '../../data/writeBackRequest';
 import { useStore } from '../../../hooks/useStore';
+import { useWantsLightInk } from '../../../hooks/useSurface';
 import { Html } from 'react-konva-utils';
 import './chartCanvas.css';
 import { useLinkedChartSpec } from '../../data/useLinkedChartSpec';
@@ -137,6 +138,7 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
   // A linked chart reads its table on every render, so a cell edit reaches it
   // in the same tick on every client, easing to the new values.
   const dataSpec = useLinkedChartSpec(node.id, node.chart);
+  const lightInk = useWantsLightInk(node);
 
   /** A value being dragged, before it is written down. */
   const [draftValue, setDraftValue] = React.useState<{ si: number; ci: number; value: number } | null>(null);
@@ -205,7 +207,7 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
    * this component does have already been triggered by something else, and the
    * read is a `classList.contains`.
    */
-  const ink = currentChartInk();
+  const ink = chartInkFor(lightInk);
 
   /**
    * What the pointer is over, if anything.

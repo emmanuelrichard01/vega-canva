@@ -4,6 +4,8 @@ import { StrokeStyleIcon } from '../panelPrimitives';
 import { ColorChip, NumberField, Note, PairRow, PanelSubjectContext, Row, Section, SegmentedControl } from '../grammar';
 import { isSectionOpen, setSectionOpen, subscribeSections } from '../grammar/sectionState';
 import { EyedropperButton } from '../../ui/EyedropperButton';
+import { StrokeWeightField } from './StrokeWeightField';
+import { RUN_DEFAULT_WIDTH } from '../../toolbar/rail/strokeDefaults';
 import {
   DEFAULT_MITER_LIMIT,
   MAX_MITER_LIMIT,
@@ -113,8 +115,10 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
 
   if (!capabilities.supportsStroke || !appearance) return null;
 
-  const removable = Boolean(capabilities.supportsFill);
-  const widthShared = sharedPaint((a) => a.stroke?.width ?? 0);
+  // A line is its stroke, so it never offers to remove it, and a line with no
+  // weight stored shows the weight it is drawn at rather than 0.
+  const removable = Boolean(capabilities.supportsFill) && !openShape;
+  const widthShared = sharedPaint((a) => a.stroke?.width || (removable ? 0 : RUN_DEFAULT_WIDTH));
   const empty = removable && !widthShared.mixed && !(appearance.stroke && appearance.stroke.width > 0);
 
   const style = styleOf(appearance.stroke);
@@ -178,12 +182,7 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
       )}
 
       <PairRow>
-        <NumberField
-          label="Stroke weight"
-          glyph={<Minus size={13} strokeWidth={3} />}
-          unit="px"
-          min={0}
-          max={100}
+        <StrokeWeightField
           value={widthShared.mixed ? 'mixed' : widthShared.value ?? 0}
           onChange={(width) => setStroke({ width })}
         />

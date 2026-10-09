@@ -52,7 +52,8 @@ import './shapeLibrary.css';
  *
  * ## What a tile does
  *
- * - **Click** arms the Shape tool with it and closes the library.
+ * - **Click** arms the Shape tool with it and folds the library back to the
+ *   seat's row, which stays open (see `seatMenuModel`).
  * - **Shift+click** arms it and keeps the library open.
  * - **Drag** it onto the board to place one where you let go, at its natural
  *   size. The library stays open, so several can be dragged out in a row.

@@ -71,6 +71,13 @@ without them:
 3. Attract/repel physics (keep throw + collide)
 4. Mini-map polish (keep basic dots, cut smooth interpolation)
 
+## After the hackathon
+
+The plan above was the hackathon schedule. Redesign waves 5 to 7 (2026-10)
+were run as parallel agent waves with briefs in `.claude/redesign/`; their
+summary is in `../HANDOFF.md`. Next candidates are in
+`.claude/redesign/HANDOFF-next-session.md`.
+
 ## Related docs
 
 - `PRD.md` — product scope and success criteria

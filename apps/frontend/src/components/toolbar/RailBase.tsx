@@ -62,6 +62,18 @@ export const Rail = React.forwardRef<
   const descriptionId = React.useId();
   // A different subject is a different rail: nothing it had open carries over.
   React.useEffect(() => setOpenId(null), [id]);
+  /**
+   * Whether this rail has already been on screen. The first subject arrives
+   * with the entrance; a later one, picked while the rail is up, swaps in with
+   * a short fade and no travel, because replaying the rise on every click
+   * across a board reads as flicker, the same reason a menu bar swaps menus
+   * without ceremony.
+   */
+  const seen = React.useRef(false);
+  React.useEffect(() => {
+    seen.current = true;
+  }, []);
+  const swapped = seen.current;
 
   // One Tab stop. The DOM is the source of truth for which controls exist, so
   // the stop is re-dealt whenever the rail's contents change.
@@ -162,12 +174,14 @@ export const Rail = React.forwardRef<
           width: 'max-content',
         }}
       >
+        {/* Under 150ms, on the app's exponential settle, with no overshoot.
+            It leaves at once: a rail fading out behind a new selection, or
+            under a drag, is a ghost of the wrong object. */}
         <motion.div
           key={id}
-          initial={{ opacity: 0, ...ENTRY[placement] }}
+          initial={swapped ? { opacity: 0.5 } : { opacity: 0, ...ENTRY[placement] }}
           animate={{ opacity: 1, x: 0, y: 0 }}
-          exit={{ opacity: 0, ...ENTRY[placement] }}
-          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+          transition={{ duration: swapped ? 0.08 : 0.12, ease: [0.16, 1, 0.3, 1] }}
           style={{ pointerEvents: 'none' }}
         >
           <div
@@ -269,12 +283,8 @@ export const RailMenuButton: React.FC<{
 }> = ({ label = 'More actions', entries, trigger }) => {
   const [open, setOpen] = React.useState<{ rect: DOMRect; keyboard: boolean } | null>(null);
   const side = React.useContext(RailSideContext);
-  /**
-   * The menu closes itself on any outside pointerdown, in the capture phase —
-   * which includes a press on this button. Without remembering that, the click
-   * that follows would open it again, and the button could never close its menu.
-   */
-  const swallowClick = React.useRef(false);
+  // A press on this button while its menu is up is the menu's to handle: it
+  // closes and eats the click (see `useOutsidePress`), so this only ever opens.
   return (
     <>
       <button
@@ -284,14 +294,7 @@ export const RailMenuButton: React.FC<{
         aria-label={label}
         aria-haspopup="menu"
         aria-expanded={Boolean(open)}
-        onPointerDown={() => {
-          if (open) swallowClick.current = true;
-        }}
         onClick={(e) => {
-          if (swallowClick.current) {
-            swallowClick.current = false;
-            return;
-          }
           setOpen({ rect: e.currentTarget.getBoundingClientRect(), keyboard: e.detail === 0 });
         }}
         onKeyDown={(e) => {
@@ -310,6 +313,8 @@ export const RailMenuButton: React.FC<{
           entries={entries()}
           anchor={{ kind: 'rect', rect: open.rect, prefer: side === 'top' ? 'above' : 'below' }}
           focusFirst={open.keyboard}
+          // The board's menu, so it searches the way a right-click does.
+          searchable
           onClose={() => setOpen(null)}
         />
       )}

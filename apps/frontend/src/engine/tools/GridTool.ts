@@ -5,6 +5,7 @@ import { createGrid } from '../grid/gridApply';
 import { gridDefaults } from '../grid/gridDefaults';
 import { GridPreview } from './GridPreview';
 import { MAX_TRACKS } from '../grid/gridTracks';
+import { hud } from '../ui/hud';
 
 /** A drag smaller than this is a click, and gets a sensible default grid. */
 const CLICK_SIZE = { width: 480, height: 360 };
@@ -77,7 +78,7 @@ export class GridTool implements Tool {
     if (!this.isDragging) return;
     this.isDragging = false;
     this.isAlt = false;
-    ctx.setOverlayState?.({ active: false });
+    this.clearOverlay(ctx);
 
     const drawn = this.box();
     // A click rather than a drag still means "put a grid here"
@@ -102,7 +103,7 @@ export class GridTool implements Tool {
     if (e.key === 'Escape' && this.isDragging) {
       this.isDragging = false;
       this.isAlt = false;
-      ctx.setOverlayState?.({ active: false });
+      this.clearOverlay(ctx);
       return;
     }
 
@@ -147,11 +148,26 @@ export class GridTool implements Tool {
   onDeactivate(ctx: ToolContext) {
     this.isDragging = false;
     this.isAlt = false;
+    this.clearOverlay(ctx);
+  }
+
+  /** The gesture is over, committed or not: the overlay and the readout go. */
+  private clearOverlay(ctx: ToolContext) {
     ctx.setOverlayState?.({ active: false });
+    hud.hide('grid');
   }
 
   private pushOverlay(ctx: ToolContext) {
-    ctx.setOverlayState?.({ type: 'grid', kind: 'grid', active: true, ...this.box() });
+    const box = this.box();
+    // The size of the grid being drawn, through the board's one HUD.
+    hud.show({
+      source: 'grid',
+      kind: 'size',
+      value: { width: box.width, height: box.height },
+      at: { x: this.currentX, y: this.currentY },
+      box,
+    });
+    ctx.setOverlayState?.({ type: 'grid', kind: 'grid', active: true, ...box });
   }
 
   renderOverlay(ctx: ToolContext, overlayState: any) {

@@ -9,8 +9,13 @@
  * Vite's fast refresh needs in order to work at all.
  */
 
-import { updateNode } from '../document';
+import { nanoid } from 'nanoid';
+import { createNode, deleteNode, doc, updateNode } from '../document';
 import { lineNodeFromVertices, localBends, worldVertices } from '../model/lineEnds';
+import { connectorFromLine } from '../model/lineBinding';
+import type { ConnectorEnd, Point, Routing } from '../model/connector';
+import { connectorDefaults } from '../tools/connectorDefaults';
+import { ThemeService } from '../ThemeService';
 import { MIN_VERTICES, removeVertex } from '../model/polyline';
 import type { ShapeNode } from '../model/schema';
 import { lineEdit } from './lineEdit';
@@ -78,4 +83,77 @@ export function setLineCurved(node: ShapeNode, curved: boolean): void {
 /** Whether the run is currently drawn as a curve, so the control can say which. */
 export function isLineCurved(node: ShapeNode): boolean {
   return node.geometry.smooth === true;
+}
+
+/**
+ * Turn a line whose two ends now sit on two objects into a connector.
+ *
+ * The same rule the tool applies when a line is drawn between two objects
+ * (`lineBinding.promotion`), reached by dragging an end of an existing line
+ * instead. One transaction, so it is one undo step and nobody else ever sees
+ * both objects or neither. Returns the connector's id, for the selection.
+ */
+export function promoteLineToConnector(
+  node: ShapeNode,
+  ends: { from: ConnectorEnd; to: ConnectorEnd; a: Point; b: Point; routing: Routing }
+): string {
+  const id = nanoid();
+  const stroke = node.appearance?.stroke;
+  doc.transact(() => {
+    createNode(
+      connectorFromLine({
+        id,
+        ...ends,
+        endStart: node.geometry.endStart ?? 'none',
+        endEnd: node.geometry.endEnd ?? 'none',
+        stroke: {
+          color: stroke?.color ?? ThemeService.getDefaultStrokeColor(),
+          width: stroke?.width || 2,
+          dash: stroke?.dash,
+        },
+        avoid: connectorDefaults.getSnapshot().avoid,
+        label: node.text,
+      })
+    );
+    deleteNode(node.id);
+  });
+  return id;
+}
+
+/**
+ * A line's fields with its geometry changed and its box recomputed.
+ *
+ * Every change that alters what a line *draws* — its profile, its heads, their
+ * size — changes the extent of the drawing too: a wave stands off the run, a
+ * head reaches past the end. Writing the geometry alone leaves a box that
+ * marquee selection, culling and export framing read wrongly, so every such
+ * change goes through `lineNodeFromVertices`, as drawing and reshaping do.
+ */
+export function reshapedLine(node: ShapeNode, patch: Partial<ShapeNode['geometry']>) {
+  const vertices = worldVertices(node);
+  return lineNodeFromVertices(
+    vertices,
+    localBends(node, vertices.length),
+    { ...node.geometry, ...patch },
+    node.appearance?.stroke?.width || 2
+  );
+}
+
+/** Write a geometry change to a line, box included — see `reshapedLine`. */
+export function reshapeLine(node: ShapeNode, patch: Partial<ShapeNode['geometry']>): void {
+  updateNode(node.id, reshapedLine(node, patch));
+}
+
+/**
+ * Point the line the other way, in one step.
+ *
+ * The heads trade ends rather than the run reversing: the same picture with
+ * the direction turned round, which is what "swap" means in FigJam and Miro,
+ * and the line does not move under the pointer.
+ */
+export function swapLineEnds(node: ShapeNode): void {
+  reshapeLine(node, {
+    endStart: node.geometry.endEnd ?? 'none',
+    endEnd: node.geometry.endStart ?? 'none',
+  });
 }

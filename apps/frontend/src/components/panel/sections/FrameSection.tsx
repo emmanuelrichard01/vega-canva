@@ -40,6 +40,7 @@ import { EmojiPickerPopover } from '../../emoji/EmojiPickerPopover';
 import { useEmojiAutocomplete } from '../../emoji/useEmojiAutocomplete';
 import { cornerRadiiOf } from '../../../engine/model/cornerRadii';
 import { FramePresetIcon } from './framePresetIcons';
+import { SlideSection } from '../../slides/SlideSection';
 import './frameSection.css';
 
 const SAFE_EDGES = [
@@ -129,7 +130,7 @@ export const FrameSection: React.FC<FrameSectionProps> = ({
   const theme = shared((n) => (n.type === 'frame' ? frameThemeOf(n.appearance?.fill)?.id ?? 'custom' : 'custom'));
   const matched = presetMatching(node.width, node.height, node.preset);
 
-  return (
+  const frameSection = (
     <Section id="frame" title="Frame" meta={matched?.label}>
       <Row label="Icon" hint="An emoji before the frame's name, as a page has in Notion.">
         <div className="frame-icon-row">
@@ -437,6 +438,15 @@ export const FrameSection: React.FC<FrameSectionProps> = ({
         </PairRow>
       </Row>
     </Section>
+  );
+
+  // A top-level frame is a slide: its transition, skip, section and notes follow.
+  if (node.frameId) return frameSection;
+  return (
+    <>
+      {frameSection}
+      <SlideSection node={node} shared={shared} />
+    </>
   );
 };
 

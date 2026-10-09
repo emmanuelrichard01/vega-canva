@@ -22,6 +22,7 @@ const NAMES: Record<string, [string, string]> = {
   link: ['link', 'links'],
   audio: ['audio note', 'audio notes'],
   comment: ['comment', 'comments'],
+  icon: ['icon', 'icons'],
 };
 
 /**

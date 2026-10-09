@@ -1162,7 +1162,7 @@ functions and previews the result.
 **Twenty-five finished examples** — tracker, budget, invoice, savings plan,
 break-even, grade book, inventory, RACI, timetable, lab notebook and more —
 are one click away in the panel's gallery and in the dock's Table flyout, and
-four board templates are built around them. Most of them calculate, and their
+board templates are built around them. Most of them calculate, and their
 statuses are coloured by **colour rules** — a column, a condition like `Done`
 or `<0`, and a paint — so a cell recolours itself when its value changes.
 
@@ -1393,6 +1393,55 @@ the same at any input. The swatches are keyed by position, because a ramp is a
 list of slots and two slots holding one hex is a rendering question, not an
 identity one.
 
+### Waves 5 to 7: history, slides, templates and the rest
+
+The redesign waves added these surfaces. Names and paths are the ones to grep.
+
+- **Version history.** Working sessions, server autosaves and named versions
+  (`room_versions`, migration #5, `apps/server/src/routes/versions.ts`);
+  opened from the palette ("Version history") or an object's "Show history".
+- **Physics.** Forces, materials and the field art in `engine/physics/`, with
+  a safety suite for runaway simulations. Open: a `frictionless` material and a
+  `pinned` flag.
+- **Onboarding.** Welcome, the Get started checklist and the tour
+  (`components/onboarding/`, `engine/learn/`).
+- **Dock and panels.** Dock flyouts scale and centre on the dock and open on
+  click; collapsed panels become pills with a peek.
+- **Emoji.** Fluent Emoji (MIT) as SVG in `public/emoji`
+  (`engine/emoji/`, `components/emoji/`), with `:shortcode:` autocomplete.
+- **Stickies and frames.** Dog-ear, stamps, checklists; frame icons, themes,
+  size presets and slide fields.
+- **Data links.** A chart follows a table (`components/data/`) and can write a
+  dragged point back to the cell after a confirm.
+- **Share and presence.** Share copy that states what is enforced, follow
+  links, a presence roster, spotlight, and Shift+Alt+click ping.
+- **Media and sketch.** Media tools and share cards; sketch mode for the board
+  or per object.
+- **Cursors.** A cursor inventory, plus a rotation ring and a curved tangent
+  cursor (`engine/cursor/`).
+- **Lines.** One line/arrow tool with eight end styles, binding to connectors
+  and a movable label.
+- **Shadows and strokes.** Drop shadows with spread and fine stroke weights.
+- **Rail, menu and HUD.** A 32px contextual rail, a searchable right-click menu
+  with role variants, and one HUD system (`engine/ui/hud.ts`).
+- **Multi-selection.** Align to key object or frame, a live grid
+  (Alt+Shift+G), and booleans.
+- **Slides and presentation.** Frames are slides: slide view, presenter view,
+  transitions, laser, and PDF (`engine/slides/`, `components/slides/`).
+- **Export.** `nodesToSvg`, font embedding, tiled PNG past the canvas limit
+  (64 MP guard), ZIP batches, an Export panel section, and frame links
+  (`?frame=`).
+- **Templates.** About 53 templates in nine categories (systems, product,
+  diagrams, design, data, science, physics, slides, art) in
+  `engine/templates/catalogue/*.ts`, assembled by `templates.ts` with
+  `SHOWCASE` and `FIRST_BOARD`. `templates.test.ts` enforces text fit, overlap,
+  build time and links.
+- **Ink and performance.** Surface-aware ink for dark boards; `createNode` no
+  longer scans the document and derived patches are batched.
+- **Font picker.** Rebuilt in `components/fonts/`.
+
+Open items are in `.claude/redesign/HANDOFF-next-session.md` and `HANDOFF.md`.
+
 ### Design system — `index.css`
 
 Two token layers, and only two: **primitives** (raw values, no meaning) and
@@ -1427,11 +1476,12 @@ apps/
         diagram/     Mermaid in and out — flowchart, sequence and pie engines
         chart/       chart spec, one layout, the SVG painter, examples
         table/       table spec, edits, layout, SVG, CSV, examples
-        templates/   boards that start full, built from typed node inputs
+        templates/   boards that start full: catalogue/<set>.ts per category,
+                     assembled by templates.ts
         text/        layout, measurement, the highlight ribbon, demo copy,
                      and the second font path: glyph outlines for convert-to-path
         physics/     the simulation, force specs, shared in-flight state
-        history/     session timeline for Time Travel
+        history/     session timeline for Version history
         interaction/ snapping and guides, alt-duplicate, floating-panel
                      placement, and the transient stores (crop, path edit,
                      boolean preview) that must not reach the document
@@ -1439,7 +1489,9 @@ apps/
                      lessons (what a gesture does), and walkthroughs — the same
                      lessons performed a step at a time, advancing only on a
                      gesture observed in the document
-        cursor/      tool cursor modes, remote cursor rendering
+        cursor/      tool cursor modes, remote cursor rendering, the inventory
+        slides/      deck, layouts, themes and transitions for presentation
+        emoji/       Fluent emoji index, shortcodes, canvas and SVG drawing
       components/
         canvas/      renderers, node editor, shared transformer
         panel/       the Properties panel, including the chart and table sections
@@ -1458,7 +1510,7 @@ docs/                architecture notes, data model, PRD, build plan
 
 **Frontend** — React 19, Vite, react-konva, Yjs, Matter.js, zustand, rbush,
 perfect-freehand, polygon-clipping, fontkit, framer-motion, Vitest
-**Backend** — Node, Express, Hocuspocus, `ws`
+**Backend** — Node, Express, Hocuspocus, `ws`; version history routes in `routes/versions.ts`
 **Infrastructure** — PostgreSQL, MinIO, Redis (opt-in), Docker Compose
 
 ## Notes and known limits

@@ -4,6 +4,7 @@ import {
   deleteNode as writeDelete,
   undoManager,
   updateNode as writeUpdate,
+  type CreateNodeOptions,
   type NewNodeInput,
 } from '../document';
 
@@ -35,14 +36,16 @@ export class CreateNodeCommand extends BaseCommand {
   /** Populated by execute(), so callers can read the id the document assigned. */
   createdId: string | null = null;
   private node: NewNodeInput;
+  private options: CreateNodeOptions;
 
-  constructor(node: NewNodeInput) {
+  constructor(node: NewNodeInput, options: CreateNodeOptions = {}) {
     super();
     this.node = node;
+    this.options = options;
   }
 
   execute() {
-    this.createdId = writeCreate(this.node);
+    this.createdId = writeCreate(this.node, this.options);
   }
 }
 

@@ -67,7 +67,11 @@ import {
   Presentation,
   Frame as FrameIcon,
   LayoutGrid,
+  SquareMousePointer,
+  Crop,
 } from 'lucide-react';
+import { editor } from '../../engine/api/EditorAPI';
+import { canFrameSelection, frameSelection } from '../../engine/arrange/frameSelection';
 import type { AnyNode } from '../../engine/model/schema';
 import { isOpenShape } from '../../engine/model/schema';
 import { resolveAffordances } from '../../engine/selection/affordances';
@@ -106,6 +110,9 @@ import { notify } from '../../engine/ui/notices';
 import { requestPresentation, resizeFramesToFit } from '../canvas/useContentShortcuts';
 import { applyOrganiseStickies } from '../../engine/tools/organiseStickies';
 import type { FrameNode } from '../../engine/model/schema';
+import { roomId } from '../../engine/document';
+import { openSlideView } from '../slides/useSlides';
+import { frameLink } from '../export/frameLink';
 import { SHORTCUTS } from './shortcuts';
 import { requestObjectHistory } from '../../engine/history/objectHistory';
 
@@ -193,9 +200,19 @@ export interface CanvasMenuInput {
   allObjects: Record<string, AnyNode>;
   actions: CanvasContextMenuActions;
   canEdit: boolean;
+  /**
+   * Whether this person may leave comments. Defaults to `canEdit`; a
+   * commenter is the one role with comments and nothing else.
+   */
+  canComment?: boolean;
   style: StyleSnapshot | null;
   /** Whether this was opened at a spot on the board, which "here" refers to. */
   atPointer: boolean;
+}
+
+/** Ask the board to select these ids, as the rest of the app does. */
+function selectIds(ids: string[]): void {
+  window.dispatchEvent(new CustomEvent('requestSelectNodes', { detail: { ids } }));
 }
 
 const I = 15;
@@ -399,6 +416,7 @@ function linkEntries(node: LinkNode): MenuEntry[] {
 
 export function selectionMenu(input: CanvasMenuInput): MenuEntry[] {
   const { nodes, allObjects, actions: a, canEdit, style, atPointer } = input;
+  const canComment = input.canComment ?? canEdit;
   const ids = nodes.map((n) => n.id);
   const single = nodes.length === 1 ? nodes[0] : null;
   const offered = new Set(
@@ -416,7 +434,13 @@ export function selectionMenu(input: CanvasMenuInput): MenuEntry[] {
   const closedShapes = shapes?.every((n) => !isOpenShape(n.geometry.kind)) ? shapes : null;
   const openShapes = shapes?.every((n) => isOpenShape(n.geometry.kind)) ? shapes : null;
   const diagramParts = nodes.filter((n) => n.type === 'shape' || n.type === 'connector');
-  const isDiagram = nodes.some((n) => n.type === 'shape');
+  /**
+   * A diagram is boxes joined up, or several boxes: one rectangle on its own
+   * is a shape, and offering to rewrite it as Mermaid is noise at the top of
+   * its menu.
+   */
+  const shapeCount = nodes.filter((n) => n.type === 'shape').length;
+  const isDiagram = shapeCount > 1 || (shapeCount === 1 && diagramParts.length > 1);
   const dropped = nodes.length - diagramParts.length;
   const strokeWidth = single && 'appearance' in single ? single.appearance?.stroke?.width ?? 0 : 0;
 
@@ -557,6 +581,10 @@ export function selectionMenu(input: CanvasMenuInput): MenuEntry[] {
     : [];
 
   const frames = nodes.filter((n): n is FrameNode => n.type === 'frame');
+  const frame = single?.type === 'frame' ? (single as FrameNode) : null;
+  // Only built for a single frame, so the whole-board scan runs once per menu.
+  const frameContents = frame ? Object.values(allObjects).filter((n) => n.frameId === frame.id).map((n) => n.id) : [];
+  const clips = frame ? frame.clipContent !== false : false;
   const stickies = nodes.filter((n) => n.type === 'sticky');
   const content: MenuEntry[] = [
     // Presenting only reads the board, so viewers get it too.
@@ -567,6 +595,14 @@ export function selectionMenu(input: CanvasMenuInput): MenuEntry[] {
       icon: <Presentation size={I} />,
       shortcut: SHORTCUTS.present,
       onSelect: () => requestPresentation(frames[0].id),
+    },
+    // A link adds no access, so viewers can copy it too.
+    frame && {
+      kind: 'item',
+      id: 'frame-link',
+      label: 'Copy link to frame',
+      icon: <Link2 size={I} />,
+      onSelect: () => copyText(frameLink(window.location.origin, roomId, frame.id), 'the frame link'),
     },
     canEdit && frames.length > 0 && {
       kind: 'item',
@@ -580,6 +616,25 @@ export function selectionMenu(input: CanvasMenuInput): MenuEntry[] {
         }
       },
     },
+    frame && {
+      kind: 'item',
+      id: 'frame-contents',
+      label: 'Select contents',
+      icon: <SquareMousePointer size={I} />,
+      detail: frameContents.length === 0 ? undefined : `${frameContents.length} ${frameContents.length === 1 ? 'object' : 'objects'}`,
+      disabled: frameContents.length === 0,
+      disabledReason: 'This frame is empty',
+      onSelect: () => selectIds(frameContents),
+    },
+    canEdit && frame && {
+      kind: 'item',
+      id: 'frame-clip',
+      label: 'Clip content',
+      icon: <Crop size={I} />,
+      checked: clips,
+      keepOpen: true,
+      onSelect: () => editor.updateNode(frame.id, { clipContent: clips ? false : undefined }),
+    },
     canEdit && stickies.length > 1 && {
       kind: 'submenu',
       id: 'organise',
@@ -592,17 +647,21 @@ export function selectionMenu(input: CanvasMenuInput): MenuEntry[] {
     },
   ].filter(Boolean) as MenuEntry[];
 
-  const clipboard: MenuEntry = {
-    kind: 'strip',
-    id: 'clipboard',
-    label: 'Clipboard',
-    items: [
-      { id: 'cut', label: 'Cut', icon: <Scissors size={I} />, shortcut: SHORTCUTS.cut, disabled: !canEdit, onSelect: a.cut },
-      { id: 'copy', label: 'Copy', icon: <Copy size={I} />, shortcut: SHORTCUTS.copy, onSelect: a.copy },
-      { id: 'paste', label: atPointer ? 'Paste here' : 'Paste', icon: <ClipboardPaste size={I} />, shortcut: SHORTCUTS.paste, disabled: !canEdit, onSelect: a.paste },
-      { id: 'duplicate', label: 'Duplicate', icon: <CopyPlus size={I} />, shortcut: SHORTCUTS.duplicate, disabled: !canEdit, onSelect: a.duplicate },
-    ],
-  };
+  // Copy is all of the clipboard a viewer can use: one row, not a strip of
+  // three greyed tiles around it.
+  const clipboard: MenuEntry = !canEdit
+    ? { kind: 'item', id: 'copy', label: 'Copy', icon: <Copy size={I} />, shortcut: SHORTCUTS.copy, onSelect: a.copy }
+    : {
+        kind: 'strip',
+        id: 'clipboard',
+        label: 'Clipboard',
+        items: [
+          { id: 'cut', label: 'Cut', icon: <Scissors size={I} />, shortcut: SHORTCUTS.cut, onSelect: a.cut },
+          { id: 'copy', label: 'Copy', icon: <Copy size={I} />, shortcut: SHORTCUTS.copy, onSelect: a.copy },
+          { id: 'paste', label: atPointer ? 'Paste here' : 'Paste', icon: <ClipboardPaste size={I} />, shortcut: SHORTCUTS.paste, onSelect: a.paste },
+          { id: 'duplicate', label: 'Duplicate', icon: <CopyPlus size={I} />, shortcut: SHORTCUTS.duplicate, onSelect: a.duplicate },
+        ],
+      };
 
   const styleRows: MenuEntry[] = canEdit
     ? [
@@ -666,6 +725,17 @@ export function selectionMenu(input: CanvasMenuInput): MenuEntry[] {
         offered.has('ungroup')
           ? { kind: 'item', id: 'ungroup', label: 'Ungroup', icon: <Ungroup size={I} />, shortcut: SHORTCUTS.ungroup, onSelect: a.ungroup }
           : offered.has('group') && { kind: 'item', id: 'group', label: 'Group', icon: <Group size={I} />, shortcut: SHORTCUTS.group, onSelect: a.group },
+        nodes.length > 1 && canFrameSelection(nodes) && {
+          kind: 'item',
+          id: 'frame-selection',
+          label: 'Frame selection',
+          icon: <FrameIcon size={I} />,
+          shortcut: SHORTCUTS.frameSelection,
+          onSelect: () => {
+            const id = frameSelection(nodes, allObjects);
+            if (id) selectIds([id]);
+          },
+        },
         offered.has('lock') && {
           kind: 'item',
           id: 'lock',
@@ -729,7 +799,7 @@ export function selectionMenu(input: CanvasMenuInput): MenuEntry[] {
       ].filter(Boolean) as MenuEntry[],
     },
     { kind: 'item', id: 'zoom-selection', label: 'Zoom to selection', icon: <Focus size={I} />, shortcut: SHORTCUTS.zoomSelection, onSelect: a.zoomToSelection },
-    single && { kind: 'item', id: 'comment', label: 'Comment', icon: <MessageSquarePlus size={I} />, onSelect: a.comment },
+    single && canComment && { kind: 'item', id: 'comment', label: 'Comment', icon: <MessageSquarePlus size={I} />, onSelect: a.comment },
     single && { kind: 'item', id: 'history', label: 'Show history', icon: <History size={I} />, onSelect: () => requestObjectHistory(single.id) },
   ].filter(Boolean) as MenuEntry[];
 
@@ -802,9 +872,15 @@ export function selectionMenu(input: CanvasMenuInput): MenuEntry[] {
 
 export function boardMenu(input: CanvasMenuInput): MenuEntry[] {
   const { actions: a, canEdit, atPointer, allObjects } = input;
+  const canComment = input.canComment ?? canEdit;
   const empty = Object.keys(allObjects).length === 0;
   const here = atPointer ? ' here' : '';
 
+  /*
+   * An empty board's menu is about adding. Select all, zoom to fit, copy and
+   * export have nothing to act on there, so they are left out rather than
+   * shown four times over as disabled rows giving the same reason.
+   */
   return tidy([
     canEdit && { kind: 'heading', id: 'add-heading', label: atPointer ? 'Add here' : 'Add' },
     canEdit && {
@@ -818,6 +894,14 @@ export function boardMenu(input: CanvasMenuInput): MenuEntry[] {
         { id: 'link', label: `Link${here}`, icon: <Link2 size={I} />, onSelect: a.addLink },
         { id: 'comment', label: `Comment${here}`, icon: <MessageSquarePlus size={I} />, onSelect: a.addComment },
       ],
+    },
+    // A commenter's one way to add something.
+    !canEdit && canComment && {
+      kind: 'item',
+      id: 'comment',
+      label: `Comment${here}`,
+      icon: <MessageSquarePlus size={I} />,
+      onSelect: a.addComment,
     },
     canEdit && {
       kind: 'submenu',
@@ -842,28 +926,26 @@ export function boardMenu(input: CanvasMenuInput): MenuEntry[] {
       shortcut: SHORTCUTS.paste,
       onSelect: a.paste,
     },
-    {
+    !empty && {
       kind: 'item',
       id: 'select-all',
       label: 'Select all',
       icon: <MousePointerSquareDashed size={I} />,
       shortcut: SHORTCUTS.selectAll,
-      disabled: empty,
       onSelect: a.selectAll,
     },
     { kind: 'separator', id: 'sep-edit' },
-    {
+    !empty && {
       kind: 'item',
       id: 'zoom-fit',
       label: 'Zoom to fit',
       icon: <Maximize size={I} />,
       shortcut: SHORTCUTS.zoomFit,
-      disabled: empty,
       onSelect: a.zoomToFit,
     },
     { kind: 'item', id: 'zoom-reset', label: 'Zoom to 100%', icon: <Focus size={I} />, shortcut: SHORTCUTS.zoomReset, onSelect: a.zoomReset },
     { kind: 'separator', id: 'sep-view' },
-    {
+    !empty && {
       kind: 'item',
       id: 'present',
       label: 'Present',
@@ -873,25 +955,33 @@ export function boardMenu(input: CanvasMenuInput): MenuEntry[] {
       disabledReason: 'Add a frame to present',
       onSelect: () => requestPresentation(),
     },
+    !empty && {
+      kind: 'item',
+      id: 'slide-view',
+      label: 'Slide view',
+      icon: <LayoutGrid size={I} />,
+      shortcut: SHORTCUTS.slideView,
+      disabled: !Object.values(allObjects).some((n) => n.type === 'frame'),
+      disabledReason: 'Add a frame to see slides',
+      onSelect: () => openSlideView(),
+    },
     canEdit && { kind: 'item', id: 'csv-table', label: 'Import CSV as table…', icon: <Table2 size={I} />, onSelect: a.importCsvTable },
-    {
+    !empty && {
       kind: 'submenu',
       id: 'copy-board',
       label: 'Copy board as',
       icon: <Copy size={I} />,
-      disabled: empty,
       entries: [
         { kind: 'item', id: 'png', label: 'PNG image', icon: <ImageDown size={I} />, onSelect: () => a.copyPng([]) },
         { kind: 'item', id: 'svg', label: 'SVG', icon: <FileCode2 size={I} />, onSelect: () => a.copySvg([]) },
       ],
     },
-    {
+    !empty && {
       kind: 'item',
       id: 'export',
       label: 'Export board…',
       icon: <Download size={I} />,
       shortcut: SHORTCUTS.export,
-      disabled: empty,
       onSelect: () => a.exportSelection([]),
     },
   ]);

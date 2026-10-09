@@ -37,6 +37,7 @@ objectRegistry.register({
     supportsStroke: true,
     supportsOpacity: true,
     supportsShadow: true,
+    supportsShadowSpread: true,
   },
   defaultProperties: () => ({}),
 });
@@ -119,6 +120,7 @@ objectRegistry.register({
     supportsStroke: true,
     supportsOpacity: true,
     supportsShadow: true,
+    supportsShadowSpread: true,
   },
   defaultProperties: () => ({ width: 1, height: 1 }),
 });

@@ -10,6 +10,25 @@
   --flyout-w-lg: 480px;
 }
 
+/* ------------------------------------------------------------ menu layer */
+
+/* The dock is chrome (`--z-chrome`), and every menu it opens is drawn inside
+   it, so without this a menu could rise no higher than the dock: the object
+   rail (`.ctx-toolbar`), the get-started card and a toast all paint over it,
+   and the Shapes library -- tall, and opened over the middle of the board,
+   where a just-drawn shape leaves the rail -- had its tiles covered and its
+   clicks taken. While a menu is open the dock stands on the menu layer, the
+   one the board's context menu uses; the two never coexist, since a press
+   anywhere closes both. The focus-mode dock is wrapped in a positioned layer
+   of its own, which has to rise with it. */
+.tool-dock[data-menu-open] {
+  z-index: var(--z-context-menu);
+}
+
+.focus-dock:has(.tool-dock[data-menu-open]) {
+  z-index: var(--z-context-menu);
+}
+
 /* A panel takes its step and keeps it, whatever it is showing: a seat menu's
    row and the sheet that opens above it share the width, so More grows the
    panel upward only. Never wider than the window allows. */
@@ -31,15 +50,14 @@
   max-width: none;
 }
 
-/* A seat menu's row runs the panel's width: the choices from the left inset,
-   More and the padlock against the right one, rather than a short row
-   floating in the middle of a wider panel. */
-.tool-dock .dock-flyout__panel[data-size] .seat-menu__row {
-  align-self: stretch;
-}
-
-.tool-dock .dock-flyout__panel[data-size] .seat-menu__row > .seat-menu__rule:nth-last-child(3) {
-  margin-left: auto;
+/* A seat menu with only its row up hugs the row: the choices, then More and
+   the padlock at one fixed gap after them. Held to the md step, the short
+   row of Chart, Table or Grid left a wide hole between its last choice and
+   the padlock pushed to the far edge. Once the sheet opens, the panel takes
+   its step and the row stays centred under the sheet, where it was. */
+.tool-dock .dock-flyout__panel[data-size]:has(> .seat-menu):not(:has(.seat-menu__sheet)) {
+  width: max-content;
+  max-width: calc(100vw - 2 * var(--gutter));
 }
 
 /* The frame sizes' three columns share the md width rather than holding a
@@ -112,13 +130,19 @@
   position: relative;
   display: flex;
   justify-content: center;
-  width: 36px;
+  width: var(--tray-tool-w, 36px);
   height: 66px;
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
   background: none;
   cursor: pointer;
+}
+
+/* The pad is a square of paper, wider than a pen: its own slot, from
+   `trayLayout`, so its sheets and their lift stay inside it. */
+.dock-tray__inner[data-mode='art'] .dock-tray__tool[data-tool='sticky'] {
+  width: var(--tray-sticky-w);
 }
 
 /* Resting, sunk 12px below the rack's top edge; the lip hides the rest. */
@@ -478,26 +502,23 @@ body:has(.dock-tray__inner[data-mode='glyph']) {
 
 /* --------------------------------------------------------- receding dock */
 
-/* While a stroke or a drag is under way on the board, the dock stands back.
-   The delay keeps a click from flashing it; the return is immediate. */
+/* While a stroke or a drag is under way on the board, the dock stands back by
+   fading, in place. The delay keeps a click from flashing it; the return is
+   immediate. */
 .tool-dock[data-receding] {
   opacity: 0.32;
-  transform: translateY(10px);
   pointer-events: none;
-  transition:
-    opacity 260ms var(--ease-settle, cubic-bezier(0.16, 1, 0.3, 1)) 180ms,
-    transform 260ms var(--ease-settle, cubic-bezier(0.16, 1, 0.3, 1)) 180ms;
+  transition: opacity 260ms var(--ease-settle, cubic-bezier(0.16, 1, 0.3, 1)) 180ms;
 }
 
+/* It fades, and stays where it is: a dock that also dropped away moved the
+   seats out from under the pointer for a gesture that never asked it to. */
 .tool-dock:not([data-receding]):not([data-shifted]) {
-  transition:
-    opacity 160ms var(--ease-settle, cubic-bezier(0.16, 1, 0.3, 1)),
-    transform 160ms var(--ease-settle, cubic-bezier(0.16, 1, 0.3, 1));
+  transition: opacity 160ms var(--ease-settle, cubic-bezier(0.16, 1, 0.3, 1));
 }
 
 @media (prefers-reduced-motion: reduce) {
   .tool-dock[data-receding] {
-    transform: none;
     transition: opacity 0s linear 180ms;
   }
 }

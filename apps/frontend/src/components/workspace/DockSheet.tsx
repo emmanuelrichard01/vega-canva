@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
+import { sheetGrid, type SheetLayout } from '../dock/flyoutScale';
 
 /**
  * The sheet a dock seat opens: every choice for the next gesture, on one
@@ -58,7 +59,9 @@ interface Props<T extends string> {
   value: T | null;
   onPick: (id: T) => void;
   variant: 'icon' | 'card';
-  columns: number;
+  /** The tile grid, from the flyout scale: see `SHEET_LAYOUT`. */
+  layout: SheetLayout;
+  /** The sheet's width: the panel's step less its insets. */
   width: number;
   /** A fixed body height, which a searchable sheet needs. Omit to show all. */
   height?: number;
@@ -85,7 +88,7 @@ export function DockSheet<T extends string>({
   value,
   onPick,
   variant,
-  columns,
+  layout,
   width,
   height,
   searchPlaceholder,
@@ -179,7 +182,17 @@ export function DockSheet<T extends string>({
     <div
       className="dock-sheet"
       data-variant={variant}
-      style={{ width, ['--sheet-cols' as string]: String(columns) }}
+      style={
+        {
+          width,
+          '--sheet-cols': String(layout.cols),
+          '--sheet-tile': `${layout.tile}px`,
+          '--sheet-gap': `${layout.gap}px`,
+          '--sheet-grid': `${sheetGrid(layout)}px`,
+          '--sheet-pic-w': `${layout.pic.width}px`,
+          '--sheet-pic-h': `${layout.pic.height}px`,
+        } as React.CSSProperties
+      }
     >
       {searchPlaceholder && (
         <label className="dock-sheet__search">

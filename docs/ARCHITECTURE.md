@@ -72,6 +72,25 @@ of their decisions are *scale-driven* (skip at our size) versus
 - **Persistence** — A periodic compacted snapshot is saved to **PostgreSQL** as the canonical source of truth.
 - **Media store** — **MinIO (S3 Object Storage)**. The CRDT document only holds a URL reference, keeping the sync loop incredibly fast while binary media is piped natively to the cloud.
 
+### Added in redesign waves 5 to 7
+
+- **History.** Persistence now keeps `room_versions` (autosaved sessions plus
+  named versions) beside `room_updates`; the client's Version history panel
+  scrubs the log and restores a version.
+- **Slides.** A frame is a slide. `engine/slides/` (deck, layouts, themes,
+  transitions) is pure; `components/slides/` hosts the slide view, the presenter
+  view (its own window) and the laser. Presentation and PDF export read the
+  same deck model.
+- **Export.** `nodesToSvg` is the single node-to-SVG path, shared by SVG/PDF
+  export and by the home page's board covers (`components/home/boardSvg.ts`).
+  Large PNGs are drawn in tiles with a 64 MP guard.
+- **Templates.** `engine/templates/catalogue/<set>.ts` (nine categories, about
+  53 templates) assembled by `templates.ts`; one validity suite checks them all.
+- **HUD.** In-canvas readouts go through `engine/ui/hud.ts` and one `HudLayer`
+  rather than each tool drawing its own label.
+- **Performance.** `createNode` no longer scans the whole document and derived
+  patches are batched.
+
 ### The pointer is drawn by the operating system
 
 The cursor is worth a note here because the obvious implementation is the wrong

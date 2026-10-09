@@ -62,8 +62,8 @@ export const THEME_LABELS: Record<StickyTheme, string> = {
 };
 
 export const STICKY_PADDING = 18;
-/** A note is paper, not a chip of chrome: a soft corner, not a pill. */
-export const STICKY_RADIUS = 6;
+/** A note is cut paper, not a chip of chrome: the corners are barely eased. */
+export const STICKY_RADIUS = 3;
 
 function hexToRgb(hex: string) {
   const clean = hex.replace('#', '');
@@ -129,9 +129,18 @@ export interface Paper {
   bg: string;
   /** A lighter tone of the paper for the top of its gradient. */
   sheen: string;
+  /** The bottom of the gradient: a breath darker, as a sheet bowing off the board is. */
+  foot: string;
   ink: string;
   secondaryInk: string;
   edge: string;
+  /**
+   * The folded corner's underside, at the tip, where it catches the light.
+   * Lighter than the face: the back of a turned corner faces up into the light.
+   */
+  back: string;
+  /** The same underside at the crease, where the paper turns away from the light. */
+  crease: string;
 }
 
 const NIGHT = '#18181B';
@@ -145,15 +154,87 @@ export function paperOf(theme: StickyTheme, darkBoard: boolean): Paper {
   const base = THEMES[theme] ?? THEMES.yellow;
   const bg = !darkBoard ? base.bg : theme === 'dark' ? '#363C48' : mixHex(base.bg, NIGHT, 0.1);
   const ink = inkFor(bg, base.text);
+  const graphite = theme === 'dark';
   const paper: Paper = {
     bg,
-    sheen: mixHex(bg, '#FFFFFF', theme === 'dark' ? 0.05 : 0.35),
+    sheen: mixHex(bg, '#FFFFFF', graphite ? 0.05 : 0.35),
+    foot: mixHex(bg, '#000000', graphite ? 0.06 : 0.03),
     ink,
     secondaryInk: secondaryInkFor(bg, ink),
-    edge: !darkBoard ? base.edge : theme === 'dark' ? '#4A5160' : mixHex(bg, ink, 0.12),
+    edge: !darkBoard ? base.edge : graphite ? '#4A5160' : mixHex(bg, ink, 0.12),
+    // White paper on a light board has no lighter tone to turn to, so its
+    // underside is cooled a step instead; graphite lifts only a little, or the corner glows.
+    back: theme === 'white' && !darkBoard ? mixHex(bg, '#E9ECF1', 0.6) : mixHex(bg, '#FFFFFF', graphite ? 0.1 : darkBoard ? 0.3 : 0.5),
+    crease: mixHex(bg, graphite ? '#000000' : ink, graphite ? 0.22 : 0.16),
   };
   cache.set(key, paper);
   return paper;
+}
+
+/** A gradient as `[offset, colour]` stops, for Konva and for SVG alike. */
+export type Stops = ReadonlyArray<readonly [number, string]>;
+
+/** The face, top to bottom: the sheen, the paper, and the faint darkening at its foot. */
+export function faceStops(paper: Paper): Stops {
+  return [
+    [0, paper.sheen],
+    [0.38, paper.bg],
+    [1, paper.foot],
+  ];
+}
+
+/** The turned corner, crease to tip: shaded where it bends, lit where it lies open. */
+export function flapStops(paper: Paper): Stops {
+  return [
+    [0, paper.crease],
+    [0.28, mixHex(paper.crease, paper.back, 0.7)],
+    [1, paper.back],
+  ];
+}
+
+/** One canvas-style shadow: an offset, a blur (Konva's, about twice an SVG deviation) and an opacity. */
+export interface PaperShadow {
+  offsetY: number;
+  blur: number;
+  opacity: number;
+}
+
+export interface PaperShadows {
+  /** Tight and dark, where the sheet meets the board. */
+  contact: PaperShadow;
+  /** Wide and faint, the light the sheet blocks. */
+  ambient: PaperShadow;
+  /** Under the folded corner, on the sheet. */
+  flap: PaperShadow & { offsetX: number };
+}
+
+/**
+ * The shadow a note casts, at rest and lifted.
+ *
+ * Two layers, as paper on a desk has: a contact line that keeps the sheet on
+ * the board and an ambient pool that gives it weight. Lifting trades one for
+ * the other: the contact softens away and the pool widens and falls further,
+ * which is what a sheet coming off the surface does.
+ *
+ * On a dark board black at the light board's opacity disappears into the
+ * board, so the same shapes are drawn at roughly three times the strength:
+ * the separation reads the same, it just costs more alpha to get there. The
+ * flap's shadow falls on the sheet, not the board, so it keeps one strength.
+ */
+export function paperShadows(darkBoard: boolean, lifted: boolean, fold: number): PaperShadows {
+  const k = darkBoard ? 3 : 1;
+  const cap = (v: number) => Math.min(0.85, v * k);
+  return {
+    contact: lifted
+      ? { offsetY: 1.5, blur: 4, opacity: cap(0.06) }
+      : { offsetY: 1, blur: 2.5, opacity: cap(0.14) },
+    ambient: lifted
+      ? { offsetY: 12, blur: 28, opacity: cap(0.15) }
+      : { offsetY: 5, blur: 14, opacity: cap(0.1) },
+    flap: lifted
+      ? { offsetX: -fold * 0.1, offsetY: -fold * 0.02, blur: Math.max(3, fold * 0.42), opacity: 0.26 }
+      : { offsetX: -fold * 0.05, offsetY: 0, blur: Math.max(2, fold * 0.24), opacity: 0.2 },
+  };
 }
 
 /**

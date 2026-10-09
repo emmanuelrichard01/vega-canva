@@ -18,7 +18,7 @@ import { createNode, deleteNode, updateNode } from './mutations';
 import { doc } from './doc';
 import { useStore } from '../../hooks/useStore';
 import { compareStacking } from '../model/stacking';
-import { booleanPaths, BOOLEAN_OPS, type BooleanOp, type BooleanOperand } from '../model/pathBoolean';
+import { booleanPaths, type BooleanOp, type BooleanOperand } from '../model/pathBoolean';
 import { mapPath, reframePath, type ContourGeometry } from '../model/pathGeometry';
 import { shapeToPath } from '../model/shapeToPath';
 import { outlineText } from '../text/textOutline';
@@ -71,11 +71,8 @@ function nodeToWorld(node: AnyNode): (p: Point) => Point {
  *
  * ## Rotation and scale
  *
- * They are applied, through `mapPath`. This used to refuse a rotated or scaled
- * operand outright, which meant a boolean could not be asked of two shapes if
- * one of them had been turned a few degrees — a restriction with no equivalent
- * in any tool anybody compares this to, and one that had nothing to do with the
- * clipper. A cubic is affine-invariant, so putting its four control points
+ * They are applied, through `mapPath`, so a turned or scaled operand combines
+ * as drawn. A cubic is affine-invariant, so putting its four control points
  * through the transform gives exactly the curve on the screen: no flattening,
  * no tolerance, nothing lost.
  */
@@ -115,13 +112,10 @@ function inZOrder(ids: readonly string[]): AnyNode[] {
 }
 
 /**
- * Why a combine cannot be done, in a sentence fit to show someone.
- *
- * Every one of these used to be the same thing: nothing happening. The button
- * ran, `applyBoolean` returned null, and the caller's `if (id)` quietly did
- * not fire — so intersecting two shapes that do not touch, and clicking with a
- * locked object in the selection, and asking the clipper something it could not
- * resolve all looked identical from the outside, which is to say broken.
+ * Why a combine cannot be done, in a sentence fit to show someone: shapes that
+ * do not touch, a locked object in the selection, and a result the clipper
+ * could not resolve each get their own, so none of them looks like a button
+ * that did nothing.
  */
 export type BooleanRefusal = string;
 
@@ -153,15 +147,10 @@ export function previewBoolean(
   /**
    * Which shape leads, per operation.
    *
-   * For `subtract` it decides what survives, and the answer this had was
-   * backwards: it kept the *front* object and cut the ones behind out of it,
-   * while its own button said "subtract front from back" and while Illustrator,
-   * Figma and every other tool remove the front shapes from the back one. The
-   * bottom-most leads now, so the label and the behaviour and the rest of the
-   * world finally agree.
-   *
-   * The others are order-independent, and take the topmost so the result wears
-   * the paint you were looking at.
+   * For `subtract` it decides what survives: the bottom-most leads and the
+   * front shapes are cut out of it, as the button says and as Illustrator and
+   * Figma do. The others are order-independent and take the topmost, so the
+   * result wears the paint you were looking at.
    */
   const ordered = op === 'subtract' ? [...nodes].reverse() : nodes;
 
@@ -184,43 +173,6 @@ export function previewBoolean(
 export type BooleanPlan = ReturnType<typeof previewBoolean>;
 
 /**
- * All four answers for one selection, memoised on the selection's own geometry.
- *
- * ## Why the cache is here and not a `useMemo`
- *
- * The toolbar re-renders whenever the pointer crosses one of its buttons, and
- * the block that draws the combines sits behind `if (isBulk)` — so a hook there
- * would be a conditional hook, and without one every hover would clip four sets
- * of polygons again. One entry is enough: there is one contextual rail, and it
- * asks about one selection at a time.
- *
- * Keyed on what actually changes the answer. Selection ids alone would miss a
- * shape being dragged out of the overlap; the whole node would never match,
- * because the store hands back a new object on every document change anywhere.
- */
-let planned: { key: string; plans: Record<BooleanOp, BooleanPlan> } | null = null;
-
-export function booleanPlans(ids: readonly string[]): Record<BooleanOp, BooleanPlan> {
-  const objects = useStore.getState().objects;
-  const key = ids
-    .map((id) => {
-      const n = objects[id];
-      return n
-        ? `${id}:${n.x},${n.y},${n.width},${n.height},${n.rotation},${n.scaleX},${n.scaleY},${n.zIndex},${n.locked}`
-        : id;
-    })
-    .join('|');
-
-  if (planned?.key === key) return planned.plans;
-
-  const plans = Object.fromEntries(
-    BOOLEAN_OPS.map((op) => [op, previewBoolean(op, ids)])
-  ) as Record<BooleanOp, BooleanPlan>;
-  planned = { key, plans };
-  return plans;
-}
-
-/**
  * Combine two or more objects, replacing them with the result.
  *
  * Returns the new node's id, or the reason it declined. Nothing is deleted
@@ -238,13 +190,9 @@ export function applyBoolean(op: BooleanOp, ids: readonly string[]): string | nu
   const framed = reframePath(plan.geometry);
 
   /**
-   * One transaction, so it is one undo.
-   *
-   * `createNode` opens its own and `deleteNode` opens none, so a union of three
-   * shapes was a create plus three deletes — four separate entries, and undoing
-   * it took four presses, three of which showed a board with the operands half
-   * restored underneath the result. This module's own header has claimed since
-   * it was written that "a boolean is one undo step".
+   * One transaction, so it is one undo: the create and every delete land
+   * together, and undoing never shows the operands half restored under the
+   * result.
    */
   let id = '';
   doc.transact(() => {

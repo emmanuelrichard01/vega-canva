@@ -172,6 +172,118 @@ export function typeahead(entries: readonly MenuEntry[], from: number, buffer: s
   return -1;
 }
 
+// ------------------------------------------------------------------ filter
+
+/** Lower case, accents and ellipses gone, so "resume" finds "Résumé…". */
+function fold(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/…/g, '')
+    .toLowerCase();
+}
+
+const wordsOf = (text: string) => fold(text).split(/[^a-z0-9%]+/).filter(Boolean);
+
+/**
+ * How well a row answers a typed query: 0 is best, `null` is no match.
+ *
+ * 0. The label starts with the whole query ("bring" → Bring to front).
+ * 1. Every typed word starts a word of the label ("to fr" → Bring to front).
+ * 2. The label contains the query anywhere ("ont" → Bring to front).
+ * 3. Every typed word starts a word of the label or of the submenu it lives
+ *    in ("order back" → Send to back, under Order).
+ */
+export function matchScore(label: string, path: readonly string[], query: string): number | null {
+  const q = fold(query).trim();
+  if (!q) return null;
+  const name = fold(label);
+  if (name.startsWith(q)) return 0;
+  const tokens = q.split(/\s+/);
+  const own = wordsOf(label);
+  const prefixes = (words: string[]) => tokens.every((t) => words.some((w) => w.startsWith(t)));
+  if (prefixes(own)) return 1;
+  if (name.includes(q)) return 2;
+  if (path.length && prefixes([...own, ...path.flatMap(wordsOf)])) return 3;
+  return null;
+}
+
+/**
+ * The menu as one flat list of what the query reaches, best match first.
+ *
+ * Typing into a long menu searches all of it, the way Figma's quick actions
+ * do, rather than only the top level the way native type-ahead does: "front"
+ * finds Bring to front inside Order without opening Order. Each hit carries
+ * where it lives on its second line, so two rows with the same name in two
+ * submenus can be told apart. Strip tiles become rows, because a row of icons
+ * is no answer to a typed word. A picker submenu stays a submenu: what it
+ * offers is chosen by picture, so it is found by its own name.
+ *
+ * Disabled hits stay, still carrying their reason, after the ones that work.
+ */
+export function filterMenu(entries: readonly MenuEntry[], query: string): MenuEntry[] {
+  const hits: Array<{ entry: MenuEntry; score: number; order: number }> = [];
+  const add = (entry: MenuEntry, score: number) => hits.push({ entry, score, order: hits.length });
+  const where = (path: readonly string[], own?: string) =>
+    [path.join(' › '), own].filter(Boolean).join(' · ') || undefined;
+
+  const walk = (list: readonly MenuEntry[], path: readonly string[], idPrefix: string) => {
+    for (const entry of list) {
+      if (entry.kind === 'separator' || entry.kind === 'heading') continue;
+      if (entry.kind === 'strip') {
+        for (const tile of entry.items) {
+          const score = matchScore(tile.label, path, query);
+          if (score === null) continue;
+          add(
+            {
+              kind: 'item',
+              id: `${idPrefix}${entry.id}/${tile.id}`,
+              label: tile.label,
+              icon: tile.icon,
+              shortcut: tile.shortcut,
+              disabled: tile.disabled,
+              detail: where(path),
+              onSelect: tile.onSelect,
+            },
+            score
+          );
+        }
+        continue;
+      }
+      if (entry.kind === 'submenu' && entry.entries && !entry.panel) {
+        if (entry.disabled) continue;
+        walk(entry.entries, [...path, entry.label], `${idPrefix}${entry.id}/`);
+        continue;
+      }
+      const score = matchScore(entry.label, path, query);
+      if (score === null) continue;
+      add(
+        entry.kind === 'item'
+          ? { ...entry, id: `${idPrefix}${entry.id}`, detail: where(path, entry.detail) }
+          : { ...entry, id: `${idPrefix}${entry.id}` },
+        score
+      );
+    }
+  };
+  walk(entries, [], '');
+
+  const off = (e: MenuEntry) => (isNavigable(e) ? 0 : 1);
+  return hits
+    .sort((a, b) => off(a.entry) - off(b.entry) || a.score - b.score || a.order - b.order)
+    .map((h) => h.entry);
+}
+
+/** How many commands a menu reaches, submenus included: whether it is long enough to search. */
+export function countCommands(entries: readonly MenuEntry[]): number {
+  let n = 0;
+  for (const entry of entries) {
+    if (entry.kind === 'item') n += 1;
+    else if (entry.kind === 'strip') n += entry.items.length;
+    else if (entry.kind === 'submenu') n += entry.entries && !entry.panel ? countCommands(entry.entries) : 1;
+  }
+  return n;
+}
+
 export interface Size {
   width: number;
   height: number;

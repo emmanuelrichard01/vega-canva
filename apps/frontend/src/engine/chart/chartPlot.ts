@@ -86,7 +86,7 @@ export function samplePlot(
     prevY = y;
   }
 
-  return breakDiscontinuities(out);
+  return breakDiscontinuities(out, f);
 }
 
 /**
@@ -126,7 +126,7 @@ function subdivide(
  * finite samples, and nothing about either sample says "undefined". The tell is
  * the *size of the step* against its neighbours.
  */
-function breakDiscontinuities(points: PlotSample[]): PlotSample[] {
+function breakDiscontinuities(points: PlotSample[], f: (x: number) => number): PlotSample[] {
   const steps: number[] = [];
   for (let i = 1; i < points.length; i += 1) {
     const a = points[i - 1].y;
@@ -145,13 +145,44 @@ function breakDiscontinuities(points: PlotSample[]): PlotSample[] {
   for (let i = 1; i < points.length; i += 1) {
     const prev = points[i - 1];
     const cur = points[i];
-    if (prev.y !== null && cur.y !== null && Math.abs(cur.y - prev.y) > limit) {
+    if (prev.y !== null && cur.y !== null && Math.abs(cur.y - prev.y) > limit && isJump(f, prev.x, prev.y, cur.x, cur.y)) {
       // A hole between them, so the run is cut rather than joined across.
       out.push({ x: (prev.x + cur.x) / 2, y: null });
     }
     out.push(cur);
   }
   return out;
+}
+
+/**
+ * Whether a large step between two samples is a real discontinuity.
+ *
+ * A step that is big next to its neighbours is also what a steep start
+ * (`38x/(0.23+x)` from 0) or a fast sinusoid at a low sample count looks like,
+ * and cutting those drops the very part of the curve worth seeing. A jump keeps
+ * its height however closely it is looked at; a steep slope does not. So the
+ * interval is bisected toward its steeper half, and only a step that is still
+ * at least half its original height after many halvings is a jump.
+ */
+function isJump(f: (x: number) => number, x0: number, y0: number, x1: number, y1: number): boolean {
+  const initial = Math.abs(y1 - y0);
+  let a = x0;
+  let ya = y0;
+  let b = x1;
+  let yb = y1;
+  for (let i = 0; i < 30; i += 1) {
+    const m = (a + b) / 2;
+    const ym = f(m);
+    if (!Number.isFinite(ym)) return true;
+    if (Math.abs(ym - ya) >= Math.abs(yb - ym)) {
+      b = m;
+      yb = ym;
+    } else {
+      a = m;
+      ya = ym;
+    }
+  }
+  return Math.abs(yb - ya) >= initial * 0.5;
 }
 
 export interface PlotCurve {

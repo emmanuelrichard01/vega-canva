@@ -50,6 +50,8 @@ export function useFillProps(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patternKey]);
 
+  // An explicit empty fill list is "no fill", not the fallback colour.
+  if (appearance?.fill?.length === 0) return { fill: 'transparent' };
   if (direct) return direct;
 
   if (!pattern) {

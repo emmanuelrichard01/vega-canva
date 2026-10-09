@@ -7,6 +7,8 @@ import { ThemeService } from '../ThemeService';
 import { DEFAULT_TYPOGRAPHY } from '../model/schema';
 import { requestEditOnMount } from '../interaction/pendingEdit';
 import { gridSnap } from '../interaction/gridSnap';
+import { typographyForNextText } from './TextToolStyles';
+import { hud } from '../ui/hud';
 
 /** Below this, a gesture was a click asking for an auto-width caret. */
 const MIN_DRAG = 8;
@@ -30,6 +32,14 @@ const MIN_DRAG = 8;
  */
 const SEED_WIDTH = 150;
 const SEED_HEIGHT = 40;
+
+/**
+ * The seed width for a size: room for the placeholder at that size, so a
+ * Title's hint is not clipped in a box measured for Body.
+ */
+export function seedWidth(fontSize: number): number {
+  return Math.max(SEED_WIDTH, Math.ceil(fontSize * 6.25));
+}
 
 /**
  * Placing text.
@@ -90,9 +100,15 @@ export class TextTool implements Tool {
     if (!this.isDragging) return;
     this.isDragging = false;
     ctx.setOverlayState?.({ active: false });
+    hud.hide('text');
 
     const box = this.box();
     const dragged = box.width > MIN_DRAG && box.height > MIN_DRAG;
+
+    const typography = typographyForNextText({
+      ...DEFAULT_TYPOGRAPHY,
+      color: ThemeService.getDefaultTextColor(),
+    });
 
     const id = nanoid();
     // Claimed before the node exists — see the note above.
@@ -105,17 +121,17 @@ export class TextTool implements Tool {
       y: dragged ? box.y : this.startY,
       // An auto-width box is seeded narrow and takes its real width from the
       // first thing typed into it; giving it 240 up front would make an empty
-      // caret sit in the middle of a box that is not there.
-      width: dragged ? box.width : SEED_WIDTH,
-      height: dragged ? box.height : SEED_HEIGHT,
+      // caret sit in the middle of a box that is not there. Its height is one
+      // line of the style it is made in, so a Title's caret is a Title's
+      // height from the first frame rather than growing on the first key.
+      width: dragged ? box.width : seedWidth(typography.fontSize),
+      height: dragged ? box.height : Math.max(SEED_HEIGHT, Math.ceil(typography.fontSize * typography.lineHeight)),
       text: '',
       // The gesture chooses the behaviour, which is the whole point of having
       // two of them.
       resize: dragged ? 'height' : 'width',
-      typography: {
-        ...DEFAULT_TYPOGRAPHY,
-        color: ThemeService.getDefaultTextColor(),
-      },
+      // In the style and face last chosen: see `TextToolStyles`.
+      typography,
     });
 
     ctx.editor.select(id);
@@ -126,6 +142,7 @@ export class TextTool implements Tool {
     if (e.key === 'Escape' && this.isDragging) {
       this.isDragging = false;
       ctx.setOverlayState?.({ active: false });
+      hud.hide('text');
     }
   }
 
@@ -134,6 +151,7 @@ export class TextTool implements Tool {
     // preview stranded on the board.
     this.isDragging = false;
     ctx.setOverlayState?.({ active: false });
+    hud.hide('text');
   }
 
   renderOverlay(_ctx: ToolContext, overlayState: any) {
@@ -176,7 +194,21 @@ export class TextTool implements Tool {
   }
 
   private pushOverlay(ctx: ToolContext) {
-    ctx.setOverlayState?.({ active: true, box: this.box() });
+    const box = this.box();
+    ctx.setOverlayState?.({ active: true, box });
+    // A drag is a fixed-width box: its width is the decision, so the HUD says
+    // it. A click is auto width, which has no size to show yet.
+    if (box.width > MIN_DRAG && box.height > MIN_DRAG) {
+      hud.show({
+        source: 'text',
+        kind: 'size',
+        value: { width: box.width, height: box.height },
+        at: { x: this.currentX, y: this.currentY },
+        box,
+      });
+    } else {
+      hud.hide('text');
+    }
   }
 
   private getPointerPos(ctx: ToolContext, e: any) {

@@ -335,7 +335,7 @@ export function rosterSignature(list: Collaborator[]): string {
       (c) =>
         `${c.clientId}:${c.name}:${c.color}:${c.activity ?? ''}:${c.tool ?? ''}:${
           c.away ? 1 : 0
-        }:${c.cursor ? 1 : 0}:${c.reaction?.emoji ?? ''}:${c.following ?? ''}:${
+        }:${c.cursor ? 1 : 0}:${c.reaction ? `${c.reaction.emoji}@${c.reaction.timestamp ?? ''}` : ''}:${c.following ?? ''}:${
           c.spotlightAt ?? ''
         }:${c.selection.join(',')}:${c.listening ?? ''}:${
           c.chat ? `${c.chat.open ? 1 : 0}${c.chat.text}` : ''

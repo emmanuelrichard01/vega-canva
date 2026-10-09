@@ -14,7 +14,9 @@ import {
   toKonvaValues,
   type AdjustmentId,
 } from '../../../engine/model/imageAdjustments';
-import { shadowProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
+import { strokeColor, strokeDashProps, strokeWidth } from './shared';
+import { DropShadow, type ShadowSilhouette } from './ShapeEffects';
+import { castsShadow } from '../../../engine/model/dropShadow';
 import { useDarkTheme } from './useDarkTheme';
 import { uploadIdFromSrc, useResolvedSrc } from '../../../utils/pendingMedia';
 import { retryUpload, uploadFraction, useUploadState } from '../../../engine/media/upload';
@@ -266,7 +268,6 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
     <KonvaImage
       ref={shapeRef}
       image={image}
-      {...shadowProps(node.appearance)}
       width={node.width}
       height={node.height}
       cornerRadius={radius}
@@ -280,11 +281,13 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
   );
 
   const border = imageBorder(node);
-  if (!upload && !border) return picture;
+  const shadow = imageShadow(node, image, cropProp);
+  if (!upload && !border && !shadow) return picture;
 
   const uploadId = uploadIdFromSrc(node.src);
   return (
     <Group>
+      {shadow}
       {picture}
       {border}
       {upload && (
@@ -302,6 +305,68 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
 });
 
 ImageRenderer.displayName = 'ImageRenderer';
+
+/**
+ * The picture's drop shadow, cast by the picture's own alpha.
+ *
+ * Not Konva's shadow on the image node, for three reasons that all showed:
+ *
+ * - An adjusted image is cached and filtered, and the cache holds the shadow
+ *   too, so brightening a photo greyed its shadow and blurring it blurred the
+ *   shadow twice.
+ * - A border drawn outside the picture sat beyond the shadow's edge.
+ * - A flipped picture cast its shadow upwards (see `shadowProps`).
+ *
+ * The silhouette is the unfiltered bitmap through the same crop and corners,
+ * so a cut-out PNG casts the shape of its subject, as it does in Figma. No
+ * knockout: a photograph's edge pixels are opaque, and cutting along them
+ * leaves a seam.
+ */
+function imageShadow(
+  node: ImageNode,
+  image: HTMLImageElement,
+  crop: { x: number; y: number; width: number; height: number } | undefined
+): React.ReactElement | null {
+  const shadow = node.appearance?.shadow;
+  if (!castsShadow(shadow)) return null;
+  const w = node.width;
+  const h = node.height;
+  const radii = cornerRadiiOf(node.appearance?.cornerRadius);
+  const frame = new Path2D();
+  if (radii.some((r) => r > 0) && typeof frame.roundRect === 'function') frame.roundRect(0, 0, w, h, radii);
+  else frame.rect(0, 0, w, h);
+
+  const silhouette: ShadowSilhouette = {
+    raster: (ctx) => {
+      ctx.save();
+      ctx.clip(frame);
+      if (crop) ctx.drawImage(image, crop.x, crop.y, crop.width, crop.height, 0, 0, w, h);
+      else ctx.drawImage(image, 0, 0, w, h);
+      ctx.restore();
+    },
+  };
+  const borderWidth = strokeColor(node.appearance) ? strokeWidth(node.appearance) : 0;
+  let reach = 0;
+  if (borderWidth > 0) {
+    const align = node.appearance?.stroke?.align ?? 'inside';
+    const shift = align === 'inside' ? borderWidth / 2 : align === 'outside' ? -borderWidth / 2 : 0;
+    const ring = new Path2D();
+    const inset = radii.map((r) => Math.max(0, r - shift));
+    const bw = Math.max(0, w - shift * 2);
+    const bh = Math.max(0, h - shift * 2);
+    if (inset.some((r) => r > 0) && typeof ring.roundRect === 'function') ring.roundRect(shift, shift, bw, bh, inset);
+    else ring.rect(shift, shift, bw, bh);
+    silhouette.strokes = [{ path: ring, width: borderWidth, dash: node.appearance?.stroke?.dash }];
+    reach = Math.max(0, borderWidth / 2 - shift);
+  }
+  return (
+    <DropShadow
+      shadow={shadow}
+      box={{ x: -reach, y: -reach, width: w + reach * 2, height: h + reach * 2 }}
+      silhouette={silhouette}
+    />
+  );
+}
 
 /**
  * The picture's border, drawn over its edge with the same corners.

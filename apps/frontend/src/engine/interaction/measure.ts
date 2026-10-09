@@ -84,10 +84,3 @@ export function measureBetween(sel: MeasureBox, other: MeasureBox): MeasureSegme
   }
   return out.filter((s): s is MeasureSegment => s !== null);
 }
-
-/** A distance as a label: whole units, or one decimal below ten. */
-export function formatDistance(value: number): string {
-  if (!Number.isFinite(value)) return '';
-  const abs = Math.abs(value);
-  return abs < 10 && abs % 1 !== 0 ? abs.toFixed(1) : String(Math.round(abs));
-}

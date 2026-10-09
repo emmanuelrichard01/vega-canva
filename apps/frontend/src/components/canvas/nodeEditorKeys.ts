@@ -6,11 +6,13 @@ import { formatCommandFor, type FormatCommand } from '../../engine/text/textShor
  *
  * Pure, so the chords can be tested without a textarea. Keys pressed while an
  * IME composition is open belong to the composition: Tab and Cmd+Enter would
- * otherwise chain a new note mid-word, and Escape would discard the note
+ * otherwise chain a new note mid-word, and Escape would close the editor
  * instead of the candidate.
+ *
+ * Escape commits, as in Figma and FigJam. A box still empty at that point is
+ * removed by the commit, so it never leaves a blank object behind.
  */
 export type EditorKeyIntent =
-  | { kind: 'cancel' }
   | { kind: 'chain'; direction: ChainDirection }
   | { kind: 'finish' }
   | { kind: 'format'; command: FormatCommand };
@@ -30,7 +32,7 @@ export function editorKeyIntent(
   { sticky, formattable }: { sticky: boolean; formattable: boolean }
 ): EditorKeyIntent | null {
   if (e.isComposing) return null;
-  if (e.key === 'Escape') return { kind: 'cancel' };
+  if (e.key === 'Escape') return { kind: 'finish' };
   // Tab chains a new note to the right, Shift+Tab one below. A literal tab
   // character in a sticky is worth nothing.
   if (e.key === 'Tab' && sticky) return { kind: 'chain', direction: e.shiftKey ? 'down' : 'right' };

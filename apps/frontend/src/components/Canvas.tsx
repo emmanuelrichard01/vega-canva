@@ -2,6 +2,8 @@ import { usePhysics } from '../hooks/usePhysics';
 import React, { useRef, useState, useEffect, useCallback, useMemo, useSyncExternalStore } from "react";
 import { Stage, Layer, Group, Path } from "react-konva";
 import Konva from "konva";
+// Side effect: Konva text measurement cached per font and string. See the module.
+import '../engine/render/konvaTextMeasure';
 import { selectionWithin } from '../engine/model/groupTree';
 import { updateNode } from '../engine/document';
 import { useStore } from '../hooks/useStore';
@@ -17,7 +19,9 @@ import { QuickCreateMagnets } from './canvas/QuickCreateMagnets';
 import { boardBackgroundStyle, useBoardBackground } from './canvas/boardBackground';
 import { SmartGuides } from './canvas/SmartGuides';
 import { MeasureOverlay } from './canvas/MeasureOverlay';
+import { ArrangeOverlay } from './arrange/ArrangeOverlay';
 import { RulerGuides } from './canvas/RulerGuides';
+import { HudLayer } from './hud/HudLayer';
 import { PathEditor } from './canvas/PathEditor';
 import { deletePickedAnchor, nudgePickedAnchors, selectAllAnchors } from '../engine/interaction/pathAnchorActions';
 import { pathEdit } from '../engine/interaction/pathEdit';
@@ -76,7 +80,7 @@ const NUDGE_KEYS: Record<string, [number, number]> = {
 };
 import { setSlotFit } from '../engine/grid/gridSlotApply';
 import { CommentsOverlay } from "./CommentsOverlay";
-import { FramePresenter } from './canvas/FramePresenter';
+const FramePresenter = React.lazy(() => import('./canvas/FramePresenter').then((m) => ({ default: m.FramePresenter })));
 import { FrameNameEditor } from './canvas/FrameNameEditor';
 import { CanvasEmojiPickerHost } from './emoji/EmojiPickerPopover';
 import { useContentShortcuts } from './canvas/useContentShortcuts';
@@ -572,10 +576,39 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
    * move or restyle something, and re-sorting the board for each was an
    * O(n log n) pass on every remote edit. The check is O(n) and keeps the
    * array's identity, so nothing downstream recomputes either.
+   *
+   * When this render is exactly one store change on from the last check, and
+   * that change removed nothing and added nothing, only the ids it touched can
+   * have changed stacking, so only those are compared. That keeps a remote
+   * collaborator's stream of moves from walking the whole board per update.
+   * Anything else (a skipped version, a render older than the store) takes the
+   * full check.
    */
-  const orderRef = useRef<{ ids: string[]; z: Map<string, number> } | null>(null);
+  const orderRef = useRef<{ ids: string[]; z: Map<string, number>; version: number } | null>(null);
   const orderedIds = useMemo(() => {
     const prev = orderRef.current;
+    const store = useStore.getState();
+    const version = store.objects === objects ? store.version : -1;
+    if (
+      prev &&
+      version !== -1 &&
+      version === prev.version + 1 &&
+      store.lastRemovedIds.length === 0 &&
+      store.objectCount === prev.ids.length
+    ) {
+      let same = true;
+      for (const id of store.lastChangedIds) {
+        const z = prev.z.get(id);
+        if (z === undefined || z !== (objects[id]?.zIndex || 0)) {
+          same = false;
+          break;
+        }
+      }
+      if (same) {
+        prev.version = version;
+        return prev.ids;
+      }
+    }
     const keys = Object.keys(objects);
     if (prev && prev.ids.length === keys.length) {
       let same = true;
@@ -586,10 +619,13 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
           break;
         }
       }
-      if (same) return prev.ids;
+      if (same) {
+        prev.version = version;
+        return prev.ids;
+      }
     }
     const sorted = sortByStacking(Object.values(objects) as Array<{ id: string; zIndex?: number }>);
-    const next = { ids: sorted.map((o) => o.id), z: new Map(sorted.map((o) => [o.id, o.zIndex || 0])) };
+    const next = { ids: sorted.map((o) => o.id), z: new Map(sorted.map((o) => [o.id, o.zIndex || 0])), version };
     orderRef.current = next;
     return next.ids;
   }, [objects]);
@@ -1199,18 +1235,15 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
             chrome (a marquee, a handle, a guide) does not repaint every
             object, and so its hit graph can be switched off while panning. */}
         <Layer ref={contentLayerRef}>
-          {mountedIds.map((id) => (
-            <ObjectRenderer
-              key={id}
-              objId={id}
-              isSelected={selectedSet.has(id)}
-              onSelect={handleObjectSelect}
-              selectable={canSelectWith(activeTool)}
-              canDuplicate={activeTool === 'select'}
-              onThrow={handleThrow}
-              selectedIdsRef={selectedIdsRef}
-            />
-          ))}
+          <ContentObjects
+            ids={mountedIds}
+            selectedSet={selectedSet}
+            onSelect={handleObjectSelect}
+            selectable={canSelectWith(activeTool)}
+            canDuplicate={activeTool === 'select'}
+            onThrow={handleThrow}
+            selectedIdsRef={selectedIdsRef}
+          />
         </Layer>
 
         {/* Chrome: everything drawn over the content that is not the content. */}
@@ -1307,6 +1340,10 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
           <SmartGuides stageScale={zoom} />
           <MeasureOverlay selectedIds={selectedIds} />
 
+          {/* Arrangement: where an align or tidy would land, the key object,
+              and a live grid's gap handles and reorder targets. */}
+          <ArrangeOverlay stageScale={zoom} selectedIds={selectedIds} />
+
           {/* Tool previews: the marquee, a frame's size readout, the pen's stroke. */}
           <ToolOverlay toolManager={toolManager} />
 
@@ -1346,7 +1383,9 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       >
         <PresenceRenderer />
         <GestureOverlay />
-        <FramePresenter />
+        <React.Suspense fallback={null}>
+          <FramePresenter />
+        </React.Suspense>
         <FrameNameEditor />
         <WriteBackConfirm />
         <CanvasEmojiPickerHost />
@@ -1360,6 +1399,8 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
           onResolveComment={handleResolveComment}
           currentAuthorId={currentAuthorId}
         />
+        {/* Heads-up readouts: last, so nothing on the board covers one. */}
+        <HudLayer />
       </div>
 
       <AudioRecordingOverlay
@@ -1369,6 +1410,41 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     </div>
   );
 };
+
+/**
+ * The mounted objects, in draw order.
+ *
+ * Its own memoised component so that a store change re-rendering `Canvas` (it
+ * subscribes to the whole board) does not rebuild and diff one element per
+ * mounted object. That only happens when the list itself, the selection or a
+ * tool-dependent flag changes; each object still re-renders on its own
+ * subscription when its node changes.
+ */
+const ContentObjects = React.memo<{
+  ids: string[];
+  selectedSet: ReadonlySet<string>;
+  onSelect: React.ComponentProps<typeof ObjectRenderer>['onSelect'];
+  selectable: boolean;
+  canDuplicate: boolean;
+  onThrow: React.ComponentProps<typeof ObjectRenderer>['onThrow'];
+  selectedIdsRef: React.MutableRefObject<string[]>;
+}>(({ ids, selectedSet, onSelect, selectable, canDuplicate, onThrow, selectedIdsRef }) => (
+  <>
+    {ids.map((id) => (
+      <ObjectRenderer
+        key={id}
+        objId={id}
+        isSelected={selectedSet.has(id)}
+        onSelect={onSelect}
+        selectable={selectable}
+        canDuplicate={canDuplicate}
+        onThrow={onThrow}
+        selectedIdsRef={selectedIdsRef}
+      />
+    ))}
+  </>
+));
+ContentObjects.displayName = 'ContentObjects';
 
 /** Re-renders its children, and only them, when the camera zoom changes. */
 const ZoomScope: React.FC<{ children: (zoom: number) => React.ReactNode }> = ({ children }) => {

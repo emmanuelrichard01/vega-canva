@@ -43,8 +43,11 @@ export const LineSpecimen: React.FC<{
    */
   run?: 'two-point' | 'corners' | 'rounded';
 }> = ({ profile = 'straight', endStart = 'none', endEnd = 'none', run: shape = 'two-point' }) => {
-  const a = { x: 2, y: H / 2 };
-  const b = { x: W - 2, y: H / 2 };
+  // An elbow between two level points is a straight line, so its specimen
+  // runs corner to corner instead — the one profile whose shape depends on
+  // where its ends are.
+  const a = profile === 'elbow' ? { x: 2, y: H - 3 } : { x: 2, y: H / 2 };
+  const b = profile === 'elbow' ? { x: W - 2, y: 3 } : { x: W - 2, y: H / 2 };
   /**
    * A step, not a zigzag: two corners turning the same way read as *corners*
    * at sixteen pixels, where a symmetric zigzag reads as a wave and collides
@@ -115,13 +118,16 @@ export const LineSpecimen: React.FC<{
         return acc;
       }, [])
       .join(' ');
+    // An open marker is a polyline; a polygon would close a chevron.
+    const Mark = cap.filled ? 'polygon' : 'polyline';
     return (
-      <polygon
+      <Mark
         key={key}
         points={pointsAttr}
         fill={cap.filled ? 'currentColor' : 'none'}
         stroke="currentColor"
         strokeWidth="1.2"
+        strokeLinecap="round"
         strokeLinejoin="round"
       />
     );

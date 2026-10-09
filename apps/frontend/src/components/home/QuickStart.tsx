@@ -1,7 +1,6 @@
 import React, { useContext } from 'react';
 import { ArrowRight, Compass, Link2, Plus, UploadCloud } from 'lucide-react';
 import type { Template } from '../../engine/templates/templates';
-import type { BoardPreview } from '../../engine/model/boardPreview';
 import { requestGuidedStart } from '../../engine/learn/tourChecklist';
 import { AuthContext } from '../../hooks/useAuth';
 import { TemplateCard } from './TemplateCard';
@@ -11,7 +10,6 @@ interface Props {
   templateCount: number;
   /** A few real templates to start from, shown as their covers. */
   starters: readonly Template[];
-  previews: Record<string, BoardPreview | null>;
   peekingId: string | null;
   onBlank: () => void;
   onTemplates: () => void;
@@ -37,7 +35,7 @@ function firstName(name: string | undefined): string | null {
  * No modal, no wall: everything here is a door, and any of them can be ignored.
  */
 export const QuickStart: React.FC<Props> = ({
-  templateCount, starters, previews, peekingId, onBlank, onTemplates, onPeek, onUse, onJoin, onRestore,
+  templateCount, starters, peekingId, onBlank, onTemplates, onPeek, onUse, onJoin, onRestore,
 }) => {
   const name = firstName(useContext(AuthContext)?.user?.name);
 
@@ -92,12 +90,11 @@ export const QuickStart: React.FC<Props> = ({
               <ArrowRight size={14} aria-hidden="true" />
             </button>
           </header>
-          <div className="tgrid tgrid--starters">
+          <div className="tgrid ggrid tgrid--starters">
             {starters.map((t) => (
               <TemplateCard
                 key={t.id}
                 template={t}
-                preview={previews[t.id] ?? null}
                 peeking={peekingId === t.id}
                 scope="starter"
                 onPeek={onPeek}

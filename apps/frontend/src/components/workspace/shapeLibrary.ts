@@ -10,8 +10,11 @@ import { SHAPE_BY_PRESET, SHAPE_CATEGORIES, type ShapePreset } from './shapeCata
  */
 
 /**
- * The quick row: the eight shapes a board reaches for first, fixed rather than
+ * The quick row: the nine shapes a board reaches for first, fixed rather than
  * learned so they never move under a pointer that has learned where they are.
+ * Nine is one full row of the library's grid (`LIBRARY_LAYOUT.cols`), so the
+ * row has no gap at its end. The speech bubble, the whiteboard's own shape,
+ * follows the geometric ones.
  */
 export const QUICK_SHAPES: readonly ShapePreset[] = [
   'rect',
@@ -22,6 +25,7 @@ export const QUICK_SHAPES: readonly ShapePreset[] = [
   'capsule',
   'hexagon',
   'star',
+  'callout',
 ];
 
 /** The families, in the order the jump control and the scroll show them. */

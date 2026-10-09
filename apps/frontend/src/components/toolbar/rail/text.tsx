@@ -19,6 +19,9 @@ import {
 import type { ListStyle, TextAlign, Typography } from '../../../engine/model/schema';
 import { ColorPickerPopover } from '../../ui/ColorPickerPopover';
 import { FontSelector } from '../../ui/FontSelector';
+import { FontWeightSelect } from '../../ui/FontWeightSelect';
+import { TextFaceToggle, TextStyleList } from '../../dock/TextStylePicker';
+import { TEXT_FACES, TEXT_STYLES, faceOf, nextText, styleOf, stylePatch } from '../../../engine/tools/TextToolStyles';
 import { SegmentedControl } from '../../ui/SegmentedControl';
 import { TEXT_PRESETS, isTextPresetActive } from '../../panel/textEffectPresets';
 import { PopoverSlider } from '../RailBase';
@@ -71,7 +74,9 @@ export const FontControl: React.FC<{ typography: Typography; set: SetTypography 
       }
     >
       <span className="ctx-popover__label">Font</span>
-      <FontSelector value={typography.fontFamily} onChange={(fontFamily) => set({ fontFamily })} />
+      <FontSelector value={typography.fontFamily} onChange={(fontFamily) => set({ fontFamily })} weight={typography.fontWeight ?? 400} onWeightChange={(fontWeight) => set({ fontWeight })} />
+      <span className="ctx-popover__label">Weight</span>
+      <FontWeightSelect family={typography.fontFamily} value={typography.fontWeight} onChange={(fontWeight) => set({ fontWeight })} />
       <PopoverSlider label="Size" value={typography.fontSize} min={MIN_FONT_SIZE} max={160} onChange={setSize} />
       {/* A hand-drawn typeface rather than a filter: it exports as text and was drawn by a hand. */}
       <button
@@ -83,6 +88,49 @@ export const FontControl: React.FC<{ typography: Typography; set: SetTypography 
         <PenLine size={14} />
         {handwritten ? 'Back to typed' : 'Handwritten'}
       </button>
+    </RailPopover>
+  );
+};
+
+/**
+ * The text's style: Title, Heading, Subheading, Body or Caption, each shown in
+ * itself, and the face. "Custom" when the size and weight match no style.
+ *
+ * Picking one also makes it the style the next text box is made in, so a
+ * board settles into its hierarchy without anybody setting the tool twice.
+ */
+export const TextStyleControl: React.FC<{ typography: Typography; set: SetTypography }> = ({ typography, set }) => {
+  const style = styleOf(typography);
+  const face = faceOf(typography.fontFamily);
+  return (
+    <RailPopover
+      label="Text style"
+      align="start"
+      trigger={
+        <span className="rail-font">
+          <span className="rail-font__family">{style ? TEXT_STYLES[style].label : 'Custom'}</span>
+          <ChevronDown size={12} aria-hidden className="rail-kind__chevron" />
+        </span>
+      }
+    >
+      <span className="ctx-popover__label">Style</span>
+      <TextStyleList
+        value={style}
+        face={face ?? 'sans'}
+        onPick={(id) => {
+          set(stylePatch(id));
+          nextText.set({ style: id });
+        }}
+      />
+      <span className="ctx-popover__label">Face</span>
+      <TextFaceToggle
+        labelled
+        value={face}
+        onPick={(f) => {
+          set({ fontFamily: TEXT_FACES[f].family });
+          nextText.set({ face: f });
+        }}
+      />
     </RailPopover>
   );
 };
@@ -194,7 +242,7 @@ export const LabelStyleControl: React.FC<{ typography: Typography; set: SetTypog
   return (
     <RailPopover label="Label style" trigger={<Type size={16} />} align="start">
       <span className="ctx-popover__label">Font</span>
-      <FontSelector value={typography.fontFamily} onChange={(fontFamily) => set({ fontFamily })} />
+      <FontSelector value={typography.fontFamily} onChange={(fontFamily) => set({ fontFamily })} weight={typography.fontWeight ?? 400} onWeightChange={(fontWeight) => set({ fontWeight })} />
       <PopoverSlider
         label="Size"
         value={typography.fontSize}

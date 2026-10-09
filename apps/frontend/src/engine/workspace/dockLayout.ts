@@ -43,7 +43,6 @@ export const DOCK_SEATS = [
   'table',
   'data',
   'connector',
-  'sticky',
   'image',
   'audio',
   'media',
@@ -92,18 +91,21 @@ export const SEAT_HOST: Partial<Record<DockSeat, DockSeat>> = {
 };
 
 /**
- * The arrangement everyone starts with: eleven seats.
+ * The arrangement everyone starts with: ten seats.
  *
  * Navigate, then create, then data and media, then comment. Every tool not
  * shown here is carried by a seat that is (see `SEAT_HOST`), except Forces,
  * which lives in the drawer. Every single-key shortcut still arms its tool,
  * because a key arms a tool, not a seat.
+ *
+ * The sticky note has no seat: it is the pad in the Draw seat's tray, where it
+ * is pulled off as an object (see `DrawingTray`), and `S` arms it.
  */
 export const DEFAULT_LAYOUT: DockLayout = {
   order: [
     'select', 'hand',
     SEPARATOR,
-    'draw', 'type', 'sticky', 'shape', 'connector', 'frame',
+    'draw', 'type', 'shape', 'connector', 'frame',
     SEPARATOR,
     'data', 'media', 'comment',
   ],
@@ -191,12 +193,23 @@ const RENAMED: Record<string, DockSeat> = {
   block: 'type',
 };
 
+/**
+ * Seats that were retired outright, with no seat taking their place.
+ *
+ * Listed so a stored layout that still names one is read as a layout with that
+ * seat removed, rather than as noise: `sticky` moved into the Draw tray, and
+ * an arrangement that had it on the dock keeps everything else where it was,
+ * with the separators around the gap tidied by the rules below.
+ */
+const RETIRED: ReadonlySet<string> = new Set(['sticky']);
+
 const KNOWN = new Set<string>(DOCK_SEATS);
 
 /** A stored id, mapped through any rename. `null` when it is not a seat at all. */
 function readSeat(value: unknown): DockSeat | null {
   if (typeof value !== 'string') return null;
   if (KNOWN.has(value)) return value as DockSeat;
+  if (RETIRED.has(value)) return null;
   return RENAMED[value] ?? null;
 }
 

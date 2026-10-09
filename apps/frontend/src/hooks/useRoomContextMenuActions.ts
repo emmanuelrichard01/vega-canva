@@ -25,7 +25,7 @@ import { convertSelectionToPaths } from '../components/toolbar/rail/menuExtras';
 import { breakApartGrid } from '../engine/grid/gridApply';
 import { fillGridWithImages, releaseSlots } from '../engine/grid/gridSlotApply';
 import type { CopyResult } from './useRoomClipboard';
-import { alignSelection, distributeSelection } from '../engine/model/align';
+import { alignSelectionPatches, distributeSelectionPatches } from '../engine/arrange/plans';
 import { swapShapeKind } from '../engine/model/shapeSwap';
 import { cameraSystem } from '../engine/CameraSystem';
 import { restackSelection, type RestackOp } from '../engine/model/restack';
@@ -365,12 +365,19 @@ export function useRoomContextMenuActions({
   }, [selectedIds]);
 
   const handleAlign = useCallback(
-    (edge: AlignEdge) => applyNodePatches(alignSelection(selectedNodes(), edge)),
+    (edge: AlignEdge) => {
+      // Groups move as one, the same answer the rail's align gives.
+      const { objects, groups } = useStore.getState();
+      applyNodePatches(alignSelectionPatches(selectedNodes(), objects, groups, edge));
+    },
     [selectedNodes]
   );
 
   const handleDistribute = useCallback(
-    (axis: DistributeAxis) => applyNodePatches(distributeSelection(selectedNodes(), axis)),
+    (axis: DistributeAxis) => {
+      const { objects, groups } = useStore.getState();
+      applyNodePatches(distributeSelectionPatches(selectedNodes(), objects, groups, axis));
+    },
     [selectedNodes]
   );
 

@@ -37,15 +37,27 @@ export const EndCapIcon: React.FC<{ kind: EndCapKind; flip?: boolean }> = ({ kin
       {shape?.circle && (
         <circle cx={shape.circle.x} cy={shape.circle.y} r={shape.circle.radius} fill="currentColor" />
       )}
-      {shape?.points && (
-        <polygon
-          points={polygonPoints(shape.points)}
-          fill={shape.filled ? 'currentColor' : 'none'}
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinejoin="round"
-        />
-      )}
+      {/* An open marker (bar, open arrow, crow's foot) is a polyline: a
+          polygon would close a chevron into a triangle outline. */}
+      {shape?.points &&
+        (shape.filled ? (
+          <polygon
+            points={polygonPoints(shape.points)}
+            fill="currentColor"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinejoin="round"
+          />
+        ) : (
+          <polyline
+            points={polygonPoints(shape.points)}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        ))}
     </svg>
   );
 };

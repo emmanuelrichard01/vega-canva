@@ -65,20 +65,15 @@ import { PhysicsMaterialSection, MetadataSection } from './panel/sections/Physic
 import { StickySection } from './panel/sections/StickySection';
 import { SelectionColorsSection } from './panel/sections/SelectionColorsSection';
 import { BoardSection } from './panel/sections/BoardSection';
+import { ExportSection } from './panel/sections/ExportSection';
 import { cornerRadiiOf } from '../engine/model/cornerRadii';
 import { FeatureBoundary } from './ui/FeatureBoundary';
 import { storageGet, storageSet } from '../utils/safeStorage';
 import { useSidewaysOverflowCheck } from './panel/overflowCheck';
 import './panel/panel.css';
+import { DEFAULT_DROP_SHADOW } from '../engine/model/dropShadow';
 
-const DEFAULT_SHADOW: Shadow = {
-  color: DEFAULT_SHADOW_COLOR,
-  blur: 12,
-  offsetX: 0,
-  offsetY: 4,
-  spread: 0,
-  opacity: 0.25,
-};
+const DEFAULT_SHADOW: Shadow = DEFAULT_DROP_SHADOW;
 
 const DEFAULT_INNER_SHADOW: Shadow = {
   color: DEFAULT_SHADOW_COLOR,
@@ -682,6 +677,8 @@ const PropertiesPanelInner: React.FC<PropertiesPanelProps> = ({ selectedIds, ove
           />
 
           <PhysicsMaterialSection nodes={nodes} node={node} set={set} />
+
+          {!overrideObjects && <ExportSection nodes={nodes} />}
 
           <MetadataSection node={node} isMulti={isMulti} createdByLabel={createdByLabel} updatedByLabel={updatedByLabel} />
         </div>

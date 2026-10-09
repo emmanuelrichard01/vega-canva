@@ -1,5 +1,5 @@
 import React, { useEffect, useSyncExternalStore } from 'react';
-import { AnimatePresence, MotionConfig } from 'framer-motion';
+import { MotionConfig } from 'framer-motion';
 import { Layers, Lock, MessageSquarePlus, PaintRoller, Unlock } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useStore } from '../hooks/useStore';
@@ -132,19 +132,17 @@ const ObjectContextToolbarInner: React.FC<Props> = ({ selectedId, selectedIds, s
   );
 
   const frame = (key: string, label: string, description: string, children: React.ReactNode) => (
-    <AnimatePresence>
-      <Rail
-        id={key}
-        label={label}
-        description={description}
-        placement={placement}
-        clear={clear}
-        anchorRef={anchorRef}
-        ref={railRef}
-      >
-        {children}
-      </Rail>
-    </AnimatePresence>
+    <Rail
+      id={key}
+      label={label}
+      description={description}
+      placement={placement}
+      clear={clear}
+      anchorRef={anchorRef}
+      ref={railRef}
+    >
+      {children}
+    </Rail>
   );
 
   /**

@@ -61,6 +61,7 @@ export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Re-exported so a node's own type is readable without a second import. */
 export type { MaterialId } from '../../utils/behaviorSystem';
+import type { SlideFields } from '../slides/slideMeta';
 import type { MaterialId } from '../../utils/behaviorSystem';
 export type { EndCapKind } from './connectorEnds';
 import type { EndCapKind } from './connectorEnds';
@@ -945,6 +946,8 @@ export interface ShapeGeometry {
    * Absent is 1.0 (100%).
    */
   lineAmplitude?: number;
+  /** Line/arrow: label position along the run, 0..1; absent is the middle. */
+  labelT?: number;
   /**
    * Whether a marker sits inside the run's length or projects beyond it.
    *
@@ -1385,7 +1388,8 @@ export interface CommentNode extends BaseNode {
   resolved: boolean;
 }
 
-export interface FrameNode extends BaseNode {
+/** Slide fields (notes, skip, section, transition) live in `slides/slideMeta`. */
+export interface FrameNode extends BaseNode, SlideFields {
   type: 'frame';
   appearance: Appearance;
   /**

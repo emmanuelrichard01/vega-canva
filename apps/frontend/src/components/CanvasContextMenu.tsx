@@ -1,6 +1,7 @@
 import React, { useMemo, useSyncExternalStore } from 'react';
 import type { AnyNode } from '../engine/model/schema';
 import { styleClipboard } from '../engine/model/styleClipboard';
+import { getPermissions, getRoomRole, subscribeRoomRole } from '../engine/model/permissions';
 import { Menu } from './menu/Menu';
 import { boardMenu, selectionMenu, type CanvasContextMenuActions } from './menu/canvasMenu';
 
@@ -46,6 +47,9 @@ export const CanvasContextMenu: React.FC<Props> = ({
   allObjects,
 }) => {
   const style = useSyncExternalStore(styleClipboard.subscribe, styleClipboard.get, styleClipboard.get);
+  // A commenter cannot edit but can comment; a viewer can do neither.
+  const role = useSyncExternalStore(subscribeRoomRole, getRoomRole, getRoomRole);
+  const canComment = getPermissions(role).canComment;
 
   const entries = useMemo(() => {
     if (!target) return [];
@@ -55,11 +59,12 @@ export const CanvasContextMenu: React.FC<Props> = ({
       allObjects: allObjects ?? objects,
       actions,
       canEdit,
+      canComment,
       style,
       atPointer: !target.viaKeyboard,
     };
     return nodes.length > 0 ? selectionMenu(input) : boardMenu(input);
-  }, [target, objects, allObjects, actions, canEdit, style]);
+  }, [target, objects, allObjects, actions, canEdit, canComment, style]);
 
   const anchor = useMemo(
     () => (target ? { kind: 'point' as const, x: target.x, y: target.y } : null),
@@ -77,6 +82,7 @@ export const CanvasContextMenu: React.FC<Props> = ({
       entries={entries}
       anchor={anchor}
       focusFirst={Boolean(target.viaKeyboard)}
+      searchable
       onClose={onClose}
     />
   );

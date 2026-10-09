@@ -103,6 +103,7 @@ export const TableRail: SingleRail<TableNode> = ({ node, conditional, tail, tail
           label={spec.sort ? `Sorted by ${columnName(spec, spec.sort.col)}` : 'Sort'}
           trigger={spec.sort ? spec.sort.dir === 'asc' ? <ArrowDownAZ size={16} /> : <ArrowUpAZ size={16} /> : <ArrowDownUp size={16} />}
           align="start"
+          size="sm"
         >
           <span className="ctx-popover__label">Sort by</span>
           <div className="rail-list" role="radiogroup" aria-label="Sort by column">

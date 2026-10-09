@@ -89,8 +89,14 @@ export function strokeColor(appearance: Appearance | undefined): string | undefi
   return color && color !== 'transparent' ? color : undefined;
 }
 
+/**
+ * The stored weight, exactly: 0.25 stays 0.25. Never negative, since a canvas
+ * silently keeps its previous `lineWidth` when handed one, and the stroke would
+ * draw at whatever the last object on the board happened to use.
+ */
 export function strokeWidth(appearance: Appearance | undefined): number {
-  return appearance?.stroke?.width ?? 0;
+  const width = appearance?.stroke?.width ?? 0;
+  return Number.isFinite(width) && width > 0 ? width : 0;
 }
 
 /**
@@ -129,70 +135,41 @@ export function strokeDashProps(
 }
 
 /**
- * The Konva shadow props for a node, spread onto the shape that casts it.
+ * Konva's own shadow props, for the one renderer that still casts natively.
  *
- * `Appearance.shadow` was on the schema from the first commit, read and
- * written by the normalizer, and declared as a capability by five object
- * types — and no renderer ever looked at it. Every shadow on the canvas was a
- * hardcoded constant. This is the translation that was missing.
+ * Text is drawn as a run of `<Text>` nodes whose glyphs never overlap, so a
+ * shadow per run adds up to the shadow of the whole block: there is no fill
+ * and stroke over the same pixels to cast twice. Everything with a fill *and*
+ * a line — shapes, paths, pictures, connectors — casts from its whole
+ * silhouette through `DropShadow` instead (see `ShapeEffects.tsx`).
  *
- * Returns nothing at all when there is no shadow. Konva treats
- * `shadowBlur: 0` as a shadow it still has to consider on every draw, and a
- * board is mostly objects with no shadow.
+ * Returns nothing at all when there is no shadow: Konva treats
+ * `shadowBlur: 0` as a shadow it still has to consider on every draw.
  *
- * `spread` is absent from this object on purpose: Konva has no equivalent, and
- * growing the silhouette needs a second draw of the shape. See
- * `shadowSpreadProps`.
+ * `flipped` corrects a Konva quirk. It scales the offset by the node's
+ * *decomposed* scale, and a mirrored node decomposes to a half turn with a
+ * negative vertical scale, so its shadow would fall upwards. Every other
+ * shadow on the board falls down, flipped or not.
+ *
+ * `shadowForStrokeEnabled: false` because the glyph fill is the silhouette; a
+ * text outline is drawn as its own pass and must not cast a second shadow.
  */
-export function shadowProps(appearance: Appearance | undefined): Record<string, unknown> {
+export function shadowProps(appearance: Appearance | undefined, opts: { flipped?: boolean } = {}): Record<string, unknown> {
   const shadow = appearance?.shadow;
-  if (!shadow) return {};
+  if (!shadow || (shadow.opacity ?? 1) <= 0) return {};
   return {
     shadowColor: shadow.color,
     shadowBlur: Math.max(0, shadow.blur),
     shadowOffsetX: shadow.offsetX,
-    shadowOffsetY: shadow.offsetY,
+    shadowOffsetY: opts.flipped ? -shadow.offsetY : shadow.offsetY,
     shadowOpacity: shadow.opacity ?? 1,
-    // The shadow must not scale with a non-uniformly stretched polygon, for
-    // the same reason its stroke must not: a widened hexagon would cast a
-    // shadow blurred further horizontally than vertically.
     shadowForStrokeEnabled: false,
   };
 }
 
-/**
- * Props for the shadow-only copy of a shape drawn behind it, or null.
- *
- * Spread grows the shadow's silhouette before the blur, and Konva has no such
- * property. Stroking the same path with a line of `2 * spread` expands its
- * silhouette by exactly `spread` in every direction, whatever the path is —
- * which is why this works for a star and a bezier as well as a rectangle, and
- * why it is one prop rather than per-shape geometry.
- *
- * The copy carries the shadow and the real shape carries none, so the shadow
- * is cast by the grown silhouette rather than by the shape itself.
- */
-export function shadowSpreadProps(appearance: Appearance | undefined): Record<string, unknown> | null {
-  const shadow = appearance?.shadow;
-  if (!shadow || !shadow.spread || shadow.spread <= 0) return null;
-  return {
-    ...shadowProps(appearance),
-    // The silhouette is all that matters — it is about to be blurred and
-    // offset, and only its shape contributes. Painting it in the shadow's own
-    // colour means the ring left visible at zero offset, which is what spread
-    // looks like in CSS too, is the right colour.
-    fill: shadow.color,
-    fillPriority: 'color',
-    stroke: shadow.color,
-    strokeWidth: shadow.spread * 2,
-    strokeScaleEnabled: false,
-    dash: undefined,
-    listening: false,
-    perfectDrawEnabled: false,
-    // Konva skips a stroke's shadow by default, and here the stroke *is* the
-    // silhouette being cast.
-    shadowForStrokeEnabled: true,
-  };
+/** Whether a node is mirrored an odd number of times, which flips Konva's shadow offset. */
+export function isMirrored(node: { scaleX?: number; scaleY?: number }): boolean {
+  return (node.scaleX ?? 1) * (node.scaleY ?? 1) < 0;
 }
 
 /**

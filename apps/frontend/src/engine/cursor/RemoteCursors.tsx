@@ -258,7 +258,12 @@ export const RemoteCursors: React.FC = () => {
               {/* Position on the parent, appearance on this child, so a per-frame
                   translate never fights an enter or exit transition. */}
               <div className="rc__body" data-visible={visible ? '1' : '0'} data-away={person.away ? '1' : '0'}>
-                <Arrow colors={colors} tool={person.tool} weight={weight} />
+                {/* A presenter's laser is a red dot, not their arrow. */}
+                {person.tool === 'laser' ? (
+                  <span className="rc__laser" />
+                ) : (
+                  <Arrow colors={colors} tool={person.tool} weight={weight} />
+                )}
 
                 {person.reaction?.emoji && (
                   <div key={person.reaction.timestamp} className="rc__reaction">

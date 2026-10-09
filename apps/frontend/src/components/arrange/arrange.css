@@ -1,0 +1,265 @@
+/* ===========================================================================
+   Arrangement panels on the multi-selection rail: Selection, Align and
+   distribute, Arrange in grid, Combine.
+
+   They sit inside `.ctx-popover`, which owns the surface and its one
+   elevation; nothing here declares a second. Rows come from the panel grammar
+   (`.pg-row`), tiles reuse the popover tile (`.ctx-shape-btn`) at the rail's
+   32px, selection is an ink wash and focus is the neutral ring.
+   =========================================================================== */
+
+.arr-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 248px;
+}
+
+.arr-panel .pg-row:not(.pg-row--stack) {
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+
+/* A pair of fields takes the row's whole control column. */
+.arr-panel .pg-row__control > .pg-pair {
+  flex: 1;
+}
+
+/* A popover tile at rail size. */
+.arr-tile {
+  width: var(--control-h-md);
+  height: var(--control-h-md);
+  flex: none;
+  background: transparent;
+}
+
+.arr-tile:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.arr-tile:active:not(:disabled) {
+  background: var(--surface-active);
+}
+
+.arr-tile:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+/* Disabled tiles stay pointable, so the reason they are off can be read. */
+.arr-tile:disabled[data-tooltip] {
+  pointer-events: auto;
+}
+
+.arr-tile:focus-visible,
+.arr-matrix__cell:focus-visible,
+.arr-same:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+/* The six edges as two runs of three: horizontal, then vertical. */
+.arr-tiles {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.arr-tiles__run {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+}
+
+.arr-note {
+  max-width: none;
+}
+
+.arr-keyline {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.arr-rule {
+  height: 1px;
+  margin: 2px 0;
+  background: var(--border-divider);
+}
+
+.arr-readout {
+  flex: none;
+  min-width: 6ch;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Nine cell positions, Figma's alignment matrix: a dot marks each, the
+   chosen one is an inked bar. */
+.arr-matrix {
+  display: grid;
+  grid-template-columns: repeat(3, 22px);
+  grid-template-rows: repeat(3, 22px);
+  gap: 1px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--surface-secondary);
+}
+
+.arr-matrix__cell {
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.arr-matrix__cell > i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.arr-matrix__cell:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.arr-matrix__cell[aria-checked='true'] {
+  color: var(--text-primary);
+}
+
+.arr-matrix__cell[aria-checked='true'] > i {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.arr-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+/* Done is the way out a person expects to press: ink, not accent, because it
+   settles a state rather than starting something. */
+.arr-actions__done {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--surface-elevated);
+}
+
+.arr-actions__done:hover {
+  background: var(--text-secondary);
+  border-color: var(--text-secondary);
+  color: var(--surface-elevated);
+}
+
+/* The grid trigger carries a small ink mark while a grid is live. */
+.arr-trigger {
+  position: relative;
+  display: inline-flex;
+}
+
+.arr-trigger[data-live]::after {
+  content: '';
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  box-shadow: 0 0 0 1.5px var(--surface-elevated);
+}
+
+/* ---------------------------------------------------------------- selection */
+
+.arr-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.arr-head__title {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.arr-head__mix {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.arr-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.arr-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.arr-value[data-mixed] {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.arr-swatch {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--swatch, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 18%, transparent);
+}
+
+.arr-swatch[data-gradient] {
+  background: linear-gradient(135deg, var(--swatch, var(--text-tertiary)), transparent);
+}
+
+.arr-same {
+  flex: none;
+  height: 24px;
+  min-width: 24px;
+  padding: 0;
+}
+
+.arr-list {
+  min-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arr-matrix__cell {
+    transition: none;
+  }
+}
+
+/* Increased contrast: the runs and the matrix get an edge instead of relying
+   on a faint ground. */
+:root[data-contrast='more'] .arr-tiles__run,
+:root[data-contrast='more'] .arr-matrix {
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+:root[data-contrast='more'] .arr-value[data-mixed] {
+  color: var(--text-primary);
+}

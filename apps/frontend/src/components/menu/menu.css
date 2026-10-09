@@ -1,0 +1,70 @@
+/* ===========================================================================
+   Menu search: what a long menu shows once typing has begun.
+
+   The panel itself (.menu, .menu__row and the rest) lives in index.css. The
+   query is not an input: the menu keeps the keyboard, so the arrows still
+   walk the rows and Enter still runs one. It is a readout of what has been
+   typed, pinned to the top of the panel while the results scroll under it.
+   =========================================================================== */
+
+.menu__search {
+  position: sticky;
+  top: -5px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  margin: -5px -5px 4px;
+  padding: 5px 13px 4px;
+  border-bottom: 1px solid var(--border-divider);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  flex-shrink: 0;
+}
+
+.menu__search-icon {
+  flex: none;
+  color: var(--text-tertiary);
+}
+
+.menu__query {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+/* Where the next letter lands. Ink, not the accent: it marks a position, and
+   focus in this app is never the brand colour. */
+.menu__caret {
+  flex: none;
+  width: 1.5px;
+  height: 15px;
+  margin-left: -6px;
+  background: var(--text-primary);
+  animation: menuCaret 1s steps(1) infinite;
+}
+
+@keyframes menuCaret {
+  50% { opacity: 0; }
+}
+
+/* How many rows answer the query: data, so tabular and quiet, at the end. */
+.menu__count {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.menu__empty {
+  padding: 10px 8px 12px;
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu__caret { animation: none; }
+}

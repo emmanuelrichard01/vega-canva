@@ -30,7 +30,7 @@ export function cardFor(format: ExportFormat): FormatCard {
   return FORMAT_CARDS.find((c) => c.formats.includes(format)) ?? FORMAT_CARDS[0];
 }
 
-export const SCALES = [1, 2, 3] as const;
+export const SCALES = [1, 2, 3, 4] as const;
 
 export const PADDINGS: ReadonlyArray<{ value: number; label: string }> = [
   { value: 0, label: 'None' },
@@ -53,6 +53,12 @@ export interface ExportPrefs {
   padding: number;
   quality: number;
   embedLocalFonts: boolean;
+  /** SVG: carry the app's own typefaces inside the file. */
+  embedFonts: boolean;
+  /** SVG: text objects as outlines. */
+  outlineText: boolean;
+  /** Draw comment pins. Off by default: comments are conversation, not content. */
+  includeComments: boolean;
 }
 
 export const DEFAULT_PREFS: ExportPrefs = {
@@ -62,6 +68,9 @@ export const DEFAULT_PREFS: ExportPrefs = {
   padding: 40,
   quality: 0.92,
   embedLocalFonts: false,
+  embedFonts: false,
+  outlineText: false,
+  includeComments: false,
 };
 
 export const prefsKey = (roomId: string) => `vega:export-prefs:${roomId || 'local'}`;
@@ -82,7 +91,17 @@ export function sanitizePrefs(raw: unknown): ExportPrefs {
   const quality =
     typeof r.quality === 'number' && Number.isFinite(r.quality) ? Math.min(1, Math.max(0.3, r.quality)) : DEFAULT_PREFS.quality;
   const embedLocalFonts = r.embedLocalFonts === true;
-  return { format, scale, background, padding, quality, embedLocalFonts };
+  return {
+    format,
+    scale,
+    background,
+    padding,
+    quality,
+    embedLocalFonts,
+    embedFonts: r.embedFonts === true,
+    outlineText: r.outlineText === true,
+    includeComments: r.includeComments === true,
+  };
 }
 
 /** Bytes as something a person reads without counting digits. */
@@ -124,4 +143,27 @@ export function exportLabel(format: ExportFormat, batch: { frames: number } | nu
   if (!batch) return `Export ${FORMAT_SPECS[format].label}`;
   if (format === 'pdf') return `Export ${batch.frames}-page PDF`;
   return `Export ${batch.frames} ${FORMAT_SPECS[format].label} files`;
+}
+
+/** What `Area` can be. `view` is the visible area; `slides` is the deck, PDF only. */
+export type Area = 'board' | 'selection' | 'frame' | 'view' | 'slides';
+
+/** An error worth showing, rewritten as the fix where the cause is one we know. */
+export function explainError(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  if (/quota|memory|allocation/i.test(message)) {
+    return 'The browser ran out of memory for an image this large. Try a smaller scale, an area of the board, or SVG.';
+  }
+  if (/tainted|insecure|SecurityError/i.test(message)) {
+    return 'An image on the board comes from a site that does not allow copying it. Remove or re-upload that image, or export as SVG.';
+  }
+  if (/timed? ?out/i.test(message)) return 'The export took too long. Try a smaller scale or fewer frames at a time.';
+  return message || 'The export did not finish. Try again, or try a smaller scale.';
+}
+
+/** The size the fonts add, as words for the checkbox's hint. */
+export function fontCostLabel(bytes: number | null): string {
+  if (bytes === null) return 'Measuring the fonts…';
+  if (bytes === 0) return 'This text uses no app fonts that need embedding.';
+  return `Adds about ${formatBytes(bytes)} to the file.`;
 }

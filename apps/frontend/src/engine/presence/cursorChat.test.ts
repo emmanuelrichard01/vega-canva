@@ -103,6 +103,16 @@ describe('cursor chat, as read from a peer', () => {
   });
 });
 
+describe('roster signature and reactions', () => {
+  it('changes when the same emoji is sent again, so a repeat shows', () => {
+    const peer = (timestamp: number) =>
+      new Map([[2, { user: { name: 'Ana', color: '#22C55E' }, cursor: { x: 0, y: 0 }, reaction: { emoji: '🎉', timestamp } }]]);
+    const first = rosterSignature(readCollaborators(peer(1000), 1));
+    const again = rosterSignature(readCollaborators(peer(2000), 1));
+    expect(again).not.toBe(first);
+  });
+});
+
 describe('awareness payload', () => {
   it('stays small with every field at its largest', () => {
     presenceManager.updateCursor(123456.789, -98765.4321);

@@ -13,7 +13,7 @@ ExportRegistry.register(new RasterExporter('jpeg'));
 ExportRegistry.register(new RasterExporter('webp'));
 ExportRegistry.register(new PDFExporter());
 
-export { ExportService, exportFilename, slugify } from './ExportService';
+export { ExportService, exportFilename, slugify, type ExportJob, type ExportFilesResult } from './ExportService';
 export {
   EXPORT_FORMAT_IDS,
   FORMAT_SPECS,

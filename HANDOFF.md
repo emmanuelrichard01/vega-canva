@@ -15,6 +15,101 @@
   server, sync layer, renderer, engines and UI. `git log` from that date
   records what changed.
 
+## Redesign waves 5, 6 and 7 (2026-10-07 to 10-08)
+
+Branch `redesign/wave5-6` (wave 5 committed at 78c4822; waves 6 and 7 landed in
+the working tree and are committed with the doc pass). Production was still
+`main` at 9c6e509 (wave 4) when this was written. The per-area briefs, the
+ownership tables and the coordinator logs live in `.claude/redesign/`
+(`wave5.md`, `wave6.md`, `wave7.md`, `followups.md`, `HANDOFF-next-session.md`);
+read `HANDOFF-next-session.md` first for what is still open.
+
+**Wave 5**
+- **Version history.** Time Travel became a versions panel: working *sessions*,
+  server *autosaves* (retention folds old `room_updates` rows into `auto`
+  versions instead of dropping them) and *named versions* an editor keeps on
+  purpose. Migration #5 adds `room_versions`; `apps/server/src/routes/versions.ts`
+  serves list/get (viewer) and create/rename/delete (editor). Palette entry
+  "Version history"; context menu "Show history".
+- **Physics.** `engine/physics/` gained forces, `fieldArt`, `flightState` and a
+  safety net (`simulationSafety.test.ts`); `ForcesBar` and the material section
+  were redone. Open: a `frictionless` material and a `pinned` flag.
+- **Onboarding.** `components/onboarding/` holds the welcome moments, the
+  *Get started* checklist (`GetStartedChecklist`, `useChecklistDetection`) and
+  `EmptyBoardHints`; the tour and walkthrough stay in `engine/learn/`.
+- **Chrome.** Dock flyouts scale and centre on the dock; seats open on click
+  (`seatMenuModel.ts`, a small state machine); collapsed panels become pills
+  with a peek (`useBoardPanels`, `BoardColumn`).
+- **Emoji.** Fluent Emoji (MIT) as SVG in `public/emoji/` (about 3,100 files,
+  built by `apps/frontend/scripts/emoji/`), `engine/emoji/`, `components/emoji/`
+  (picker, `:shortcode:` autocomplete, `KonvaEmoji`).
+- **Stickies, frames.** Stickies: dog-ear, stamps (reactions), checklists.
+  Frames: emoji icon, description, themes, size presets, and slide fields
+  (`slideOrder`, transition).
+- **Data links.** A chart can follow a table (`engine/chart/chartFromTable`,
+  `components/data/`): "Chart this", link overlay, and write-back from a
+  dragged chart point with a confirm step (`planWriteBack`, `commitWriteBack`).
+  Drag write-back from the canvas itself is still open.
+- **Collab and share.** Share modal copy is honest about enforcement (a bare
+  room id grants access unless enforcement is on); follow links; presence
+  roster, spotlight and Shift+Alt+click ping.
+- **Media, sketch, cursors, music.** Media tools and the share card
+  (`LinkPreview`); sketch mode board-wide and per object; a cursor inventory
+  test (`cursorInventory.test.ts`); Spotify gained `user-library-modify`
+  (existing users reconnect once).
+
+**Wave 6**
+- **Lines.** One line/arrow tool, eight end styles, binding to connectors, a
+  label with `labelT`, flush arrow tips. Open: connector heads overshoot by
+  half a stroke.
+- **Shadows and stroke.** Object drop shadows (`ShapeEffects`, spread), fine
+  stroke weights; `normalize` clamps negative stroke width.
+- **Rail and menu.** Contextual rail at 32px with a 120ms entrance and
+  popover sizes sm/md/lg; the right-click menu has search (12+ commands),
+  role variants (frame, empty board) and the 8-end pickers.
+- **HUD system.** `engine/ui/hud.ts` plus `HudLayer`/`CanvasPill`: the
+  transform badge, rotation ticks, guide pills, line readout, path-editor HUD.
+  Tokens `--hud-object` and `--hud-measure`.
+- **Multi-selection.** Align to key object or frame, a live arrange/grid
+  session (Alt+Shift+G; Mod+Alt+G frames the selection), booleans. Open:
+  booleans are destructive.
+- **Dock.** Shape sheet, text styles, colourful chart and grid art
+  (`dock/art/DataArt`), a 44px sticky slot in the tray. The flyout rises above
+  the rail while a menu is open.
+
+**Wave 7**
+- **Slides and presentation.** `engine/slides/` and `components/slides/`: slide
+  view, presenter view in its own window, layouts and placeholders, slide
+  themes, transitions (Push, Slide, Zoom, per-slide easing and duration, hover
+  preview), laser and reactions, PDF export.
+- **Export.** `nodesToSvg` is shared with `boardSvg` (home covers); font
+  embedding (bundled and Google subsets); PNG drawn in tiles past the canvas
+  limit with a 64 MP guard; ZIP batch export; PDF for board, frames or slides;
+  an Export section in the panel; dialog with preview, size, progress, cancel;
+  frame links (`?frame=`).
+- **Template catalogue.** The old 45 templates are gone. Nine categories
+  (systems, product, diagrams, design, data, science, physics, slides, art),
+  about 53 templates in `engine/templates/catalogue/<set>.ts`, assembled by
+  `templates.ts` with `SHOWCASE` and `FIRST_BOARD` (`product-q3-planning`).
+  `templates.test.ts` enforces text fit, overlap, build time (under 50 ms) and
+  link validity; each set has its own tests. Ids are `<category>-<slug>`.
+- **Surface-aware ink.** Default and template ink follows the surface it sits
+  on (the owning frame's fill), so boards read on dark. Chart and connector
+  label ink are the last pieces still to follow.
+- **Performance.** `createNode` no longer scans the whole document, and derived
+  patches are batched. Baselines and the plan are in `briefs/w7-perf.md`.
+- **Font picker.** Rebuilt under `components/fonts/`.
+- **Rotation.** Rotation hit zones and a curved arch cursor, tangent to the
+  angle and quantised to 5 degrees (`rotateCursor.ts`).
+- **Menu fix.** `components/ui/outsidePress.ts` stops a menu reopening on the
+  second click of its own trigger; every dismisser uses it.
+
+Still open (full list in `.claude/redesign/HANDOFF-next-session.md`): dark-board
+chart and label ink, template seeding drops sticky reactions, `fill: []`
+semantics, `useOpeningFrame` honouring `?frame=`, histogram KDE domain, the
+embed snippet (needs a `/i/*` header exception; ask the owner), SVG "outline
+text" covering text nodes only.
+
 The rest of this file is the session log it has always been. Read it for
 context, not as a description of the current code: where it disagrees with
 the code or with `docs/`, the code wins.
@@ -5489,11 +5584,10 @@ pass of fixes the owner reported against it.
   then every example as its own thumbnail. Picking one arms the tool
   (`TableTool.preset`, the `ChartTool.kind` pattern); a drag sets the width
   and the rows keep a readable height.
-- **Templates.** Four science boards (`scienceTemplates.ts`, each drawn
-  twice — presentation and whiteboard sketch) and three table boards
-  (`tableTemplates.ts`: a project operating review, a pricing review, a
-  science teaching week), built from the gallery's own specs so the two
-  cannot describe one tracker two ways.
+- **Templates.** (Superseded in wave 7: the original template sets were
+  replaced by the nine-category catalogue in `engine/templates/catalogue/`;
+  see *Redesign waves 5, 6 and 7*. Table examples remain in `tableExamples.ts`
+  and still drive the table gallery.)
 - **Focus is ink, not amber.** The owner asked for the amber ring to go
   everywhere. `--focus-ring-color` is `--text-secondary`; text fields take a
   1.5px `--focus-field-color` (`--text-tertiary`). Sheet and grid selection
@@ -6013,7 +6107,7 @@ broken; all of it is unwatched.
 
 Agreed scope, in order. Two of five are done:
 
-1. ~~**Demo rooms**~~ — done. **26 templates in 5 categories**, including
+1. ~~**Demo rooms**~~ — done. **26 templates in 5 categories (replaced in wave 7 by the nine-category catalogue)**, including
    deliberate scale showcases at 100/500/1000 objects.
 2. **Per-tool guided walkthroughs.** *Started — the engine and five sequences
    are in; see §4p.* The agreed design held: a mark anchored to a real object
@@ -6388,7 +6482,7 @@ Physics, templates and the product shell (newest):
 | `engine/physics/forces.ts` | the force catalogue, latch durations, falloff curves, the wording shown in the panel |
 | `engine/physics/flightState.ts` | what is mid-throw, kept out of the document |
 | `hooks/usePhysics.ts` | the React side: arming a force, latching, `calmAll` |
-| `engine/templates/templates.ts` | 26 templates as typed `NewNodeInput`, with `build(limit)` for thumbnails |
+| `engine/templates/templates.ts` | the registry (about 53 templates in 9 categories, assembled from `catalogue/`), `SHOWCASE`, `FIRST_BOARD`; `build(limit)` for thumbnails |
 | `engine/model/boardPreview.ts` | the board summary in `localStorage`, `PREVIEW_VERSION`, `previewPolygonPoints`. Pure, tested. |
 | `components/WorkspaceCover.tsx` | that summary drawn as SVG — the only thumbnail renderer, shared by boards and templates |
 | `engine/objects/appearanceTypes.ts` | which types carry an `appearance` block, held against the registry by a test |
@@ -6436,7 +6530,7 @@ Charts, tables and the sheet (newest — see §5a-0-bf):
 | `engine/table/tableLayout.ts` · `tableSvg.ts` | one layout, painted by `TableRenderer` and by export |
 | `engine/table/tableApply.ts` | the document side: create, update (height follows rows), CSV files |
 | `engine/table/tableExamples.ts` | the twenty-five table examples, most of them computing |
-| `engine/templates/scienceTemplates.ts` · `tableTemplates.ts` | the science and table boards |
+| `engine/templates/catalogue/*.ts` | the template catalogue: one set file per category, assembled by `templates.ts` |
 | `components/sheet/useSheet.ts` | the spreadsheet interaction model both grids share |
 | `components/table/TableEditor.tsx` | cells on the board, the editing toolbar |
 | `components/panel/ChartSection.tsx` · `TableSection.tsx` | the two data objects' panels |

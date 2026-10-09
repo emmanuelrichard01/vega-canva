@@ -1,17 +1,20 @@
 import React, { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { Group, Line, Rect, Text } from 'react-konva';
+import { Group, Line, Rect } from 'react-konva';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { useStore } from '../../hooks/useStore';
 import { nodeBounds } from '../../engine/SceneGraph';
 import { clientToWorld } from '../../engine/interaction/clientToWorld';
 import { marqueeActivity } from '../../engine/interaction/marquee';
 import { stackAtPoint } from '../../engine/interaction/pick';
-import { formatDistance, measureBetween, type MeasureBox, type MeasureSegment } from '../../engine/interaction/measure';
+import { measureBetween, type MeasureBox, type MeasureSegment } from '../../engine/interaction/measure';
+import { formatHud } from '../../engine/ui/hudFormat';
+import { hudColors, segmentLabelOffset } from '../../engine/ui/hudPill';
+import { CanvasPill, canvasPillSize } from '../hud/CanvasPill';
 import { railVeil } from '../../engine/interaction/railVeil';
 import { cameraSystem } from '../../engine/CameraSystem';
 import { useCameraZoom } from '../../engine/useCameraZoom';
 import { canvasChromeContrast, useContrast } from '../../engine/ui/contrast';
-import { chromeSurfaceColor, chromeToken, HALO_PX, useChromeDark } from '../../engine/interaction/chromeHalo';
+import { chromeSurfaceColor, HALO_PX, useChromeDark } from '../../engine/interaction/chromeHalo';
 import './selectChrome.css';
 
 interface Props {
@@ -102,10 +105,9 @@ export const MeasureOverlay: React.FC<Props> = ({ selectedIds }) => {
   const line = hair * strokeScale;
   const haloWidth = line + 2 * HALO_PX * hair;
   const surface = halo ? chromeSurfaceColor() : '';
-  // The same magenta as the smart guides: both are measurements, not selection.
-  const MEASURE_COLOR = chromeToken('--canvas-measure', '#F0308C');
-  const LABEL_FILL = chromeToken('--canvas-measure-label', '#C21A6E');
-  const LABEL_INK = chromeToken('--canvas-measure-ink', '#FFFFFF');
+  // The measurement colour the smart guides and spacing pills share: these are
+  // distances, not selection.
+  const MEASURE_COLOR = hudColors().line;
 
   return (
     <Group listening={false} name={EXPORT_CHROME}>
@@ -135,12 +137,12 @@ export const MeasureOverlay: React.FC<Props> = ({ selectedIds }) => {
       {segments.list.map((s, i) => {
         const horizontal = s.orientation === 'horizontal';
         const points = horizontal ? [s.from, s.position, s.to, s.position] : [s.position, s.from, s.position, s.to];
-        const label = formatDistance(s.value);
-        const labelW = (label.length * 6.4 + 10) * hair;
-        const labelH = 16 * hair;
+        const label = formatHud({ kind: 'distance', value: s.value }, zoom).text;
+        const pill = canvasPillSize(label);
         const mid = (s.from + s.to) / 2;
-        const lx = horizontal ? mid - labelW / 2 : s.position + 6 * hair;
-        const ly = horizontal ? s.position + 6 * hair : mid - labelH / 2;
+        const offset = segmentLabelOffset(s.orientation, Math.abs(s.to - s.from) * (zoom || 1), pill);
+        const lx = (horizontal ? mid : s.position) + offset.dx * hair;
+        const ly = (horizontal ? s.position : mid) + offset.dy * hair;
         const arm = 4 * hair;
         const caps = horizontal
           ? [[s.from, s.position - arm, s.from, s.position + arm], [s.to, s.position - arm, s.to, s.position + arm]]
@@ -159,22 +161,7 @@ export const MeasureOverlay: React.FC<Props> = ({ selectedIds }) => {
             {caps.map((c, j) => (
               <Line key={j} points={c} stroke={MEASURE_COLOR} strokeWidth={line} perfectDrawEnabled={false} listening={false} />
             ))}
-            <Rect x={lx} y={ly} width={labelW} height={labelH} cornerRadius={3 * hair} fill={LABEL_FILL} listening={false} />
-            <Text
-              x={lx}
-              y={ly}
-              width={labelW}
-              height={labelH}
-              align="center"
-              verticalAlign="middle"
-              text={label}
-              fontSize={11 * hair}
-              fontStyle="600"
-              fontFamily="Inter, sans-serif"
-              fill={LABEL_INK}
-              listening={false}
-              perfectDrawEnabled={false}
-            />
+            <CanvasPill x={lx} y={ly} text={label} tone="measure" zoom={zoom} haloColor={halo ? surface : undefined} />
           </React.Fragment>
         );
       })}

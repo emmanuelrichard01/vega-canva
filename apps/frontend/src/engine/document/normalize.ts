@@ -1,3 +1,4 @@
+import { normalizeSlideFields } from '../slides/slideMeta';
 import { normalizeRecipe } from '../grid/gridNode';
 import {
   isChartKind,
@@ -508,6 +509,9 @@ function toPaint(entry: unknown): Paint | null {
 }
 
 function toPaintArray(value: unknown, legacyColor: unknown): Paint[] | undefined {
+  // An explicit empty list is "no fill" (transparent shape, frame with no
+  // background); only a missing or unreadable value falls back to the default.
+  if (Array.isArray(value) && value.length === 0) return [];
   if (Array.isArray(value)) {
     const paints = value.map(toPaint).filter((p): p is Paint => p !== null);
     if (paints.length) return paints;
@@ -576,7 +580,7 @@ function toStroke(value: unknown, legacyColor: unknown, legacyWidth: unknown): S
   if (value && typeof value === 'object') {
     const s = value as any;
     if (isCssColor(s.color)) {
-      const stroke: Stroke = { color: s.color.trim(), width: num(s.width, 2) };
+      const stroke: Stroke = { color: s.color.trim(), width: Math.max(0, num(s.width, 2)) };
       // Assigned only when present, never set to `undefined`. A literal
       // `undefined` inside a nested plain value survives `toJSON()` and
       // defeats the `?? fallback` reads downstream.
@@ -601,7 +605,7 @@ function toStroke(value: unknown, legacyColor: unknown, legacyWidth: unknown): S
     }
   }
   if (isCssColor(legacyColor) && legacyColor.trim() !== 'transparent') {
-    return { color: legacyColor.trim(), width: num(legacyWidth, 2) };
+    return { color: legacyColor.trim(), width: Math.max(0, num(legacyWidth, 2)) };
   }
   return undefined;
 }
@@ -885,6 +889,7 @@ function normalizeShapeGeometry(raw: any): ShapeGeometry {
     if (Number.isFinite(raw?.geometry?.lineAmplitude) && raw.geometry.lineAmplitude !== 1) {
       geometry.lineAmplitude = clamp(raw.geometry.lineAmplitude, MIN_AMPLITUDE_SCALE, MAX_AMPLITUDE_SCALE);
     }
+    if (Number.isFinite(raw?.geometry?.labelT)) geometry.labelT = clamp(raw.geometry.labelT, 0, 1);
     // Absent is the profile's own default — see `defaultEndAlign`. Storing it
     // only when it disagrees keeps every existing line untouched and keeps the
     // document from carrying a value that just restates the rule.
@@ -1460,6 +1465,7 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         ...(typeof raw?.clipContent === 'boolean' ? { clipContent: raw.clipContent } : null),
         ...(typeof raw?.slideOrder === 'number' && Number.isFinite(raw.slideOrder) ? { slideOrder: raw.slideOrder } : null),
         ...(typeof raw?.preset === 'string' && /^[a-z0-9-]{1,40}$/.test(raw.preset) ? { preset: raw.preset } : null),
+        ...normalizeSlideFields(raw),
       };
   }
 }

@@ -232,18 +232,13 @@ const BoardHeaderLeftInner: React.FC<LeftProps> = ({
   }, []);
 
   /**
-   * The menu closes itself on any outside press, in the capture phase, which
-   * includes a press on the button that opened it. Remembering which menu that
-   * press closed lets the button close its own menu instead of reopening it.
+   * The chevron. Both menus hang from the whole name, but only this opens the
+   * board's: a press on it while that menu is up closes it and eats the click
+   * (the menu's `trigger`), so it never reopens what it just closed.
    */
-  const justClosed = useRef<{ which: 'board' | 'view'; at: number } | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
 
   const openMenu = (which: 'board' | 'view') => (e: React.MouseEvent<HTMLButtonElement>) => {
-    const recent = justClosed.current;
-    if (recent && recent.which === which && performance.now() - recent.at < 300) {
-      justClosed.current = null;
-      return;
-    }
     // Hung from the whole name, so it reads as the board's menu rather than a
     // 20px chevron's.
     const from = docRef.current ?? e.currentTarget;
@@ -347,6 +342,7 @@ const BoardHeaderLeftInner: React.FC<LeftProps> = ({
         )}
         <button
           type="button"
+          ref={menuButtonRef}
           className="hdr-doc__menu"
           aria-label="Board menu: share, export, view, music and help"
           aria-haspopup="menu"
@@ -411,10 +407,8 @@ const BoardHeaderLeftInner: React.FC<LeftProps> = ({
           entries={menu.which === 'board' ? boardEntries() : viewEntries()}
           anchor={{ kind: 'rect', rect: menu.rect, prefer: 'below', align: 'start' }}
           focusFirst={menu.keyboard}
-          onClose={() => {
-            justClosed.current = { which: menu.which, at: performance.now() };
-            setMenu(null);
-          }}
+          trigger={menu.which === 'board' ? menuButtonRef : null}
+          onClose={() => setMenu(null)}
         />
       )}
     </div>

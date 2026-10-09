@@ -2,6 +2,9 @@ import { useEffect, useRef } from 'react';
 import { cameraSystem } from '../engine/CameraSystem';
 import { editor } from '../engine/api/EditorAPI';
 import { engineEvents } from '../engine/EventBus';
+import { useStore } from './useStore';
+import { readFrameTarget, withoutFrameParam } from '../components/export/frameLink';
+import type { AnyNode } from '../engine/model/schema';
 
 /**
  * Where a board is looking the moment you open it.
@@ -78,7 +81,20 @@ export function useOpeningFrame(roomId: string | undefined): void {
       framed.current = roomId;
       stop();
 
-      editor.zoomToFit();
+      // A link made by "Copy link to frame" opens on that frame, then drops
+      // the parameter so a reload frames the whole board again.
+      const target = typeof window !== 'undefined' ? readFrameTarget(window.location.search) : null;
+      const frame = target ? (useStore.getState().objects[target] as AnyNode | undefined) : undefined;
+      if (target && frame?.type === 'frame') {
+        editor.zoomToNodes([frame]);
+        try {
+          window.history.replaceState(window.history.state, '', `${window.location.pathname}${withoutFrameParam(window.location.search)}${window.location.hash}`);
+        } catch {
+          /* history unavailable: the link just stays */
+        }
+      } else {
+        editor.zoomToFit();
+      }
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('boardArriving'));
       }

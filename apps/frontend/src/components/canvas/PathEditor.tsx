@@ -36,6 +36,10 @@ import { curvatureAt } from '../../engine/model/pathGeometry';
 import { bendSegment } from '../../engine/model/pathBend';
 import { cursorCss } from '../../engine/cursor/cursorCss';
 import { penVisual } from '../../engine/cursor/cursorVisual';
+import { hud } from '../../engine/ui/hud';
+
+/** The HUD channel the path editor's drag readout uses. */
+const PATH_HUD = 'path';
 
 interface Props {
   /** Stage zoom, so every handle stays the same size on screen. */
@@ -78,7 +82,9 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
   const [marquee, setMarquee] = React.useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [hoveredKey, setHoveredKey] = React.useState<string | null>(null);
   const [hoveredHandleKey, setHoveredHandleKey] = React.useState<string | null>(null);
-  const [dragBadge, setDragBadge] = React.useState<{ x: number; y: number; text: string } | null>(null);
+  // The drag readout goes to the board's HUD on the `path` channel, written
+  // from the pointer handler with no React render per move.
+  React.useEffect(() => () => hud.hide(PATH_HUD), []);
 
   /**
    * The live drag session.
@@ -368,7 +374,7 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
             startGeometry.kind === 'compound'
               ? { kind: 'compound', subpaths: subs.map((sub, i) => (i === s.grab!.sub ? bent : sub)) }
               : bent;
-          setDragBadge({ x: p.x - node.x, y: p.y - node.y, text: 'Bend' });
+          hud.show({ source: PATH_HUD, kind: 'label', value: 'Bend', at: p, placement: 'pointer' });
         }
       } else if (s.kind === 'handle' && s.ref && s.side) {
         let dest = { x: p.x - s.origin.x, y: p.y - s.origin.y };
@@ -393,21 +399,15 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
         const hdy = dest.y - (anchorPt?.y ?? 0);
         const freeAngle = ((Math.atan2(hdy, hdx) * 180) / Math.PI + 360) % 360;
         const displayAngle = snapAngleDeg !== null ? snapAngleDeg : freeAngle;
-        const isBroken = altHeld.current;
-        const isSnapped = shiftHeld.current;
-
-        let modeHint = '';
-        if (isBroken) modeHint = ' (Disconnected)';
-        else if (isSnapped) {
-          const deg = Math.round(displayAngle);
-          if (deg % 90 === 0) modeHint = ' (Cardinal)';
-          else if (deg % 45 === 0) modeHint = ' (Diagonal)';
-          else modeHint = ` (Snap 15°)`;
-        }
-        setDragBadge({
-          x: p.x - node.x,
-          y: p.y - node.y,
-          text: `Handle · ${Math.round(displayAngle)}°${modeHint}`,
+        // The handle's direction, with the snap tick while Shift holds it to
+        // the 15° grid.
+        hud.show({
+          source: PATH_HUD,
+          kind: 'angle',
+          value: displayAngle,
+          at: p,
+          placement: 'pointer',
+          snapped: snapAngleDeg !== null,
         });
       } else {
         const rawDx = p.x - s.start.x;
@@ -421,10 +421,14 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
         s.appliedDelta = constrained;
         s.working = moveAnchors(s.working, s.anchors, stepDx, stepDy);
 
-        setDragBadge({
-          x: p.x - node.x,
-          y: p.y - node.y,
-          text: `Δx: ${Math.round(constrained.dx)} Δy: ${Math.round(constrained.dy)}${shiftHeld.current ? ' (Snapping)' : ''}`,
+        hud.show({
+          source: PATH_HUD,
+          kind: 'delta',
+          value: { dx: constrained.dx, dy: constrained.dy },
+          at: p,
+          placement: 'pointer',
+          // Shift locks the move to an axis: the tick says the lock is on.
+          snapped: shiftHeld.current,
         });
       }
 
@@ -476,7 +480,7 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
       const s = session.current;
       session.current = null;
       endSession.current = null;
-      setDragBadge(null);
+      hud.hide(PATH_HUD);
       stage.off('mousemove.patheditor');
       window.removeEventListener('mouseup', onUp);
       window.removeEventListener('pointercancel', onUp);
@@ -846,7 +850,6 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
         })
       )}
 
-      {/* Drag Delta HUD Tooltip Badge */}
       {/*
         The osculating circles, under everything else.
         Faint and dashed on purpose: this is a *reading* of the curve, not part
@@ -882,27 +885,6 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
             y={-14 * scale}
             fill="#6366F1"
             fontSize={10 * scale}
-            fontFamily="monospace"
-          />
-        </Group>
-      )}
-
-      {dragBadge && (
-        <Group x={dragBadge.x + 10 * scale} y={dragBadge.y - 20 * scale} listening={false}>
-          <Rect
-            width={dragBadge.text.length * 6 * scale + 14 * scale}
-            height={18 * scale}
-            fill="rgba(15, 23, 42, 0.88)"
-            cornerRadius={4 * scale}
-            shadowColor="rgba(0,0,0,0.3)"
-            shadowBlur={6 * scale}
-          />
-          <Text
-            text={dragBadge.text}
-            x={7 * scale}
-            y={4 * scale}
-            fill="#FFFFFF"
-            fontSize={9 * scale}
             fontFamily="monospace"
           />
         </Group>

@@ -14,11 +14,13 @@ import {
 import { DEFAULT_CONNECTOR_INK, type ConnectorLabel, type ConnectorNode } from '../../../engine/model/schema';
 import { connectorBounds, ELBOW_RADIUS, type Box } from '../../../engine/model/connector';
 import { capExtentPoints, connectorCaps, trimRunForCaps } from '../../../engine/model/connectorEnds';
-import { DERIVED_ORIGIN, applyNodePatches, provider, updateNode } from '../../../engine/document';
+import { provider, updateNode } from '../../../engine/document';
+import { scheduleDerivedPatch } from '../../../engine/document/derivedPatches';
 import { electedClient, isElectedWriter } from '../../../engine/document/election';
 import { canEditObjects } from '../../../engine/model/permissions';
 import { collaboratorStore } from '../../../engine/presence/collaboratorStore';
 import { useStore } from '../../../hooks/useStore';
+import { useGround } from '../../../hooks/useSurface';
 import { canvasPlateFill } from '../../../engine/ThemeService';
 import { readableOnSurface } from '../../../engine/model/color';
 import { liveTransformStore } from '../../../engine/model/liveTransformStore';
@@ -40,6 +42,9 @@ import {
   sentenceCase,
 } from '../../../engine/model/connectorLabelLayout';
 import { strokeColor, strokeDashProps, strokeWidth } from './shared';
+import { DropShadow } from './ShapeEffects';
+import { capSilhouette, mergeSilhouettes, pointsBox } from './shadowInk';
+import { castsShadow, colorHasAlpha } from '../../../engine/model/dropShadow';
 import '../connectorLabel.css';
 
 interface Props {
@@ -131,6 +136,8 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
   const world = useEasedCurve(target, Boolean(route?.curved));
   const zoom = useCameraZoom();
   const dark = useStore((state) => state.darkTheme);
+  // A label on a frame reads against the frame's fill, not the board.
+  const ground = useGround(node);
   const draft = React.useSyncExternalStore(labelEditStore.subscribe, labelEditStore.get, labelEditStore.get);
 
   const labels = React.useMemo(() => labelsOf(node), [node]);
@@ -220,14 +227,13 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
       Math.abs(box.height - node.height) >= 2;
     if (!drifted) return;
 
-    const timer = window.setTimeout(() => {
-      if (liveTransformStore.active) return;
-      // Bookkeeping, not an edit: kept out of everyone's undo stack.
-      applyNodePatches([{ id: node.id, changes: { x: box.x, y: box.y, width: box.width, height: box.height } }], {
-        origin: DERIVED_ORIGIN,
-      });
-    }, 0);
-    return () => window.clearTimeout(timer);
+    // Bookkeeping, not an edit: kept out of everyone's undo stack, and
+    // committed with every other connector's in one transaction.
+    return scheduleDerivedPatch(
+      node.id,
+      { x: box.x, y: box.y, width: box.width, height: box.height },
+      { guard: () => !liveTransformStore.active }
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [node.id, node.x, node.y, node.width, node.height, routeKey, capKey]);
 
@@ -327,7 +333,7 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
   };
 
   const fontSize = labelFontSize(width);
-  const plate = canvasPlateFill(dark);
+  const plate = ground ?? canvasPlateFill(dark);
   const ink = readableOnSurface(stroke, plate);
   const PAD = 3;
 
@@ -362,9 +368,43 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
       }
     : undefined;
 
+  /**
+   * The connector's drop shadow: the routed line and both markers as one
+   * silhouette. Inside the label clip, so the line's shadow breaks where the
+   * line does rather than running under the words.
+   */
+  const shadowSpec = node.appearance?.shadow;
+  const markerInk = (cap: typeof startCap, key: 'start' | 'end') => {
+    const rough = cap && sketch ? sketchedCap(cap, key, capSize, sketch) : null;
+    if (!rough) return capSilhouette(cap, width);
+    const path = new Path2D(rough);
+    return { fills: cap!.filled ? [{ path }] : [], strokes: [{ path, width, cap: 'round' as const, join: 'round' as const }] };
+  };
+  const dropShadow = castsShadow(shadowSpec) ? (
+    <DropShadow
+      shadow={shadowSpec}
+      box={pointsBox([...points, ...capExtentPoints(startCap), ...capExtentPoints(endCap)], width * 2 + capSize + 8)}
+      silhouette={mergeSilhouettes(
+        {
+          strokes: [{
+            path: new Path2D(data),
+            width,
+            cap: sketched ? 'round' : (dash.lineCap ?? 'butt'),
+            join: 'round',
+            dash: dash.dash,
+          }],
+        },
+        markerInk(startCap, 'start'),
+        markerInk(endCap, 'end')
+      )}
+      knockout={colorHasAlpha(stroke)}
+    />
+  ) : null;
+
   return (
     <Group>
       <Group clipFunc={clipGaps}>
+      {dropShadow}
       <Path
         data={data}
         stroke={stroke}

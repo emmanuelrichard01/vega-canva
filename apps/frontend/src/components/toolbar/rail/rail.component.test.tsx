@@ -243,6 +243,21 @@ describe('multi-select rail', () => {
     expect(getByLabelText('Organise notes')).toBeTruthy();
   });
 
+  it('shows connectors whose ends disagree as mixed, not as a shared choice', () => {
+    const lines = [0, 1].map((i) =>
+      normalizeNode({ id: `e${i}`, type: 'connector', from: { x: 0, y: i * 40 }, to: { x: 100, y: i * 40 }, endEnd: i ? 'arrow' : 'none' })
+    );
+    const { getByLabelText } = render(
+      <div className="ctx-toolbar">
+        <MultiRail nodes={lines} ids={lines.map((n) => n.id)} conditional={null} tail={<RailMenuButton entries={() => []} />} tailControls={1} />
+      </div>
+    );
+    act(() => void fireEvent.click(getByLabelText('Ends')));
+    const end = getByLabelText('End cap');
+    expect(end.querySelectorAll('[aria-checked="true"]')).toHaveLength(0);
+    expect(end.closest('.ctx-popover')?.getAttribute('data-size')).toBe('sm');
+  });
+
   it('leads with route and ends for a set of connectors', () => {
     const lines = [0, 1].map((i) =>
       normalizeNode({ id: `c${i}`, type: 'connector', from: { x: 0, y: i * 40 }, to: { x: 100, y: i * 40 } })

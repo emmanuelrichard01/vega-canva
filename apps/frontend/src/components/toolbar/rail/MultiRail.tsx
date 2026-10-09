@@ -1,15 +1,10 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import {
-  AlignHorizontalSpaceAround,
-  AlignVerticalSpaceAround,
   ChevronDown,
-  Combine,
   Crop,
   Group,
   ImageOff,
   ImagePlus,
-  LayoutGrid,
-  Layers,
   Lock,
   Grid2x2Check,
   Palette,
@@ -18,11 +13,7 @@ import {
   Users,
 } from 'lucide-react';
 import { applyNodePatches, updateNodes } from '../../../engine/document';
-import { applyBoolean, previewBoolean, type BooleanPlan } from '../../../engine/document/vectorOps';
 import { editor } from '../../../engine/api/EditorAPI';
-import { booleanPreview } from '../../../engine/interaction/booleanPreview';
-import { alignSelection, distributeSelection } from '../../../engine/model/align';
-import { BOOLEAN_OPS, type BooleanOp } from '../../../engine/model/pathBoolean';
 import { applyOrganiseStickies } from '../../../engine/tools/organiseStickies';
 import { sharedValue } from '../../../engine/model/selection';
 import { compareStacking } from '../../../engine/model/stacking';
@@ -32,6 +23,11 @@ import { clampZoom, SLOT_MAX_ZOOM, SLOT_MIN_ZOOM } from '../../../engine/grid/gr
 import { fillGridWithImages, recentreSlot, releaseSlots, setSlotZoom } from '../../../engine/grid/gridSlotApply';
 import { setMultiplePathsAnchorMode } from '../../../engine/interaction/pathAnchorActions';
 import { END_CAP_KINDS, type EndCapKind } from '../../../engine/model/connectorEnds';
+import { arrangeUnits } from '../../../engine/arrange/units';
+import { combineAvailability, describeTidyShape, isPlan, planTidy, tidyShape } from '../../../engine/arrange/plans';
+import { arrangeSession } from '../../../engine/arrange/session';
+import { arrangeGhost } from '../../../engine/arrange/preview';
+import { commitPatches } from '../../../engine/arrange/livePreview';
 import { useStore } from '../../../hooks/useStore';
 import { FillEditor } from '../../ui/FillEditor';
 import { SegmentedControl } from '../../ui/SegmentedControl';
@@ -39,136 +35,15 @@ import { EndCapIcon, RouteIcon } from '../../panel/connectorIcons';
 import { withShortcut, SHORTCUTS } from '../../menu/shortcuts';
 import { PopoverSlider, RailButton } from '../RailBase';
 import { RailPopover } from '../RailPopover';
-import { ALIGN_BUTTONS, BOOLEAN_BUTTONS } from '../railConstants';
+import { AlignControl } from '../AlignmentToolbar';
+import { CombineControl } from '../VectorBooleanSection';
+import { GridControl } from '../../arrange/GridControl';
+import { SelectionControl } from '../../arrange/SelectionControl';
+import { ghostOf } from '../../arrange/ghost';
 import { RailAnatomy, type RailVerb } from './anatomy';
-import { ARRANGE_IN_GRID_KEYS } from './verbs';
 import { BulkSketchControl, CornerIcon, SymmetricIcon } from './controls';
 import { EndsGlyph } from './ConnectorRail';
 import { ROUTE_SEGMENTS } from './routeSegments';
-import { tidySelection, tidyable } from './tidy';
-import { describeMix } from './describeMix';
-import { arrangeSelectionInGrid } from '../../../engine/grid/arrangeInGrid';
-
-/** Lines things up, or evens the gaps between them, from one popover. */
-const ArrangeControl: React.FC<{ nodes: readonly AnyNode[]; canDistribute: boolean }> = ({ nodes, canDistribute }) => (
-  <RailPopover label="Align and distribute" trigger={ALIGN_BUTTONS[0].icon} align="start">
-    <span className="ctx-popover__label">Align</span>
-    <div className="rail-align-grid">
-      {ALIGN_BUTTONS.map(({ edge, label, icon }) => (
-        <button
-          key={edge}
-          type="button"
-          className="ctx-shape-btn"
-          aria-label={label}
-          data-tooltip={label}
-          onClick={() => applyNodePatches(alignSelection(nodes, edge))}
-        >
-          {icon}
-        </button>
-      ))}
-    </div>
-    <span className="ctx-popover__label">Distribute</span>
-    <div className="rail-toggle-row">
-      <button
-        type="button"
-        className="ctx-shape-btn"
-        disabled={!canDistribute}
-        aria-label="Distribute horizontally"
-        data-tooltip={canDistribute ? 'Even horizontal gaps' : 'Needs three or more objects'}
-        onClick={() => applyNodePatches(distributeSelection(nodes, 'horizontal'))}
-      >
-        <AlignHorizontalSpaceAround size={16} />
-      </button>
-      <button
-        type="button"
-        className="ctx-shape-btn"
-        disabled={!canDistribute}
-        aria-label="Distribute vertically"
-        data-tooltip={canDistribute ? 'Even vertical gaps' : 'Needs three or more objects'}
-        onClick={() => applyNodePatches(distributeSelection(nodes, 'vertical'))}
-      >
-        <AlignVerticalSpaceAround size={16} />
-      </button>
-    </div>
-  </RailPopover>
-);
-
-/**
- * What decides a combine's answer for one node: where it is, how it is turned,
- * its outline and its corner radius. Two selections with the same key get the
- * same plans, so moving the pointer across the rail never re-clips polygons.
- */
-const planKeyOf = (n: AnyNode | undefined): string =>
-  n
-    ? JSON.stringify([
-        n.id,
-        n.x,
-        n.y,
-        n.width,
-        n.height,
-        n.rotation,
-        n.scaleX,
-        n.scaleY,
-        n.zIndex,
-        n.locked,
-        'geometry' in n ? n.geometry : null,
-        (n as { appearance?: Appearance }).appearance?.cornerRadius ?? null,
-      ])
-    : '';
-
-/** The four plans, computed only while the popover is open and re-planned only when the geometry changes. */
-const CombineList: React.FC<{ ids: readonly string[]; close: () => void }> = ({ ids, close }) => {
-  const key = useStore((s) => ids.map((id) => planKeyOf(s.objects[id])).join('|'));
-  const plans = useMemo(
-    () => Object.fromEntries(BOOLEAN_OPS.map((op) => [op, previewBoolean(op, ids as string[])])) as Record<BooleanOp, BooleanPlan>,
-    // The key is the geometry; `ids` is part of it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [key]
-  );
-  return (
-    <>
-      <span className="ctx-popover__label">Combine</span>
-      <div className="rail-list" onPointerLeave={() => booleanPreview.set(null)}>
-        {BOOLEAN_OPS.map((op) => {
-          const plan = plans[op];
-          const refusal = 'refusal' in plan ? plan.refusal : null;
-          const preview = 'geometry' in plan ? plan.geometry : null;
-          return (
-            <button
-              key={op}
-              type="button"
-              className="rail-list__item"
-              disabled={Boolean(refusal)}
-              data-tooltip={refusal ?? undefined}
-              onPointerEnter={() => booleanPreview.set(preview)}
-              onFocus={() => booleanPreview.set(preview)}
-              onBlur={() => booleanPreview.set(null)}
-              onClick={() => {
-                booleanPreview.set(null);
-                const id = applyBoolean(op, ids as string[]);
-                if (id) editor.select(id);
-                close();
-              }}
-            >
-              {BOOLEAN_BUTTONS[op].icon}
-              <span className="rail-list__label">{BOOLEAN_BUTTONS[op].label}</span>
-            </button>
-          );
-        })}
-      </div>
-    </>
-  );
-};
-
-/**
- * The four combines, each one previewed on the board while it is pointed at,
- * and each one that cannot apply saying why. Nothing is planned until it opens.
- */
-const CombineControl: React.FC<{ ids: readonly string[] }> = ({ ids }) => (
-  <RailPopover label="Combine shapes" trigger={<Combine size={16} />} align="start">
-    {(close) => <CombineList ids={ids} close={close} />}
-  </RailPopover>
-);
 
 /** Stickies sorted into clusters by colour or by who wrote them. */
 const OrganiseControl: React.FC<{ nodes: readonly AnyNode[] }> = ({ nodes }) => (
@@ -246,17 +121,31 @@ export interface MultiRailProps {
 /**
  * The rail for several objects.
  *
- * What the selection *is* leads, when it has a uniform subject (connectors,
- * pictures in a grid); then arrangement, which is why a multi-selection
- * usually exists; then structure; then the properties they all share. Which of
+ * The count chip leads and opens what the selection is and shares (see
+ * `arrange/SelectionControl`). Then what the selection *is*, when it has a
+ * uniform subject (connectors, pictures in a grid); then arrangement, which is
+ * why a multi-selection usually exists; then structure. Arrangement acts on
+ * units, so a whole group moves as one object (`arrange/units`). Which of
  * these apply comes from `resolveAffordances`, the same resolver the panel and
  * the menu ask, and a control that cannot apply to all of the selection is not
  * shown rather than acting on part of it.
  */
 export const MultiRail: React.FC<MultiRailProps> = ({ nodes, ids, conditional, tail, tailControls }) => {
-  const offers = new Set(
-    resolveAffordances(nodes, { surface: 'toolbar', allObjects: useStore.getState().objects }).map((a) => a.id)
+  const { objects, groups } = useStore.getState();
+  // What an arrangement moves: whole groups as one, connectors and locked objects not at all.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const unitSet = useMemo(() => arrangeUnits(nodes, objects, groups), [nodes]);
+  const selectionKey = ids.join(',');
+  // A live grid belongs to the selection it was made for: leaving it settles the grid.
+  useEffect(
+    () => () => {
+      if (arrangeSession.activeFor(selectionKey.split(','))) arrangeSession.commit();
+      // A preview drawn for a control that is going away goes with it.
+      arrangeGhost.set(null);
+    },
+    [selectionKey]
   );
+  const offers = new Set(resolveAffordances(nodes, { surface: 'toolbar', allObjects: objects }).map((a) => a.id));
   const affords = (id: AffordanceId) => offers.has(id);
   const verbs: RailVerb[] = [];
 
@@ -283,13 +172,16 @@ export const MultiRail: React.FC<MultiRailProps> = ({ nodes, ids, conditional, t
         id: 'ends',
         controls: 1,
         node: (
-          <RailPopover label="Ends" trigger={<EndsGlyph start={first.endStart ?? 'none'} end={first.endEnd ?? 'none'} />} align="start">
+          <RailPopover label="Ends" trigger={<EndsGlyph start={first.endStart ?? 'none'} end={first.endEnd ?? 'none'} />} align="start" size="sm">
             <span className="ctx-popover__label">Ends · {nodes.length} connectors</span>
             {(['endStart', 'endEnd'] as const).map((which) => (
               <SegmentedControl
                 key={which}
+                fill
                 ariaLabel={which === 'endStart' ? 'Start cap' : 'End cap'}
                 value={sharedValue(nodes, (n) => (n as ConnectorNode)[which] ?? 'none').value ?? 'none'}
+                // Connectors that disagree show no choice, rather than a "none" they do not all have.
+                mixed={sharedValue(nodes, (n) => (n as ConnectorNode)[which] ?? 'none').mixed}
                 onChange={(kind) => applyNodePatches(nodes.map((n) => ({ id: n.id, changes: { [which]: kind as EndCapKind } })))}
                 segments={END_CAP_KINDS.map((kind) => ({
                   value: kind,
@@ -373,13 +265,20 @@ export const MultiRail: React.FC<MultiRailProps> = ({ nodes, ids, conditional, t
     verbs.push({ id: 'organise', controls: 1, node: <OrganiseControl nodes={nodes} /> });
   }
 
+  // Pen paths all round: their points are what they are selected for. Only
+  // paths that already have points: converting shapes is a decision, so it
+  // lives in `⋯` as Convert to path rather than happening as a side effect here.
+  if (nodes.every((n) => n.type === 'path' && n.geometry.kind !== 'freehand')) {
+    verbs.push({ id: 'points', controls: 1, node: <PointsControl ids={ids} /> });
+  }
+
   /*
    * Priority order, highest first; `fitVerbs` drops from the end when Paste
-   * style or a fill takes a seat. Arrangement, then structure (Group, Lock)
-   * before the conveniences (Tidy, Combine, Points, a live grid, Sketch), so a
-   * full rail never loses the verbs a selection exists for.
+   * style or a fill takes a seat. Arrangement, then structure (Group, Lock),
+   * then Combine when it can run, then the conveniences (Tidy, a live grid,
+   * Sketch), so a full rail never loses the verbs a selection exists for.
    */
-  verbs.push({ id: 'align', controls: 1, node: <ArrangeControl nodes={nodes} canDistribute={affords('distribute')} /> });
+  verbs.push({ id: 'align', controls: 1, node: <AlignControl unitSet={unitSet} objects={objects} /> });
 
   verbs.push(
     affords('ungroup')
@@ -420,43 +319,36 @@ export const MultiRail: React.FC<MultiRailProps> = ({ nodes, ids, conditional, t
     ),
   });
 
-  const movable = tidyable(nodes);
-  if (movable.length >= 2) {
+  // A selection that can combine leads with it: shapes and paths are selected together to be combined.
+  const combine = combineAvailability(nodes);
+  const combineVerb: RailVerb = { id: 'combine', controls: 1, node: <CombineControl ids={ids} blocked={combine.reason} /> };
+  if (combine.offer && !combine.reason) verbs.push(combineVerb);
+
+  if (unitSet.units.length >= 2) {
+    const tidy = planTidy(unitSet.units);
+    const tidyLabel = describeTidyShape(tidyShape(unitSet.units));
+    const tidied = isPlan(tidy) && tidy.patches.length === 0;
     verbs.push({
       id: 'tidy',
       controls: 1,
       node: (
-        <RailButton label="Tidy up" hint="Line up into even rows, at the gaps they already use" onClick={() => applyNodePatches(tidySelection(nodes))}>
+        <RailButton
+          label="Tidy up"
+          hint={tidied ? 'Already tidy' : `${tidyLabel}, at the gaps they already use`}
+          onHover={(over) => arrangeGhost.set(over ? ghostOf(tidy) : null)}
+          onClick={() => {
+            arrangeGhost.set(null);
+            if (isPlan(tidy)) commitPatches(tidy.patches);
+          }}
+        >
           <Grid2x2Check size={16} />
         </RailButton>
       ),
     });
+    verbs.push({ id: 'arrange-grid', controls: 1, node: <GridControl nodes={nodes} /> });
   }
-  if (affords('boolean')) verbs.push({ id: 'combine', controls: 1, node: <CombineControl ids={ids} /> });
-  // Only paths that already have points: converting shapes is a decision, so it
-  // lives in `⋯` as Convert to path rather than happening as a side effect here.
-  if (nodes.every((n) => n.type === 'path' && n.geometry.kind !== 'freehand')) {
-    verbs.push({ id: 'points', controls: 1, node: <PointsControl ids={ids} /> });
-  }
-  if (movable.length >= 2) {
-    // A live layout: the grid it makes is selected, so its rail can change the columns.
-    verbs.push({
-      id: 'arrange-grid',
-      controls: 1,
-      node: (
-        <RailButton
-          label="Arrange in grid"
-          hint={withShortcut('Arrange in a live grid', ARRANGE_IN_GRID_KEYS)}
-          onClick={() => {
-            const gridId = arrangeSelectionInGrid(movable.map((n) => n.id));
-            if (gridId) editor.select(gridId);
-          }}
-        >
-          <LayoutGrid size={16} />
-        </RailButton>
-      ),
-    });
-  }
+  // Shown off with its reason when something in the selection has no outline, at the back of the queue.
+  if (combine.offer && combine.reason) verbs.push(combineVerb);
   if (affords('sketch')) verbs.push({ id: 'sketch', controls: 1, node: <BulkSketchControl nodes={nodes} /> });
 
   const fill = affords('fill') ? (
@@ -477,12 +369,8 @@ export const MultiRail: React.FC<MultiRailProps> = ({ nodes, ids, conditional, t
 
   return (
     <RailAnatomy
-      kind={
-        <span className="ctx-kind" data-tooltip={describeMix(nodes)}>
-          <Layers size={15} />
-          {nodes.length}
-        </span>
-      }
+      kind={<SelectionControl nodes={nodes} unitSet={unitSet} />}
+      kindControls={1}
       paint={fill}
       paintControls={fill ? 1 : 0}
       verbs={verbs}

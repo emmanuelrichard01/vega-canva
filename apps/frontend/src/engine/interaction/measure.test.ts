@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatDistance, measureBetween } from './measure';
+import { measureBetween } from './measure';
 
 const box = (x: number, y: number, width: number, height: number) => ({ x, y, width, height });
 
@@ -35,13 +35,5 @@ describe('measureBetween', () => {
       ['horizontal', 50],
       ['horizontal', 50],
     ]);
-  });
-});
-
-describe('formatDistance', () => {
-  it('rounds, keeping one decimal for small fractional values', () => {
-    expect(formatDistance(12.6)).toBe('13');
-    expect(formatDistance(2.25)).toBe('2.3');
-    expect(formatDistance(4)).toBe('4');
   });
 });

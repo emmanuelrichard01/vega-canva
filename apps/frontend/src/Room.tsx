@@ -8,6 +8,8 @@ import { PanelWidthHandle } from './components/workspace/PanelWidthHandle';
 import { ToolWorkspace } from './components/workspace/ToolWorkspace';
 import { takePendingRestore, takePendingTemplate } from './engine/export/pendingRestore';
 import { templateById } from './engine/templates/templates';
+import { applyPhysicsPrimer } from './engine/templates/applyPrimer';
+import { physicsSettings } from './engine/physics/settings';
 import { parseDocumentExport } from './engine/export/DocumentImport';
 import { restoreDocument } from './engine/export/restoreDocument';
 import { Minimap } from './components/Minimap';
@@ -37,6 +39,7 @@ import { PresenceEdgeMarkers } from './components/PresenceEdgeMarkers';
 import { FollowIndicator } from './components/FollowIndicator';
 import { PresenceStage } from './components/PresenceStage';
 import { isForceTool, type ForceId } from './engine/physics/forces';
+import { usePresenting } from './engine/tools/presentingChrome';
 import { calculateLayout, animateToLayout, type LayoutMode } from './utils/spatialLayout';
 import { Mic, TriangleAlert } from 'lucide-react';
 import { RemoteCursors, cursorHint } from './engine/cursor';
@@ -244,7 +247,18 @@ export default function Room() {
           // opens one and decides against it presses Cmd+Z once, not forty
           // times. It is also one broadcast rather than forty.
           doc.transact(() => {
-            nodes.forEach((node) => editor.createNode(node));
+            nodes.forEach((node) => editor.createNode(node, { keepReactions: true }));
+          });
+
+          // A physics board primes the Forces bar for what it was built to show.
+          const bar = useStore.getState();
+          applyPhysicsPrimer(template.id, {
+            setLastForce: bar.setLastForce,
+            setForceRadiusScale: bar.setForceRadiusScale,
+            setForceFalloff: bar.setForceFalloff,
+            setForceLatch: bar.setForceLatch,
+            setForceLatchSeconds: bar.setForceLatchSeconds,
+            setGravityAngle: (deg) => physicsSettings.setGravityAngle(deg),
           });
 
           // And one short fade, so the board resolves into place rather than
@@ -1337,6 +1351,13 @@ export default function Room() {
 
   /** Drives the immersive treatment in CSS. See `[data-zen]` in `index.css`. */
   const zenPhysics = isForceTool(activeTool) && !isUiVisible;
+  /**
+   * The chrome is down while a presentation runs. Unmounting the columns, the
+   * dock and the rail closes whatever they had open; the stylesheet hides the
+   * rest of the page on the same state (see `framePresenter.css`).
+   */
+  const presenting = usePresenting();
+  const chromeOn = isUiVisible && !presenting;
   useEffect(() => {
     // Replay wins when both could apply: you cannot arm a force while the
     // document on screen is a historical one.
@@ -1440,7 +1461,7 @@ export default function Room() {
       {/* LEFT COLUMN: the board (name, menu, save state) above its layers.
           First in the document, so focus runs left header, layers, canvas,
           right header, properties. Closed, it is a pill in the top-left. */}
-      {isUiVisible && (
+      {chromeOn && (
         <>
           <BoardColumn
             side="left"
@@ -1546,7 +1567,7 @@ export default function Room() {
             always-on chrome for a surface you glance at every few minutes.
             Collapsed it is a single pill in exactly the same corner, so the
             place you look for it never moves. */}
-        {isUiVisible && (radarOpen ? (
+        {chromeOn && (radarOpen ? (
           <Minimap onCollapse={() => setRadarOpen(false)} onHelp={openHelp} />
         ) : (
           // Zoom and help stay on screen beside the pill; see `BoardFoot`.
@@ -1599,7 +1620,7 @@ export default function Room() {
 
         {/* Teaches the core gesture on a blank canvas, and gets out of the way
             the moment anything exists. */}
-        <EmptyBoardHints visible={isUiVisible && !timeTravelSnapshot} />
+        <EmptyBoardHints visible={chromeOn && !timeTravelSnapshot} />
         
         {/* `multiple`, because selecting eight photos and getting one is not
             a limitation anyone expects from a file picker. */}
@@ -1656,7 +1677,7 @@ export default function Room() {
           of buttons that cannot do anything. The write path refuses them
           regardless -- see `mutations.ts` -- and this is the half that stops
           somebody pressing them and wondering. */}
-      {showContextToolbar && canEdit && (
+      {showContextToolbar && canEdit && !presenting && (
         <ObjectContextToolbar
           selectedId={selectedId}
           selectedIds={selectedIds}
@@ -1667,13 +1688,13 @@ export default function Room() {
       )}
 
       {/* TOOL WORKSPACE (Dynamic Dock) */}
-      {isUiVisible && (
+      {chromeOn && (
         <ToolWorkspace activeToolId={activeTool} onOpenDiagram={openDiagram} onAddTextBlock={addTextBlock} />
       )}
 
       {/* Scrim — only while the panels float above the canvas, so tapping the
           canvas dismisses them instead of leaving them covering the work. */}
-      {isUiVisible && isCompact && panelsOpen && (
+      {chromeOn && isCompact && panelsOpen && (
         <button
           className="panel-scrim"
           aria-label="Close panels"
@@ -1684,7 +1705,7 @@ export default function Room() {
       {/* COMMENT INBOX — every thread in the room, in one list.
           Sits above the Properties panel rather than beside it: both own the
           right-hand column, and two 300px columns leave no canvas. */}
-      {isUiVisible && showInbox && (
+      {chromeOn && showInbox && (
         <LiveCommentInbox
           threads={comments}
           marks={commentMarks}
@@ -1718,7 +1739,7 @@ export default function Room() {
       {/* RIGHT COLUMN: who is here and how work leaves, above Properties.
           Viewers have no properties to change, so for them it is always the
           pill. Closed, it is a pill in the top-right. */}
-      {isUiVisible && (
+      {chromeOn && (
         <BoardColumn
           side="right"
           open={rightOpen}
@@ -1811,7 +1832,7 @@ export default function Room() {
         * second question. It is rendered *after* the guide so the stylesheet
         * can say that in one rule -- see `.guide:has(~ .coach)`.
         */}
-      <LessonCoach activeTool={activeTool} visible={isUiVisible && tourSettled} />
+      <LessonCoach activeTool={activeTool} visible={chromeOn && tourSettled} />
 
       {/**
         * The same lesson, performed rather than read.
@@ -1824,7 +1845,7 @@ export default function Room() {
         * It takes the selection because a step can be about what is picked
         * rather than about what was made, and `selectedIds` lives here.
         */}
-      <WalkthroughGuide selectedIds={selectedIds} visible={isUiVisible && tourSettled} />
+      <WalkthroughGuide selectedIds={selectedIds} visible={chromeOn && tourSettled} />
 
       {/**
         * Where things live, pointed at rather than described.
@@ -1850,7 +1871,7 @@ export default function Room() {
         * middle of the canvas and this sits above the dock, so the two do not
         * collide.
         */}
-      <TourOffer visible={isUiVisible} />
+      <TourOffer visible={chromeOn} />
       <TourGuide />
 
       {/* FOCUS MODE.
@@ -1882,7 +1903,7 @@ export default function Room() {
         </div>
       )}
 
-      {!isUiVisible && !zenPhysics && !showTimeTravel && (
+      {!isUiVisible && !presenting && !zenPhysics && !showTimeTravel && (
         <>
           <div
             className="focus-edge"

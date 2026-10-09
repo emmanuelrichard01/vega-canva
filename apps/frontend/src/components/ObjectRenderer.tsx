@@ -1012,19 +1012,6 @@ export const ObjectRenderer = React.memo(
       [node, objId]
     );
 
-    const handleCancel = useCallback(() => {
-      setIsEditing(false);
-      if (!node) return;
-      // Escape out of a note you never wrote in and it should not survive
-      // either — same reasoning as committing an empty one.
-      const abandonedText = node.type === 'text' && !node.text.trim();
-      const abandonedSticky =
-        node.type === 'sticky' &&
-        !node.text.trim() &&
-        Object.keys(node.reactions).length === 0;
-      if (abandonedText || abandonedSticky) deleteNode(objId);
-    }, [node, objId]);
-
     if (!node || node.hidden) return null;
 
     // Only stickies carry tags, so nothing else can ever be excluded by a tag
@@ -1421,7 +1408,7 @@ export const ObjectRenderer = React.memo(
         </Group>
 
         {isEditing && hasText(node) && (
-          <NodeEditor node={node as TextBearingNode} onCommit={handleCommit} onCancel={handleCancel} />
+          <NodeEditor node={node as TextBearingNode} onCommit={handleCommit} />
         )}
       </>
     );

@@ -291,12 +291,19 @@
      has to be told apart from Pull's blue at a glance on the ring. */
   --force-swirl: #EC4899;
 
-  /* ---------- ELEVATION ---------- */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.02), 0 2px 4px rgba(0, 0, 0, 0.02);
-  --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.03), 0 6px 16px rgba(0, 0, 0, 0.04);
-  --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.03), 0 12px 32px rgba(0, 0, 0, 0.06);
-  --shadow-float: 0 4px 12px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.05);
-  --shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  /* ---------- ELEVATION ----------
+     One scale, each step deeper and wider than the last: xs lifts a pressed
+     segment off its track, sm a resting button or chip, md the same thing
+     hovered, lg a docked panel, float a popover or pill over the board,
+     overlay a menu or dialog. Low and wide, with an offset on every layer.
+     float and overlay carry their own 1px edge ring, so a surface using them
+     declares no border of its own (Declare Elevation Once). */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.05), 0 6px 16px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.05), 0 12px 32px rgba(0, 0, 0, 0.08);
+  --shadow-float: 0 4px 14px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  --shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.11), 0 0 0 1px rgba(0, 0, 0, 0.05);
 
   /* ---------- MOTION ---------- */
   --transition-fast: 150ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -596,11 +603,14 @@
 
   /* Shadows read as almost nothing on a dark surface unless deepened, and
      only --shadow-float was previously adjusted. */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 12px -4px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 12px 24px -8px rgba(0, 0, 0, 0.6);
   --shadow-float: 0 16px 32px -12px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
-  --shadow-overlay: 0 24px 64px -16px rgba(0, 0, 0, 0.75);
+  /* The same light edge as float: a menu over a near-black board otherwise
+     has only a black shadow on black to separate it. */
+  --shadow-overlay: 0 24px 64px -16px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
 * {
@@ -1731,7 +1741,6 @@ textarea:focus-visible {
   padding: 9px 10px;
   border-radius: var(--radius-2xl);
   background: var(--surface-elevated);
-  border: 1px solid var(--border-divider);
   box-shadow: var(--shadow-float);
   font-family: var(--font-sans);
   box-sizing: border-box;
@@ -2060,7 +2069,6 @@ textarea:focus-visible {
   padding: 4px;
   border-radius: var(--radius-lg);
   background: var(--surface-elevated);
-  border: 1px solid var(--border-divider);
   box-shadow: var(--shadow-float);
 }
 
@@ -4772,7 +4780,10 @@ input.slider__value:focus-visible {
   position: absolute;
   bottom: 100%;
   left: 50%;
-  transform: translateX(-50%);
+  /* Centred on the seat, then moved by `--fly-dx` onto the dock's centre line
+     (`useDockCentred`): every flyout shares one axis whichever seat opened it.
+     `translate`, not `transform`, so it never fights an entrance. */
+  translate: calc(-50% + var(--fly-dx, 0px)) 0;
   /* 8px, so the menu clears the dock by a visible margin rather than the 2px
      it was leaving. Two elevated surfaces separated by less than their own
      shadows read as one lumpy shape. Still padding rather than margin, so the
@@ -4780,6 +4791,32 @@ input.slider__value:focus-visible {
   padding-bottom: var(--space-2);
   z-index: 20;
 }
+
+/* The notch: a small point on the bottom edge toward the seat that opened the
+   flyout. Surface colour and the panel's own elevation, no border. It slides
+   along the edge (`--notch-x`) and is absent when the seat is under the centre. */
+.dock-flyout__panel { position: relative; }
+.dock-flyout[data-notch] .dock-flyout__panel::before,
+.dock-flyout[data-notch] .dock-flyout__panel::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: var(--notch-x, 50%);
+  width: 0;
+  height: 0;
+  margin-left: -7px;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 6px solid var(--surface-elevated);
+  pointer-events: none;
+}
+/* Its shadow: the same triangle, soft, clipped so none falls on the panel. */
+.dock-flyout[data-notch] .dock-flyout__panel::before {
+  border-top-color: rgba(0, 0, 0, 0.16);
+  filter: blur(2px);
+  clip-path: inset(0 -8px -8px -8px);
+}
+.dark-theme .dock-flyout[data-notch] .dock-flyout__panel::before { border-top-color: rgba(0, 0, 0, 0.5); }
 
 .dock-flyout__panel {
   display: flex;
@@ -4925,7 +4962,7 @@ input.slider__value:focus-visible {
   left: 50%;
   /* `translate`, not `transform`: the entrance animates transform, and
      centring with it is the trap DESIGN.md names. */
-  translate: -50% 0;
+  translate: calc(-50% + var(--fly-dx, 0px)) 0;
   z-index: 10;
   display: flex;
   align-items: center;
@@ -5099,12 +5136,30 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
+  /* Out to the panel's edges, with the gutter reserved on both sides, so a
+     scrollbar (or none) never weighs on one side of the grid. The tile grid
+     comes from `SHEET_LAYOUT` (see `flyoutScale.ts`) as custom properties. */
+  margin-inline: calc(-1 * var(--space-2));
+  scrollbar-gutter: stable both-edges;
 }
+
+/* Every row of the scroll, headings included, is the grid's width and
+   centred on the panel; the search and the foot stand on the same lines. */
+.dock-sheet__body > *,
+.dock-sheet__search,
+.dock-sheet__foot {
+  box-sizing: border-box;
+  width: var(--sheet-grid);
+  max-width: 100%;
+  margin-inline: auto;
+}
+
+.dock-sheet__section + .dock-sheet__section { margin-top: var(--space-2); }
 
 .dock-sheet__grid {
   display: grid;
-  grid-template-columns: repeat(var(--sheet-cols), minmax(0, 1fr));
-  gap: 2px;
+  grid-template-columns: repeat(var(--sheet-cols), var(--sheet-tile));
+  gap: var(--sheet-gap);
 }
 
 .dock-sheet .dock-flyout__group { padding-left: 2px; }
@@ -5122,6 +5177,12 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   pointer-events: none;
 }
 
+/* A finished table in a card takes the picture's whole box. */
+.dock-sheet .dock-tablethumb {
+  width: var(--sheet-pic-w);
+  height: var(--sheet-pic-h);
+}
+
 /* Cards: the picture over its name, for choices known by name as much as by
    shape -- a grid system, a chart kind, a finished table. */
 .tool-dock .dock-sheet[data-variant='card'] .dock-sheet__tile {
@@ -5133,7 +5194,11 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   padding: 6px 4px 5px;
 }
 
-.dock-sheet[data-variant='card'] .dock-sheet__pic { height: 40px; }
+.dock-sheet[data-variant='card'] .dock-sheet__pic {
+  align-self: center;
+  width: var(--sheet-pic-w);
+  height: var(--sheet-pic-h);
+}
 
 .dock-sheet__label {
   font-size: var(--text-xs);
@@ -5598,7 +5663,7 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   align-items: center;
   gap: 2px;
   height: 40px;
-  padding: 0 6px;
+  padding: 0 4px;
   border-radius: var(--radius-xl);
   background: var(--surface-elevated);
   box-shadow: var(--shadow-float);
@@ -5653,23 +5718,24 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 
 .ctx-divider {
   width: 1px;
-  height: 18px;
+  height: 20px;
   margin: 0 4px;
   background: var(--border-divider);
   flex-shrink: 0;
 }
 
-/* The rail's own button. Not `.btn-icon`: that is 8px-padded for panels, which
-   at 16px icons makes a 32px control — too tall for a 40px rail with any
-   breathing room left. */
+/* The rail's own button: the 32px control, the middle of DESIGN.md's three
+   heights, in a 40px rail with 4px of air above and below. Every trigger on
+   the rail is one of these, so a stroke chip, a font picker and a plain verb
+   share one hover shape and one hit size. */
 .ctx-btn {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  height: 28px;
-  min-width: 28px;
-  padding: 0 5px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0 6px;
   border: none;
   border-radius: var(--radius-lg);
   background: transparent;
@@ -5751,12 +5817,13 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   animation: ctxPopIn 140ms var(--ease-settle);
 }
 
+/* A field's name inside a popover, set like the panel grammar's row labels:
+   sentence case, small, secondary ink. Not tracked capitals, which read as a
+   kicker over every control. */
 .ctx-popover__label {
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
 }
 
 /* Separates the two families in the shape swapper, and the swapper from the
@@ -8592,7 +8659,6 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   /* Pushed to the foot of the stage when the content above is short. */
   margin-top: auto;
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
-  border: 1px solid var(--border-divider);
   border-radius: var(--radius-2xl);
   /* The same translucent treatment as the app bar, so the two edges of the
      screen are made of one material and the list is visibly continuing
@@ -8600,12 +8666,12 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   background: color-mix(in srgb, var(--surface-primary) 86%, transparent);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-float);
   color: inherit;
   font-family: inherit;
   text-align: left;
   cursor: pointer;
-  transition: border-color var(--motion-hover), box-shadow var(--motion-hover);
+  transition: box-shadow var(--motion-hover);
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
@@ -8613,8 +8679,7 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 }
 
 .seam:hover {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-overlay);
 }
 
 .seam__text {
@@ -8673,9 +8738,6 @@ body:has(.tool-shelf) { --dock-h: 112px; }
    you make in a blurb. */
 .tgrid { row-gap: var(--space-8); }
 
-.tgrid--featured { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
-.tgrid--featured .tcard__art { aspect-ratio: 3 / 2; }
-.tgrid--featured .tcard__name { font-size: var(--text-xl); letter-spacing: -0.02em; }
 
 /* -------------------------------------------------------------------- cards */
 
@@ -8689,7 +8751,6 @@ body:has(.tool-shelf) { --dock-h: 112px; }
    hairline, the name and the line about it sit on the page underneath, and the
    only thing that lifts on hover is the picture. Less chrome, larger art, and
    the grid finally reads as a gallery rather than as a table of results. */
-.tcard,
 .bcard {
   position: relative;
   display: flex;
@@ -8701,7 +8762,6 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   cursor: pointer;
 }
 
-.tcard__art,
 .bcard__art {
   display: block;
   aspect-ratio: 16 / 10;
@@ -8713,21 +8773,15 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   transition: transform var(--motion-hover), box-shadow var(--motion-hover);
 }
 
-.tcard__art .cover,
 .bcard__art .cover { width: 100%; height: 100%; }
 
 /* Only the picture moves. Lifting the whole card moves the words with it,
    which is a lot of motion for a hover on a wall of twenty. */
-.tcard:hover .tcard__art,
 .bcard:hover .bcard__art {
   transform: translateY(-3px);
   box-shadow: inset 0 0 0 1px var(--border-strong), var(--shadow-md);
 }
 
-/* Focus rings the picture: see home.css. */
-.tcard:focus-visible { outline: none; }
-
-.tcard__body,
 .bcard__body {
   display: flex;
   flex: 1;
@@ -8736,39 +8790,12 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   padding: var(--space-3) 2px 0;
 }
 
-.tcard__name,
 .bcard__name {
   font-size: var(--text-md);
   font-weight: var(--weight-semibold);
   letter-spacing: -0.01em;
   color: var(--text-primary);
 }
-
-/* What the board is *for*, not what it holds — the contents are visible the
-   moment it opens. */
-.tcard__blurb {
-  flex: 1;
-  font-size: var(--text-sm);
-  line-height: 1.5;
-  color: var(--text-tertiary);
-}
-
-/* ## One fact, not four
-   A count pill and three word-chips sat under every card: eleven small boxes
-   per row, on a page whose whole job is to show pictures. The chips named what
-   a board *teaches*, which was never why anybody picked one, and the count was
-   inked black to shout over them.
-
-   What is left is the count, as plain text, on the boards that have one worth
-   saying. It is the only fact here that the picture cannot show. */
-.tcard__meta {
-  margin-top: 2px;
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-
-.tcard__count { white-space: nowrap; }
 
 .bcard__meta { font-size: var(--text-xs); color: var(--text-tertiary); }
 
@@ -9023,7 +9050,7 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tcard, .tcard:hover, .bcard, .bcard:hover { transition: none; transform: none; }
+  .bcard, .bcard:hover { transition: none; transform: none; }
 }
 
 /* ===========================================================================
@@ -10835,7 +10862,6 @@ html.dark-theme,
   gap: var(--space-4);
   width: min(560px, calc(100vw - 2 * var(--gutter)));
   padding: var(--space-4);
-  border: 1px solid var(--border-divider);
   border-radius: var(--radius-xl);
   background: var(--surface-elevated);
   box-shadow: var(--shadow-overlay);
@@ -12449,7 +12475,6 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   width: 100%;
   max-width: 420px;
   padding: var(--space-5);
-  border: 1px solid var(--border-divider);
   border-radius: var(--radius-xl);
   background: var(--surface-elevated);
   box-shadow: var(--shadow-overlay);
@@ -13388,14 +13413,13 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   height: 24px;
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--border-divider);
   border-radius: 50%;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-float);
   cursor: pointer;
   transition: transform var(--motion-hover), box-shadow var(--motion-hover);
 }
 
-.cp-trigger:hover { transform: scale(1.08); box-shadow: var(--shadow-md); }
+.cp-trigger:hover { transform: scale(1.08); box-shadow: var(--shadow-overlay); }
 .cp-trigger.is-open { box-shadow: 0 0 0 2px var(--surface-primary), 0 0 0 4px var(--text-accent); }
 
 
@@ -15020,7 +15044,6 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   width: min(640px, 100%);
   max-height: min(560px, 66vh);
   overflow: hidden;
-  border: 1px solid var(--border-divider);
   border-radius: var(--radius-2xl);
   background: var(--surface-elevated);
   box-shadow: var(--shadow-overlay);
@@ -15411,7 +15434,10 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   z-index: var(--z-context-menu);
   display: flex;
   flex-direction: column;
-  min-width: 236px;
+  box-sizing: border-box;
+  /* The first step of the flyout scale, so a menu and the dock's lists of
+     rows are one width. */
+  min-width: var(--flyout-w-sm, 240px);
   max-width: 320px;
   padding: 5px;
   border-radius: var(--radius-xl);
@@ -17017,7 +17043,6 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   gap: var(--space-4);
   width: min(440px, calc(100vw - 2 * var(--gutter)));
   padding: var(--space-4);
-  border: 1px solid var(--border-divider);
   border-radius: var(--radius-xl);
   background: var(--surface-elevated);
   box-shadow: var(--shadow-overlay);
@@ -19830,8 +19855,6 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   row-gap: var(--space-5);
 }
 
-.tgrid--seam .tcard__blurb { display: none; }
-.tgrid--seam .tcard__name { font-size: var(--text-sm); }
 
 /* ------------------------------------------------------------------ */
 /* Feature fallback: a panel or dialog that crashed, replaced on its own */
@@ -19913,5 +19936,20 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   ::view-transition-old(root),
   ::view-transition-new(root) {
     animation-duration: 220ms;
+  }
+}
+
+/* Surfaces whose edge is the elevation token's 1px ring: forced colours drops
+   shadows, so they take a real border there. */
+@media (forced-colors: active) {
+  .vn,
+  .mention-picker,
+  .seam,
+  .coach,
+  .walk,
+  .export__confirm-card,
+  .cmdk,
+  .cp-trigger {
+    border: 1px solid CanvasText;
   }
 }

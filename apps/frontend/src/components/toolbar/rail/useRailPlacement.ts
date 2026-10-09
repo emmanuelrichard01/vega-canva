@@ -4,7 +4,7 @@ import { cameraSystem } from '../../../engine/CameraSystem';
 import { engineEvents } from '../../../engine/EventBus';
 import { railVeil, type VeilKind } from '../../../engine/interaction/railVeil';
 import { textEditing } from '../../../engine/interaction/textEditing';
-import { inflate, placeRail, selectionHull, type RailSide } from '../../../engine/interaction/railPlacement';
+import { inflate, placeRail, selectionHull, type RailSide, type Rect } from '../../../engine/interaction/railPlacement';
 import { setRailSubject } from '../railSubject';
 import {
   DEFAULT_HEADER_H,
@@ -12,7 +12,10 @@ import {
   chromeFromTokens,
   chromeInset,
   freeStrip,
+  popoverStrip,
+  POPOVER_MARGIN,
   readFrameTokens,
+  subjectInView,
   type ChromeMetrics,
 } from './railBounds';
 
@@ -35,6 +38,8 @@ const HANDLE_REACH = 6;
 const LEFT_PANEL = '.hierarchy-panel';
 const RIGHT_PANEL = '.context-inspector';
 const DOCK = '.tool-dock';
+/** A closed column's header, floating in its top corner. */
+const PILL = '.board-pill';
 
 export interface RailPlacement {
   /** The outer anchor, positioned by writing its transform directly. */
@@ -99,21 +104,31 @@ export function useRailPlacement(opts: {
 
     const chrome: ChromeMetrics = { headerH: DEFAULT_HEADER_H, dockH: 0, insetLeft: EDGE_MARGIN, insetRight: EDGE_MARGIN };
     const stageOrigin = { left: 0, top: 0 };
+    /** The shell's raw edges, for the popovers' strip. */
+    const popEdges = { top: DEFAULT_HEADER_H, left: 0, right: 0, dock: 0 };
+    let pills: Rect[] = [];
 
     /** Chrome geometry: read when the chrome changes, not on every placement. */
     const measureChrome = () => {
       const left = document.querySelector(LEFT_PANEL)?.getBoundingClientRect() ?? null;
       const right = document.querySelector(RIGHT_PANEL)?.getBoundingClientRect() ?? null;
-      Object.assign(
-        chrome,
-        chromeFromTokens(readFrameTokens(), {
-          insetLeft: chromeInset(left, 'left', window.innerWidth),
-          insetRight: chromeInset(right, 'right', window.innerWidth),
-        })
-      );
+      const tokens = readFrameTokens();
+      const measuredLeft = chromeInset(left, 'left', window.innerWidth);
+      const measuredRight = chromeInset(right, 'right', window.innerWidth);
+      Object.assign(chrome, chromeFromTokens(tokens, { insetLeft: measuredLeft, insetRight: measuredRight }));
       // The dock's own top edge, shelf included, rather than a token about it.
       const dock = document.querySelector(DOCK)?.getBoundingClientRect();
       chrome.dockH = dock && dock.height > 0 ? Math.max(0, window.innerHeight - dock.top) : 0;
+      // A popover keeps off the same chrome, with the tokens taken as published
+      // (a closed column is 0, not the rail's 16) and `--dock-h` as a floor.
+      popEdges.top = chrome.headerH;
+      popEdges.left = tokens.insetLeft ?? (left && left.width > 0 ? measuredLeft : 0);
+      popEdges.right = tokens.insetRight ?? (right && right.width > 0 ? measuredRight : 0);
+      popEdges.dock = dock && dock.height > 0 ? Math.max(chrome.dockH, tokens.dockH ?? 0) : 0;
+      pills = Array.from(document.querySelectorAll(PILL), (el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 ? inflate({ x: r.left, y: r.top, width: r.width, height: r.height }, POPOVER_MARGIN) : null;
+      }).filter((r): r is Rect => r !== null);
       const canvas = document.querySelector('.konvajs-content')?.getBoundingClientRect();
       if (canvas) {
         stageOrigin.left = canvas.left;
@@ -146,14 +161,22 @@ export function useRailPlacement(opts: {
         HANDLE_REACH
       );
       const bounds = freeStrip(chrome, { width: window.innerWidth, height: window.innerHeight }, sidebarsVisible);
+      // Panned out of sight: no rail pinned to the window edge beside nothing.
+      if (!subjectInView(onScreen, bounds)) return hide();
       const rail = {
         width: railRef.current?.offsetWidth || 0,
         height: railRef.current?.offsetHeight || RAIL_HEIGHT,
       };
-      // Published for the popovers, which must not open onto the artwork.
-      setRailSubject({ subject: onScreen, bounds });
-
       const spot = placeRail(onScreen, rail, bounds, STANDOFF, lastRef.current.placement);
+      // Published for the popovers, which must not open onto the artwork.
+      const viewport = { width: window.innerWidth, height: window.innerHeight };
+      setRailSubject({
+        subject: onScreen,
+        bounds,
+        side: spot.side,
+        room: popoverStrip(popEdges, viewport, sidebarsVisible),
+        obstacles: sidebarsVisible ? pills : [],
+      });
       const rx = Math.round(spot.x);
       const ry = Math.round(spot.y);
       const last = lastRef.current;

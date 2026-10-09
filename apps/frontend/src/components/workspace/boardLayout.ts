@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { storageGet, storageSet } from '../../utils/safeStorage';
 
 /**
@@ -150,6 +150,148 @@ export function useDockPlacement(ref: RefObject<HTMLElement | null>): void {
       window.removeEventListener('resize', schedule);
     };
   }, [ref]);
+}
+
+/** Clear space between a flyout and the edge of the free strip. */
+export const FLYOUT_EDGE = 8;
+/** The flyout's corner radius plus half the notch: the notch stays this far from either end. */
+export const NOTCH_CLEARANCE = 20;
+/** A seat this close to the flyout's centre needs no notch to be understood. */
+const NOTCH_HIDE_WITHIN = 2;
+
+export interface DockCentring {
+  /** Added to the flyout's own placement, in px, to land it on the dock's centre line. */
+  dx: number;
+  /** The notch's centre, in px from the flyout's left edge, or null when none is shown. */
+  notch: number | null;
+}
+
+/**
+ * Where a flyout, sheet or shelf goes so it is centred on the dock.
+ *
+ * `anchorCentre` is where the surface would sit with no correction: the centre
+ * of the seat that opened it (or of the dock, for a shelf). It is moved onto
+ * `dockCentre`, then held inside the free strip between the open columns with
+ * `edge` to spare. The notch points back at `anchorCentre`; it is clamped clear
+ * of the rounded corners and dropped when the seat is already under the centre.
+ */
+export function centreOnDock(input: {
+  dockCentre: number;
+  anchorCentre: number;
+  width: number;
+  viewport: number;
+  insets: { left: number; right: number };
+  edge?: number;
+}): DockCentring {
+  const { dockCentre, anchorCentre, width, viewport, insets } = input;
+  const edge = input.edge ?? FLYOUT_EDGE;
+  const min = insets.left + edge;
+  const max = viewport - insets.right - edge - width;
+  const wanted = dockCentre - width / 2;
+  // A strip narrower than the flyout cannot hold it: keep it centred on the strip's left edge rule.
+  const left = max < min ? min : Math.min(max, Math.max(min, wanted));
+  const natural = anchorCentre - width / 2;
+  const centre = left + width / 2;
+  const away = Math.abs(anchorCentre - centre);
+  const notch =
+    away <= NOTCH_HIDE_WITHIN
+      ? null
+      : Math.min(width - NOTCH_CLEARANCE, Math.max(NOTCH_CLEARANCE, anchorCentre - left));
+  return { dx: left - natural, notch };
+}
+
+/**
+ * Centres a surface that hangs from the dock on the dock's centre line.
+ *
+ * Returns a ref callback for the surface. It measures the dock, the seat the
+ * surface hangs from (its offset parent) and the open columns, then publishes
+ * `--fly-dx` (what `dock.css` adds to the surface's own centring) and, for a
+ * flyout, `--notch-x` with `data-notch`. Re-measured when the surface, the dock
+ * or the window changes size, and when a column opens or closes, so a flyout
+ * never moves for any reason but its own width.
+ */
+export function useDockCentred(notch: boolean): (el: HTMLElement | null) => void {
+  const cleanup = useRef<(() => void) | null>(null);
+  return useCallback(
+    (el: HTMLElement | null) => {
+      cleanup.current?.();
+      cleanup.current = null;
+      if (!el || typeof window === 'undefined') return;
+      const place = () => {
+        const dock = el.closest<HTMLElement>('.tool-dock');
+        const anchor = el.parentElement;
+        if (!dock || !anchor) return;
+        const dockBox = dock.getBoundingClientRect();
+        const anchorBox = el.classList.contains('tool-shelf') ? dockBox : anchor.getBoundingClientRect();
+        const result = centreOnDock({
+          dockCentre: dockBox.left + dockBox.width / 2,
+          anchorCentre: anchorBox.left + anchorBox.width / 2,
+          width: el.offsetWidth,
+          viewport: window.innerWidth,
+          insets: boardInsets(),
+        });
+        const dx = `${Math.round(result.dx * 100) / 100}px`;
+        if (el.style.getPropertyValue('--fly-dx') !== dx) el.style.setProperty('--fly-dx', dx);
+        if (!notch) return;
+        if (result.notch === null) {
+          if (el.hasAttribute('data-notch')) el.removeAttribute('data-notch');
+        } else {
+          const x = `${Math.round(result.notch * 100) / 100}px`;
+          if (el.style.getPropertyValue('--notch-x') !== x) el.style.setProperty('--notch-x', x);
+          if (!el.hasAttribute('data-notch')) el.setAttribute('data-notch', '');
+        }
+      };
+      place();
+      const dock = el.closest<HTMLElement>('.tool-dock');
+      const sizes = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(place);
+      sizes?.observe(el);
+      if (dock) sizes?.observe(dock);
+      const attrs = new MutationObserver(place);
+      attrs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-left-panel', 'data-right-panel', 'style'] });
+      window.addEventListener('resize', place);
+      cleanup.current = () => {
+        sizes?.disconnect();
+        attrs.disconnect();
+        window.removeEventListener('resize', place);
+      };
+    },
+    [notch]
+  );
+}
+
+/**
+ * The width of the strip between the open columns, kept current. A surface
+ * that must fit above the dock (the drawing tray) reads this rather than the
+ * window, so opening a column on a mid-size window can step it down a size
+ * instead of sliding it under the panel. Zero until measured.
+ */
+export function useFreeStrip(): number {
+  const [free, setFree] = useState(() => (typeof window === 'undefined' ? 0 : window.innerWidth));
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const { left, right } = boardInsets();
+      setFree(Math.max(0, window.innerWidth - left - right));
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(measure);
+    };
+    measure();
+    const sizes = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedule);
+    for (const el of document.querySelectorAll('.hierarchy-panel, .context-inspector')) sizes?.observe(el);
+    const attrs = new MutationObserver(schedule);
+    attrs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-left-panel', 'data-right-panel', 'style'] });
+    window.addEventListener('resize', schedule);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      sizes?.disconnect();
+      attrs.disconnect();
+      window.removeEventListener('resize', schedule);
+    };
+  }, []);
+  return free;
 }
 
 const FOCUSABLE =

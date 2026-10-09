@@ -223,7 +223,6 @@ button.data-values__cell:focus-visible { outline: 1.5px solid var(--focus-ring-c
   pointer-events: auto;
   width: max-content;
   max-width: min(360px, calc(100vw - 32px));
-  border: 1px solid var(--border-divider);
   background: var(--surface-elevated);
   box-shadow: var(--shadow-float);
 }
@@ -406,4 +405,8 @@ button.data-values__cell:focus-visible { outline: 1.5px solid var(--focus-ring-c
   .data-chip,
   .data-primary,
   .data-usedby__go { transition: none; }
+}
+
+@media (forced-colors: active) {
+  .data-confirm--float { border: 1px solid CanvasText; }
 }

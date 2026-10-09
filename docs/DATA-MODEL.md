@@ -260,6 +260,21 @@ reactions outright: two people reacting at the same moment each read the same
 number and each wrote number + 1. See §"Sticky reactions" in the README for how
 that is stored in the CRDT.
 
+### Added by redesign waves 5 to 7
+
+- **Frames** carry the slide fields from `engine/slides/slideMeta.ts`
+  (speaker notes, skip, section, transition), plus an emoji icon, a
+  description and a theme/preset. Order is the document's slide order.
+- **Lines and arrows** gained `labelT` (0..1, where the label sits along the
+  run; absent means the middle). `normalize` clamps it, and clamps negative
+  stroke widths.
+- **Shadows** (a drop shadow with spread) apply to shapes, text, stickies and
+  paths; charts, tables, code, links and icons offer none.
+- **Charts linked to tables** keep a reference to the table and a range; a
+  dragged point is written back to the cell only after a confirm.
+- **Stickies** render a dog-ear, stamps (the existing `reactions`) and
+  checklists.
+
 ### Legacy documents
 
 `engine/document/normalize.ts` maps any earlier node onto this schema on read, so
@@ -364,6 +379,26 @@ Media bytes live in MinIO (S3-compatible), never inline in the CRDT.
 
 Time Travel replays `room_updates`. Older boards also carry an in-document
 `history` array, an authoring log that nothing read; it is no longer written.
+
+### `room_versions` (migration #5)
+
+Version history. `auto` rows are written by retention, one per working session,
+as it folds old rows out of `room_updates` (so the 2000-row cap no longer means
+history simply vanishes). `named` rows are kept on purpose by an editor and are
+never trimmed. Served by `apps/server/src/routes/versions.ts`.
+
+| column | type | notes |
+| --- | --- | --- |
+| `id` | bigserial (pk) | |
+| `room_id` | text (fk -> rooms.id, cascade) | indexed with `ended_at DESC` |
+| `kind` | text | `'auto'` or `'named'` |
+| `name`, `description` | text, nullable | named versions |
+| `state` | bytea | a full encoded Yjs document |
+| `started_at`, `ended_at` | timestamptz | the session's span |
+| `update_count` | integer | updates folded into it |
+| `authors` | jsonb | author names in the session |
+| `created_by_name` | text | |
+| `created_at` | timestamptz | |
 
 ## Related docs
 

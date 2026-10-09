@@ -286,3 +286,90 @@
 .font-trigger {
   border-color: var(--control-border, transparent);
 }
+
+/* Virtualised list: rows and headers are placed absolutely in one tall canvas. */
+.font-menu__list--virtual {
+  position: relative;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.font-menu__canvas {
+  position: relative;
+  width: 100%;
+}
+
+.font-row-wrap--abs {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+}
+
+.font-menu__label--abs {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 0 10px 4px;
+  box-sizing: border-box;
+}
+
+.font-menu__hint--note {
+  margin-left: auto;
+}
+
+.font-menu__foot {
+  border-top: 1px solid var(--border-subtle, var(--border));
+  padding: 4px;
+}
+
+/* A row waits as a quiet line until its face has loaded, so names never flash in a fallback. */
+.font-row__name--skeleton {
+  display: flex;
+  align-items: center;
+}
+
+.font-row__bar {
+  display: block;
+  height: 8px;
+  width: 96px;
+  border-radius: 4px;
+  background: var(--surface-active);
+  animation: font-row-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes font-row-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .font-row__bar {
+    animation: none;
+  }
+}
+
+.font-row__fail {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Dropping a font file on the picker. */
+.font-menu[data-dragging] {
+  outline: 1.5px dashed var(--focus-ring-color, var(--text-secondary));
+  outline-offset: -4px;
+}
+
+.font-menu__drop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+  font-size: var(--text-xs, 12px);
+  color: var(--text-secondary);
+}

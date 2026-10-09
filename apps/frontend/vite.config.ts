@@ -58,7 +58,7 @@ function siteMeta(siteUrl: string): Plugin {
  * Kept in step with the source by `src/engine/export/exportChunking.test.ts`.
  */
 const EXPORT_SHARED =
-  /\/engine\/export\/(chrome|DocumentImport|restoreDocument|pendingRestore|exportScope|renderScope|isolate|ExportTypes|filenames)\./;
+  /\/engine\/export\/(chrome|DocumentImport|restoreDocument|pendingRestore|exportScope|renderScope|isolate|ExportTypes|filenames|abort|commentPins|markup|nodesToSvg|stickyExport|svgPaint|svgShadow)\./;
 
 /**
  * Modules the dashboard (`Home.tsx`) imports that board-only chunks also

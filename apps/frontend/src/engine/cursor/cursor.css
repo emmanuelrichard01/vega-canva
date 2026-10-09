@@ -9,3 +9,17 @@
 :root[data-presenting][data-cursor-idle] .fp-root * {
   cursor: none;
 }
+
+/* A remote presenter's laser pointer: a red dot centred on where they point. */
+.rc__laser {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ff3b2f;
+  box-shadow: 0 0 0 2px rgba(255, 236, 230, 0.9), 0 0 14px 6px rgba(255, 70, 50, 0.45);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}

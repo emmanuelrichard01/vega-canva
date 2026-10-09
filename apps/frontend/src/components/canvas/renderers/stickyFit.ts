@@ -40,7 +40,33 @@ export const STICKY_FONT_WEIGHT = '600';
  */
 let probe: Konva.Text | null = null;
 
+/**
+ * Without a DOM (the SVG exporter under test, a worker) Konva cannot measure,
+ * so the fit falls back to arithmetic: Caveat runs near 0.45 em a character,
+ * and words wrap greedily. The same estimate `stickyRichLayout` uses there.
+ */
+const canMeasure = () => typeof document !== 'undefined';
+const approxWidth = (text: string, size: number) => text.length * size * 0.45;
+
+function approxHeight(text: string, size: number, width: number): number {
+  let lines = 0;
+  for (const paragraph of text.split('\n')) {
+    let used = 0;
+    lines += 1;
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      const w = approxWidth(word, size);
+      const gap = used > 0 ? approxWidth(' ', size) : 0;
+      if (used > 0 && used + gap + w > width) {
+        lines += 1;
+        used = w;
+      } else used += gap + w;
+    }
+  }
+  return lines * size * STICKY_LINE_HEIGHT;
+}
+
 function measure(text: string, size: number, width: number): number {
+  if (!canMeasure()) return approxHeight(text, size, width);
   probe ??= new Konva.Text({
     fontFamily: STICKY_FONT_FAMILY,
     fontStyle: STICKY_FONT_WEIGHT,
@@ -58,6 +84,7 @@ function measure(text: string, size: number, width: number): number {
  * hard-break it. `width(undefined)` turns wrapping off for the measurement.
  */
 function measureWord(word: string, size: number): number {
+  if (!canMeasure()) return approxWidth(word, size);
   probe ??= new Konva.Text({
     fontFamily: STICKY_FONT_FAMILY,
     fontStyle: STICKY_FONT_WEIGHT,

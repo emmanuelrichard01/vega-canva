@@ -31,11 +31,27 @@
 import type { Point } from './schema';
 
 /** Every profile, as values, so the type cannot outrun what handles it. */
-export const LINE_PROFILES = ['straight', 'curved', 'wavy', 'zigzag', 'coil'] as const;
+export const LINE_PROFILES = ['straight', 'elbow', 'curved', 'wavy', 'zigzag', 'coil'] as const;
 export type LineProfile = (typeof LINE_PROFILES)[number];
+
+/**
+ * The profiles that describe a *route*, as opposed to a decoration.
+ *
+ * Straight, elbow and curved are the three ways a diagram line travels, and
+ * they are the three a connector routes by — which is what lets a line drawn
+ * between two objects become a connector without changing how it looks. The
+ * rest are marks: a wave or a coil says something about the line itself.
+ */
+export const ROUTE_PROFILES = ['straight', 'elbow', 'curved'] as const;
+export type RouteProfile = (typeof ROUTE_PROFILES)[number];
+
+export function isRouteProfile(profile: LineProfile | undefined): profile is RouteProfile {
+  return (ROUTE_PROFILES as readonly string[]).includes(profile ?? 'straight');
+}
 
 export const LINE_PROFILE_LABELS: Record<LineProfile, string> = {
   straight: 'Straight',
+  elbow: 'Elbow',
   curved: 'Curved',
   wavy: 'Wavy',
   zigzag: 'Zigzag',
@@ -103,7 +119,7 @@ export const DEFAULT_AMPLITUDE_SCALE = 1.0;
  * inherited it, and it was wrong.
  */
 export function dynamicWaves(length: number, profile: LineProfile = 'wavy'): number {
-  if (profile === 'straight' || profile === 'curved') return 1;
+  if (profile === 'straight' || profile === 'curved' || profile === 'elbow') return 1;
   const count = Math.round(length / TARGET_PERIOD);
   return Math.max(MIN_WAVES, Math.min(MAX_WAVES, count || 1));
 }
@@ -156,6 +172,7 @@ export function linePoints(
   amplitudeScale: number = DEFAULT_AMPLITUDE_SCALE
 ): Point[] {
   if (profile === 'straight') return [a, b];
+  if (profile === 'elbow') return elbowPoints(a, b);
 
   const dx = b.x - a.x;
   const dy = b.y - a.y;
@@ -425,6 +442,68 @@ export function linePoints(
   return out;
 }
 
+/** How far an elbow's corners are rounded, in world units, before its legs limit it. */
+export const ELBOW_RADIUS = 12;
+
+/** Samples along one rounded corner, ends included. */
+const ELBOW_CORNER_STEPS = 6;
+
+/**
+ * The run from `a` to `b` as a right-angled route: out, across, and in.
+ *
+ * ## Why it is the one profile drawn in world axes
+ *
+ * Every other profile is described along the run and across it, so it draws
+ * the same at any angle. An elbow is the opposite by definition — it exists to
+ * travel *horizontally and vertically* whatever the angle between its ends,
+ * the way a flowchart reads — so it is laid out in the board's own axes.
+ *
+ * The longer axis leads: a run that is mostly across leaves and arrives
+ * horizontally, a mostly vertical one leaves and arrives vertically. Both
+ * terminal legs are therefore axis-aligned, which is what puts an arrowhead
+ * square on to the edge it points at. The corners are rounded, capped by half
+ * of each leg so two corners never overlap on a short middle leg.
+ */
+export function elbowPoints(a: Point, b: Point, radius = ELBOW_RADIUS): Point[] {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const adx = Math.abs(dx);
+  const ady = Math.abs(dy);
+  // Already on an axis: there is nothing to turn, and a corner would be a
+  // zero-length leg that gives an end cap no direction.
+  if (adx < 0.5 || ady < 0.5) return [a, b];
+  const across = adx >= ady;
+  const c1 = across ? { x: a.x + dx / 2, y: a.y } : { x: a.x, y: a.y + dy / 2 };
+  const c2 = across ? { x: a.x + dx / 2, y: b.y } : { x: b.x, y: a.y + dy / 2 };
+  const r = Math.min(radius, (across ? adx : ady) / 2, (across ? ady : adx) / 2);
+  if (r < 0.5) return [a, c1, c2, b];
+  return [a, ...roundCorner(a, c1, c2, r), ...roundCorner(c1, c2, b, r), b];
+}
+
+/**
+ * A corner at `at`, between the legs from `from` and to `to`, rounded to `r`.
+ *
+ * A quadratic with its control on the corner: tangent to both legs at its
+ * ends, which is the property that matters, and within a fraction of a unit of
+ * a true quarter circle at these radii.
+ */
+function roundCorner(from: Point, at: Point, to: Point, r: number): Point[] {
+  const inLen = Math.hypot(at.x - from.x, at.y - from.y) || 1;
+  const outLen = Math.hypot(to.x - at.x, to.y - at.y) || 1;
+  const p0 = { x: at.x - ((at.x - from.x) / inLen) * r, y: at.y - ((at.y - from.y) / inLen) * r };
+  const p2 = { x: at.x + ((to.x - at.x) / outLen) * r, y: at.y + ((to.y - at.y) / outLen) * r };
+  const out: Point[] = [];
+  for (let i = 0; i <= ELBOW_CORNER_STEPS; i += 1) {
+    const t = i / ELBOW_CORNER_STEPS;
+    const u = 1 - t;
+    out.push({
+      x: u * u * p0.x + 2 * u * t * at.x + t * t * p2.x,
+      y: u * u * p0.y + 2 * u * t * at.y + t * t * p2.y,
+    });
+  }
+  return out;
+}
+
 /**
  * The alignment a line uses when it has not been told.
  *
@@ -434,5 +513,7 @@ export function linePoints(
  * once, read by the canvas, the exporter and the specimen alike.
  */
 export function defaultEndAlign(profile: LineProfile | undefined): 'inside' | 'extend' {
-  return !profile || profile === 'straight' ? 'inside' : 'extend';
+  // An elbow arrives on a straight leg, so like a straight line it has nothing
+  // at its end for a head to eat.
+  return !profile || profile === 'straight' || profile === 'elbow' ? 'inside' : 'extend';
 }

@@ -1,3 +1,4 @@
+import { armCover, goToBoard, isLeaving } from './components/home/boardNavigation';
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from './hooks/useAuth';
 import { nanoid } from 'nanoid';
@@ -10,14 +11,16 @@ import { looksLikeLibrary, mergeLibrary, parseLibrary, serializeLibrary } from '
 import { looksLikeRoomCode, roomIdFromCode } from './engine/room/roomCode';
 import { notices$ } from './engine/ui/notices';
 import { hasPendingRestore, stashPendingRestore, stashPendingTemplate, takePendingRestore, takePendingTemplate } from './engine/export/pendingRestore';
-import { CATEGORIES, TEMPLATES, type Template, type TemplateCategory } from './engine/templates/templates';
-import { loadPreview, type BoardPreview } from './engine/model/boardPreview';
+import { CATEGORIES, FIRST_BOARD, TEMPLATES, templateById, type Template, type TemplateCategory } from './engine/templates/templates';
+import { loadPreview } from './engine/model/boardPreview';
 import { slugify } from './engine/export/filenames';
 import { BoardTile, type BoardLayout } from './components/home/BoardTile';
 import { QuickStart } from './components/home/QuickStart';
 import { TemplateCard } from './components/home/TemplateCard';
+import { TemplateGallery } from './components/home/TemplateGallery';
 import { TemplatePeek } from './components/home/TemplatePeek';
-import { templateCover } from './components/home/templateCover';
+import { searchTemplates } from './components/home/templateSearch';
+import { showcaseOf } from './components/home/templateFacts';
 import { useBoardStatus } from './components/home/useBoardStatus';
 import { useGridColumns } from './components/home/useGridColumns';
 import { useRovingGrid } from './components/home/useRovingGrid';
@@ -60,47 +63,6 @@ function initialView(): View {
 
 const isTyping = (el: Element | null) =>
   !!el && (el.matches('input, textarea, select') || (el as HTMLElement).isContentEditable);
-
-/* --------------------------------------------------- dashboard → board motion */
-
-/**
- * The cover that travels into the board.
- *
- * Named only as the page is swapped out, and every name cleared when the page
- * is shown again, so exactly one element carries it however many times
- * somebody goes to a board and comes Back — a page restored from the back
- * cache would otherwise still carry the last cover's name, and two elements
- * with one name cancel the transition.
- */
-let leavingCover: HTMLElement | null = null;
-const SWAP_SUPPORTED = typeof window !== 'undefined' && 'onpageswap' in window;
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('pageswap', (event) => {
-    if ((event as Event & { viewTransition?: unknown }).viewTransition && leavingCover) {
-      leavingCover.style.viewTransitionName = 'board-canvas';
-    }
-  });
-  const clearNames = () => {
-    document.querySelectorAll<HTMLElement>('.bcard__art, .tcard__art, .tpeek__art').forEach((el) => {
-      if (el.style.viewTransitionName) el.style.viewTransitionName = '';
-    });
-    leavingCover = null;
-  };
-  window.addEventListener('pageshow', clearNames);
-  window.addEventListener('pagereveal', clearNames);
-}
-
-function armCover(cover: HTMLElement | null | undefined) {
-  leavingCover = cover ?? null;
-  // Without `pageswap` there is no later moment to name it in.
-  if (cover && !SWAP_SUPPORTED) cover.style.viewTransitionName = 'board-canvas';
-}
-
-function goToBoard(url: string, cover?: HTMLElement | null) {
-  armCover(cover);
-  window.location.href = url;
-}
 
 const anchorOf = (el: Element | null, prefer: 'below' | 'above' = 'below', align: 'start' | 'end' = 'end'): MenuAnchor =>
   ({ kind: 'rect', rect: (el ?? document.body).getBoundingClientRect(), prefer, align });
@@ -236,43 +198,28 @@ export const Home: React.FC = () => {
   }, [names, status, entryOf]);
 
   // --------------------------------------------------------------- derived
-  /** Covers drawn from each template's real board: charts as the lines they plot. */
-  const templatePreviews = useMemo(() => {
-    const out: Record<string, BoardPreview | null> = {};
-    TEMPLATES.forEach((t) => { out[t.id] = templateCover(t); });
-    return out;
-  }, []);
+  /** Ranked by where the words land when there is a query; catalogue order when not. */
+  const matchedTemplates = useMemo(() => searchTemplates(TEMPLATES, query, category), [category, query]);
 
-  const matchedTemplates = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    let list = category ? TEMPLATES.filter((t) => t.category === category) : TEMPLATES;
-    if (q) {
-      list = list.filter((t) => {
-        const section = CATEGORIES.find((c) => c.id === t.category)?.label ?? '';
-        return `${t.name} ${t.blurb} ${t.teaches.join(' ')} ${section}`.toLowerCase().includes(q);
-      });
-    }
-    return list;
-  }, [category, query]);
-
-  /** The showcase boards lead the gallery, unless a filter has said what is wanted. */
+  /** The showcase leads the gallery, unless a filter has said what is wanted. */
   const showFeatured = !category && !query.trim();
-  const featured = useMemo(() => {
-    if (!showFeatured) return [];
-    const order = ['thinking', 'science', 'work'];
-    const rank = (c: string) => (order.indexOf(c) === -1 ? 99 : order.indexOf(c));
-    return matchedTemplates.filter((t) => t.featured).sort((a, b) => rank(a.category) - rank(b.category));
-  }, [showFeatured, matchedTemplates]);
+  const showcase = useMemo(() => showcaseOf(TEMPLATES), []);
+  const featured = useMemo(() => (showFeatured ? showcase : []), [showFeatured, showcase]);
   const rest = useMemo(
-    () => (showFeatured ? matchedTemplates.filter((t) => !t.featured) : matchedTemplates),
-    [showFeatured, matchedTemplates]
+    () => (showFeatured ? matchedTemplates.filter((t) => !showcase.includes(t)) : matchedTemplates),
+    [showFeatured, matchedTemplates, showcase]
   );
 
-  /** Featured first. The seam shows exactly one row of them, however many tracks that is. */
-  const templatePool = useMemo(
-    () => [...TEMPLATES].sort((a, b) => Number(Boolean(b.featured)) - Number(Boolean(a.featured))).slice(0, 8),
-    []
-  );
+  /**
+   * The first board offered first, then the showcase, then the rest of the
+   * catalogue. The seam shows exactly one row of them, however many tracks that is.
+   */
+  const templatePool = useMemo(() => {
+    const first = FIRST_BOARD ? templateById(FIRST_BOARD) : undefined;
+    const lead = [...(first ? [first] : []), ...showcaseOf(TEMPLATES, 8)];
+    const pool = [...new Set([...lead, ...TEMPLATES])];
+    return pool.slice(0, 8);
+  }, []);
   const [seamGrid, setSeamGrid] = useState<HTMLDivElement | null>(null);
   const seamColumns = useGridColumns(seamGrid, 5);
   const suggestedTemplates = useMemo(() => templatePool.slice(0, Math.max(1, seamColumns)), [templatePool, seamColumns]);
@@ -309,10 +256,13 @@ export const Home: React.FC = () => {
   const openBoard = useCallback(() => goToBoard(`/room/${nanoid(10)}?new=1`), []);
 
   const openTemplate = useCallback((template: Template) => {
+    if (isLeaving()) return;
     stashPendingTemplate(template.id);
+    const id = CSS.escape(template.id);
     const cover = peekId === template.id
       ? document.querySelector<HTMLElement>('.tpeek__art')
-      : document.querySelector<HTMLElement>(`[data-template="${template.id}"] .tcard__art`);
+      : document.querySelector<HTMLElement>(`.gcard[data-template="${id}"] .gcard__art`)
+        ?? document.querySelector<HTMLElement>(`.gshow__stage[data-template="${id}"]`);
     goToBoard(`/room/${nanoid(10)}`, cover);
   }, [peekId]);
 
@@ -735,6 +685,10 @@ export const Home: React.FC = () => {
   const onStageFocus = (e: React.FocusEvent) => {
     roving.onFocus(e);
     if (!peekId) return;
+    // Only keyboard travel moves the peek. A click focuses its target first,
+    // and following that focus swapped the peek before the click landed, so
+    // Preview on another card toggled the new one shut.
+    if (!(e.target as HTMLElement).matches(':focus-visible')) return;
     const id = (e.target as HTMLElement).closest<HTMLElement>('[data-template]')?.dataset.template;
     if (id && id !== peekId) setPeekId(id);
   };
@@ -818,7 +772,6 @@ export const Home: React.FC = () => {
     <TemplateCard
       key={`${scope}-${template.id}`}
       template={template}
-      preview={templatePreviews[template.id]}
       peeking={peekId === template.id}
       scope={scope}
       onPeek={peek}
@@ -826,45 +779,22 @@ export const Home: React.FC = () => {
     />
   );
 
-  const templatesBody = matchedTemplates.length === 0 ? (
-    <div className="stage__empty">
-      <Sparkles size={22} aria-hidden="true" />
-      <h3>No templates match “{query.trim()}”</h3>
-      <p>Try a different word, or clear the search to see all {TEMPLATES.length}.</p>
-      <button type="button" className="stage__ghost" onClick={() => setQuery('')}>Clear search</button>
-    </div>
-  ) : showFeatured ? (
-    <>
-      {featured.length > 0 && (
-        <>
-          <h2 className="stage__subhead">Featured templates</h2>
-          <div className="tgrid tgrid--featured">{featured.map((t) => templateCard(t, 'featured'))}</div>
-        </>
-      )}
-      {CATEGORIES.filter((c) => rest.some((t) => t.category === c.id)).map((c, index) => {
-        const inCategory = rest.filter((t) => t.category === c.id);
-        const shown = inCategory.slice(0, shelfColumns);
-        return (
-          <section key={c.id} className="tsection" aria-labelledby={`tsection-${c.id}`}>
-            <header className="tsection__head">
-              <div>
-                <h2 className="tsection__title" id={`tsection-${c.id}`}>{c.label}</h2>
-                <p className="tsection__blurb">{c.blurb}</p>
-              </div>
-              {inCategory.length > shown.length && (
-                <button type="button" className="lbtn" onClick={() => goTemplates(c.id)} aria-label={`Show all ${inCategory.length} ${c.label} templates`}>
-                  All {inCategory.length}
-                  <ChevronRight size={14} aria-hidden="true" />
-                </button>
-              )}
-            </header>
-            <div className="tgrid" ref={index === 0 ? setShelfGrid : undefined}>{shown.map((t) => templateCard(t, c.id))}</div>
-          </section>
-        );
-      })}
-    </>
-  ) : (
-    <div className="tgrid">{rest.map((t) => templateCard(t, 'all'))}</div>
+  const templatesBody = (
+    <TemplateGallery
+      total={TEMPLATES.length}
+      matched={matchedTemplates}
+      category={category}
+      query={query}
+      showcase={featured}
+      rest={rest}
+      shelfColumns={shelfColumns}
+      shelfRef={setShelfGrid}
+      peekId={peekId}
+      onPeek={peek}
+      onUse={openTemplate}
+      onCategory={(c) => goTemplates(c)}
+      onClearQuery={() => { setQuery(''); searchRef.current?.focus(); }}
+    />
   );
 
   const listHead = layout === 'list' && boardGroups.length > 0 && (
@@ -881,7 +811,6 @@ export const Home: React.FC = () => {
     <QuickStart
       templateCount={TEMPLATES.length}
       starters={starters}
-      previews={templatePreviews}
       peekingId={peekId}
       onBlank={openBoard}
       onTemplates={() => goTemplates(null)}
@@ -1276,7 +1205,6 @@ export const Home: React.FC = () => {
         {peeking && (
           <TemplatePeek
             template={peeking}
-            preview={templatePreviews[peeking.id]}
             index={peekIndex}
             count={Math.max(1, visibleTemplates.length)}
             onStep={stepPeek}
@@ -1307,7 +1235,7 @@ export const Home: React.FC = () => {
             onClose={() => setPaletteOpen(false)}
             onNewBoard={openBoard}
             onOpenBoard={(board) => goToBoard(`/room/${board.id}`)}
-            onPeekTemplate={(t) => { goTemplates(null); setQuery(''); setPeekId(t.id); }}
+            onPeekTemplate={(t) => { goTemplates(t.category); setQuery(''); setPeekId(t.id); }}
             onBrowseTemplates={() => goTemplates(null)}
             onJoin={() => { setView('boards'); openJoin(); }}
             onRestore={() => restoreInputRef.current?.click()}

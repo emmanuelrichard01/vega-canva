@@ -1,0 +1,131 @@
+/*
+ * The Export section of the properties panel. Built on the panel grammar's
+ * metrics (control height, surface, radius, the graphite field focus) so a
+ * preset row reads as one more row of the panel.
+ */
+
+.xp-preset {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) 70px 24px;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.xp-suffix {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: var(--control-h-sm);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--control-border, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font: inherit;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-xs);
+  transition: border-color var(--motion-hover);
+}
+
+.xp-suffix:hover {
+  border-color: var(--border-strong);
+}
+
+.xp-suffix:focus-visible,
+.xp-suffix:focus {
+  outline: 1.5px solid var(--focus-field-color);
+  outline-offset: 0;
+}
+
+.xp-suffix::placeholder {
+  color: var(--text-tertiary);
+}
+
+.xp-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.xp-button {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-width: 0;
+  height: var(--control-h-sm);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-hover);
+}
+
+.xp-button:hover {
+  background: var(--surface-hover);
+}
+
+.xp-button:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+.xp-button:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+  background: transparent;
+}
+
+.xp-button__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xp-run {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  height: var(--control-h-sm);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.xp-run__text {
+  flex-shrink: 0;
+}
+
+.xp-run__bar {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  min-width: 24px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-secondary);
+  overflow: hidden;
+}
+
+.xp-run__bar > span {
+  position: absolute;
+  inset: 0;
+  background: var(--text-primary);
+  transform-origin: left center;
+  transition: transform 240ms var(--ease-settle);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .xp-run__bar > span {
+    transition: none;
+  }
+}

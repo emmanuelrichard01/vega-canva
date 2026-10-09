@@ -49,12 +49,60 @@ export interface NewNodeInput {
  * by id, so the tie stacks the same way on every screen.
  */
 export function nextZIndex(): number {
+  return highestZIndex() + 1;
+}
+
+function highestZIndex(): number {
   let max = 0;
   objectsMap.forEach((node) => {
     const z = node.get('zIndex');
     if (typeof z === 'number' && Number.isFinite(z) && z > max) max = z;
   });
-  return max + 1;
+  return max;
+}
+
+type FrameBox = { id: string; x: number; y: number; width: number; height: number; zIndex: number };
+
+function frameBoxes(): FrameBox[] {
+  const frames: FrameBox[] = [];
+  objectsMap.forEach((node, id) => {
+    if (node.get('type') !== 'frame') return;
+    frames.push({
+      id,
+      x: (node.get('x') as number) ?? 0,
+      y: (node.get('y') as number) ?? 0,
+      width: (node.get('width') as number) ?? 0,
+      height: (node.get('height') as number) ?? 0,
+      zIndex: (node.get('zIndex') as number) ?? 0,
+    });
+  });
+  return frames;
+}
+
+/**
+ * The stacking top and the frames, for a run of creates inside one transaction.
+ *
+ * `createNode` needs both, and each is a walk over the whole document. A
+ * template, a paste or a restore creates hundreds of nodes in one transaction,
+ * so walking per create made the run quadratic: 5,000 objects took 27 s, 2,000
+ * took 4 s. Inside one transaction nothing outside this module can add an
+ * object or move one (every object write goes through here), so the walk is
+ * done once per transaction and `createNode` keeps it current as it adds
+ * nodes. Any other gated write in this module drops it (they all pass
+ * through `refuseWrite` first), and a new transaction starts from a fresh walk.
+ */
+let createScan: { transaction: unknown; top: number; frames: FrameBox[] } | null = null;
+
+function scanForCreate(): { top: number; frames: FrameBox[] } {
+  const transaction = doc._transaction;
+  if (!transaction) {
+    createScan = null;
+    return { top: highestZIndex(), frames: frameBoxes() };
+  }
+  if (createScan?.transaction !== transaction) {
+    createScan = { transaction, top: highestZIndex(), frames: frameBoxes() };
+  }
+  return createScan;
 }
 
 /**
@@ -84,19 +132,7 @@ function frameToJoin(box: {
   y: number;
   width: number;
   height: number;
-}): string | null {
-  const frames: Array<{ id: string; x: number; y: number; width: number; height: number; zIndex: number }> = [];
-  objectsMap.forEach((node, id) => {
-    if (node.get('type') !== 'frame') return;
-    frames.push({
-      id,
-      x: (node.get('x') as number) ?? 0,
-      y: (node.get('y') as number) ?? 0,
-      width: (node.get('width') as number) ?? 0,
-      height: (node.get('height') as number) ?? 0,
-      zIndex: (node.get('zIndex') as number) ?? 0,
-    });
-  });
+}, frames: FrameBox[]): string | null {
   if (frames.length === 0) return null;
   return frameForNode(box, frames);
 }
@@ -223,6 +259,7 @@ export function publishLocalIdentity(name: string, color: string): void {
  * out making, when the client picked its own role and the server believed it.
  */
 function refuseWrite(what: string): boolean {
+  if (what !== 'createNode') createScan = null;
   if (canEditObjects()) return false;
 
   // Loud in development, silent in production. A refusal reaching this point
@@ -245,6 +282,11 @@ export interface CreateNodeOptions {
    * performs it.
    */
   preserveAuthorship?: boolean;
+  /**
+   * Keep the `reactions` the input carries without taking its authorship.
+   * For a template seed, whose stamps are part of the board it ships.
+   */
+  keepReactions?: boolean;
 }
 
 export function createNode(input: NewNodeInput, options: CreateNodeOptions = {}): string {
@@ -254,6 +296,8 @@ export function createNode(input: NewNodeInput, options: CreateNodeOptions = {})
   const now = Date.now();
   const id = input.id ?? nanoid();
   const author = localAuthor();
+  const scan = scanForCreate();
+  const zIndex = scan.top + 1;
 
   const node: Record<string, unknown> = {
     rotation: 0,
@@ -273,10 +317,10 @@ export function createNode(input: NewNodeInput, options: CreateNodeOptions = {})
     updatedByName: undefined,
     // Always a fresh top slot, even when the caller spread an existing node
     // (duplicate/paste) whose stale z-index would otherwise be inherited.
-    zIndex: nextZIndex(),
+    zIndex,
   };
   // A copy starts with nobody's reactions: those were responses to the original.
-  if (!options.preserveAuthorship) delete node.reactions;
+  if (!options.preserveAuthorship && !options.keepReactions) delete node.reactions;
 
   // Derived from where the node actually is, not from `input` — a duplicate or
   // a paste spreads the original's `frameId`, which is the wrong frame the
@@ -295,7 +339,7 @@ export function createNode(input: NewNodeInput, options: CreateNodeOptions = {})
           y: input.y,
           width: input.width,
           height: input.height,
-        }) ?? (typeof input.frameId === 'string' ? input.frameId : undefined));
+        }, scan.frames) ?? (typeof input.frameId === 'string' ? input.frameId : undefined));
 
   const ymap = new Y.Map<unknown>();
   doc.transact(() => {
@@ -311,6 +355,21 @@ export function createNode(input: NewNodeInput, options: CreateNodeOptions = {})
     if (node.type === 'sticky') seedReactions(ymap, node.reactions);
     objectsMap.set(id, ymap);
   });
+
+  // Keep the transaction's scan in step with what was just written.
+  scan.top = Math.max(scan.top, zIndex);
+  const replaced = scan.frames.findIndex((frame) => frame.id === id);
+  if (replaced >= 0) scan.frames.splice(replaced, 1);
+  if (node.type === 'frame') {
+    scan.frames.push({
+      id,
+      x: (node.x as number) ?? 0,
+      y: (node.y as number) ?? 0,
+      width: (node.width as number) ?? 0,
+      height: (node.height as number) ?? 0,
+      zIndex,
+    });
+  }
 
   return id;
 }
