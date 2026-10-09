@@ -34,7 +34,7 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.21",
     "@types/fontkit": "^2.0.9",
-    "@types/multer": "^1.4.11",
+    "@types/multer": "^2.3.0",
     "@types/multer-s3": "^3.0.3",
     "@types/node": "^22.15.0",
     "@types/pg": "^8.23.1",
