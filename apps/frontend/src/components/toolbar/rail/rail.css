@@ -360,6 +360,19 @@
 .ctx-toolbar--veiled:has(.ctx-popover) {
   opacity: 1;
   background: var(--surface-elevated);
+  /* The veil's glass is the rail's, not the panel's: with a panel open the
+     whole assembly is one solid surface, nothing blurred showing through. */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* The panel owns an opaque surface of its own, whatever the rail around it is
+   doing (resting, veiled, or in increased contrast). */
+.ctx-popover {
+  background-color: var(--surface-elevated);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  isolation: isolate;
 }
 
 /* ---- Grid rail popovers ------------------------------------------------ */
