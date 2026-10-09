@@ -22,6 +22,7 @@ vi.mock('../../../engine/model/permissions', async (importOriginal) => ({
 }));
 
 import { GridRail } from './GridRail';
+import { GRID_SETTINGS_EVENT } from '../../../engine/grid/gridSettings';
 
 globalThis.ResizeObserver ??= class {
   observe() {}
@@ -74,5 +75,16 @@ describe('grid rail popovers', () => {
     expect(container.querySelector('button')).toBeNull();
     expect(queryByLabelText('Edit cells')).toBeNull();
     expect(queryByLabelText('Layout: columns, gutter and margin')).toBeNull();
+  });
+
+  it('asks for the grid settings on purpose, and only then', () => {
+    const heard: string[] = [];
+    const on = (e: Event) => heard.push((e as CustomEvent<{ id: string }>).detail.id);
+    window.addEventListener(GRID_SETTINGS_EVENT, on);
+    const { getByLabelText } = mount();
+    expect(heard).toHaveLength(0);
+    fireEvent.click(getByLabelText('Grid settings'));
+    window.removeEventListener(GRID_SETTINGS_EVENT, on);
+    expect(heard).toEqual(['g']);
   });
 });

@@ -128,4 +128,14 @@ describe('a board column', () => {
     fireEvent.click(toggle);
     expect(document.activeElement).toBe(screen.getByText('Layer one'));
   });
+
+  it('stays a pill when what it holds changes, as it does when a grid is selected', () => {
+    const onPin = vi.fn();
+    const { rerender } = render(<Harness onPin={onPin} />);
+    rerender(<Harness onPin={onPin} />);
+    act(() => vi.advanceTimersByTime(PEEK_DELAY_MS * 3));
+    expect(screen.getByRole('navigation', { name: 'Board' })).toBeTruthy();
+    expect(screen.queryByText('Layer one')).toBeNull();
+    expect(onPin).not.toHaveBeenCalled();
+  });
 });

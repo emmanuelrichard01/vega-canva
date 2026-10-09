@@ -1,10 +1,11 @@
 import React from 'react';
-import { ChevronDown, Clock, Columns3, Grid3x3, ImagePlus, MoveHorizontal, Shuffle, Square, StretchVertical } from 'lucide-react';
+import { ChevronDown, Clock, Columns3, Grid3x3, ImagePlus, MoveHorizontal, Shuffle, SlidersHorizontal, Square, StretchVertical } from 'lucide-react';
 import type { GridRecipe } from '../../../engine/grid/gridBuild';
 import { switchKind } from '../../../engine/grid/gridBuild';
 import { GRID_HINTS, GRID_KINDS, GRID_LABELS } from '../../../engine/grid/gridLayout';
 import { GRID_PRESETS, gridPresetMatching } from '../../../engine/grid/gridPresets';
 import { gridEditMode } from '../../../engine/grid/gridEditMode';
+import { requestGridSettings } from '../../../engine/grid/gridSettings';
 import { GRID_PALETTES } from '../../../engine/grid/gridStyle';
 import { canEditObjects } from '../../../engine/model/permissions';
 import type { GridNode } from '../../../engine/model/schema';
@@ -249,6 +250,15 @@ export const GridRail: SingleRail<GridNode> = ({ node, conditional, tail, tailCo
       node: (
         <RailButton label="Edit cells" hint="Pick, merge and split modules (Enter)" onClick={() => gridEditMode.enter(node.id)}>
           <Grid3x3 size={16} />
+        </RailButton>
+      ),
+    },
+    {
+      id: 'settings',
+      controls: 1,
+      node: (
+        <RailButton label="Grid settings" hint="Open every grid setting in the properties panel" onClick={() => requestGridSettings(node.id)}>
+          <SlidersHorizontal size={16} />
         </RailButton>
       ),
     },

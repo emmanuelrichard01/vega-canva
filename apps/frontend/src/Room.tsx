@@ -49,6 +49,8 @@ import { useRoomShortcuts } from './hooks/useRoomShortcuts';
 import { useCanvasAudioRecording } from './hooks/useCanvasAudioRecording';
 import { useCanvasDropZone } from './hooks/useCanvasDropZone';
 import { startGridSlotSync } from './engine/grid/gridSlotApply';
+import { gridEditMode } from './engine/grid/gridEditMode';
+import { GRID_SETTINGS_EVENT } from './engine/grid/gridSettings';
 import { notify } from './engine/ui/notices';
 import { useRoomClipboard } from './hooks/useRoomClipboard';
 import { useRoomContextMenuActions } from './hooks/useRoomContextMenuActions';
@@ -326,6 +328,12 @@ export default function Room() {
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
   const setSelectedId = useCallback((id: string | null) => setSelectedIds(id ? [id] : []), []);
   const clearSelection = useCallback(() => setSelectedIds([]), []);
+  // Edit cells belongs to the selected grid: Escape leaves it (the overlay
+  // handles that), and so does selecting anything else or clicking empty board.
+  useEffect(() => {
+    const editing = gridEditMode.get().gridId;
+    if (editing && !selectedIds.includes(editing)) gridEditMode.exit();
+  }, [selectedIds]);
   const [isPlayMode, setIsPlayMode] = useState(false);
   // `searchQuery`/`rightTab`/`activeEditor`/`showMagicMenu`/`showOnboarding`
   // were all declared here and never read by anything — leftovers from UI that
@@ -993,6 +1001,22 @@ export default function Room() {
     if (isCompact) setPanelsOpen(true);
     openProperties();
   }, [isCompact, openProperties]);
+  /**
+   * The grid rail's "Grid settings": the one deliberate way the properties
+   * panel opens for a grid. Selecting never does.
+   */
+  useEffect(() => {
+    const onRequest = () => {
+      expandRight();
+      window.setTimeout(() => {
+        document
+          .querySelector<HTMLElement>('[data-section="grid-system"]')
+          ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }, 120);
+    };
+    window.addEventListener(GRID_SETTINGS_EVENT, onRequest);
+    return () => window.removeEventListener(GRID_SETTINGS_EVENT, onRequest);
+  }, [expandRight]);
   /** Mod+\: both columns to pills and back, as UI3 does. */
   const togglePanelsCollapsed = useCallback(() => {
     if (isCompact) {

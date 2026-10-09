@@ -11,7 +11,8 @@ import {
   Unlink2,
 } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
-import { GridKindIcon } from '../workspace/gridIcons';
+import { GridKindArt } from '../dock/art/DataArt';
+import { canEditObjects } from '../../engine/model/permissions';
 import { GRID_PRESETS, gridPresetMatching } from '../../engine/grid/gridPresets';
 import { ColorPickerPopover } from '../ui/ColorPickerPopover';
 import { setGridRecipe } from '../../engine/grid/gridApply';
@@ -147,6 +148,8 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
   const padUniform = pad.top === pad.right && pad.right === pad.bottom && pad.bottom === pad.left;
   const padLinked = padLinkWanted && padUniform;
   const align: CellAlign = spec.contentAlign ?? { x: 'stretch', y: 'stretch' };
+  const hugging = spec.sizing === 'hug';
+  const canEdit = canEditObjects();
   const editable = canEditCells(kind);
   const isEditing = editing.gridId === nodeId;
 
@@ -174,24 +177,52 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
   const colLabel = hasRings ? 'Spokes' : kind === 'golden' ? 'Steps' : 'Columns';
 
   return (
-    <div className="gs">
+    <div className="gsec" data-readonly={!canEdit || undefined} inert={!canEdit || undefined}>
+      {!canEdit && <Note>View only. Ask for edit access to change this grid.</Note>}
+      <div className="gsec-mode" data-active={isEditing || undefined}>
+        <div className="gsec-mode__text">
+          <span className="gsec-mode__title">{isEditing ? 'Editing cells' : 'Edit cells'}</span>
+          <span className="gsec-mode__hint">
+            {!editable
+              ? 'Cells can be edited on column, modular and bento grids'
+              : isEditing
+                ? 'Pick modules on the board, then merge, split or drag a track edge. Esc leaves.'
+                : 'Merge, split and resize modules on the board, or double-click the grid.'}
+          </span>
+        </div>
+        <button
+          type="button"
+          className="gsec-action"
+          aria-pressed={isEditing}
+          disabled={!editable || !canEdit}
+          onClick={() => (isEditing ? gridEditMode.exit() : gridEditMode.enter(nodeId))}
+        >
+          {isEditing ? 'Done' : 'Edit cells'}
+        </button>
+      </div>
       <Section
         id="grid-system"
         title="Grid"
         meta={`${cellCount} ${cellCount === 1 ? 'module' : 'modules'}`}
       >
-        <SpecimenPicker
-          label="Grid system"
-          value={kind}
-          options={GRID_KINDS.map((k) => ({
-            value: k,
-            label: `${GRID_LABELS[k]}: ${GRID_HINTS[k]}`,
-            render: () => <GridKindIcon kind={k} size={20} />,
-          }))}
-          onChange={(k) => apply(switchKind(recipe, k))}
-        />
+        <div className="gsec-kinds" role="radiogroup" aria-label="Grid system">
+          {GRID_KINDS.map((k) => (
+            <button
+              key={k}
+              type="button"
+              role="radio"
+              aria-checked={k === kind}
+              className="gsec-kind"
+              data-tooltip={`${GRID_LABELS[k]}: ${GRID_HINTS[k]}`}
+              onClick={() => k !== kind && apply(switchKind(recipe, k))}
+            >
+              <GridKindArt kind={k} size={44} />
+              <span className="gsec-kind__name">{GRID_LABELS[k]}</span>
+            </button>
+          ))}
+        </div>
         <Note>
-          <strong className="gs-strong">{GRID_LABELS[kind]}.</strong> {GRID_HINTS[kind]}
+          <strong className="gsec-strong">{GRID_LABELS[kind]}.</strong> {GRID_HINTS[kind]}
         </Note>
         <Row label="Preset">
           <Select
@@ -219,7 +250,7 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
         </Row>
       </Section>
 
-      <Section id="grid-arrangement" title="Arrangement">
+      <Section id="grid-structure" title="Structure">
         {(usesRows || usesColumns) && (
           <PairRow>
             {usesRows ? (
@@ -248,6 +279,29 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
             )}
           </PairRow>
         )}
+        <Row
+          label="Row height"
+          hint={
+            !regular
+              ? 'Only column and modular grids have rows that can grow'
+              : hugging
+                ? 'Each row grows to fit the text, sticky or table in it; the grid gets taller to match'
+                : "Rows share the grid's height, however much is in them"
+          }
+          stack
+        >
+          <SegmentedControl
+            ariaLabel="Row sizing"
+            fill
+            value={hugging ? 'hug' : 'fixed'}
+            disabledReason={regular ? undefined : 'Only column and modular grids have rows that can grow'}
+            segments={[
+              { value: 'fixed', label: 'Fixed', hint: 'Rows share the grid height' },
+              { value: 'hug', label: 'Hug content', hint: 'Rows grow to fit what is in them' },
+            ]}
+            onChange={(v) => patchSpec({ sizing: v === 'hug' ? 'hug' : undefined })}
+          />
+        </Row>
         <PairRow linked>
           <NumberField
             label="Gap across"
@@ -325,7 +379,7 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
         </FullRow>
       </Section>
 
-      <Section id="grid-layout" title="Layout">
+      <Section id="grid-spacing" title="Spacing">
         {padLinked ? (
           <PairRow linked>
             <NumberField
@@ -394,9 +448,9 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
           </>
         )}
         <Row label="Content" hint="Where content sits in its module, and whether it fills it">
-          <div className="gs-align">
+          <div className="gsec-align">
             <AlignMatrix value={align} onChange={setAlign} />
-            <div className="gs-align__fill">
+            <div className="gsec-align__fill">
               <IconToggle
                 label={align.x === 'stretch' ? 'Content fills the width' : 'Fill the width'}
                 pressed={align.x === 'stretch'}
@@ -414,37 +468,6 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
             </div>
           </div>
         </Row>
-        <Row label="Rows" hint="Hug makes each row as tall as the tallest text, sticky or table in it">
-          <SegmentedControl
-            ariaLabel="Row sizing"
-            fill
-            value={spec.sizing === 'hug' ? 'hug' : 'fixed'}
-            disabledReason={regular ? undefined : 'Only column and modular grids have rows that can grow'}
-            segments={[
-              { value: 'fixed', label: 'Fixed', hint: 'Rows share the grid height' },
-              { value: 'hug', label: 'Hug content', hint: 'Rows grow to fit what is in them' },
-            ]}
-            onChange={(v) => patchSpec({ sizing: v === 'hug' ? 'hug' : undefined })}
-          />
-        </Row>
-        <FullRow>
-          <button
-            type="button"
-            className="gs-action"
-            aria-pressed={isEditing}
-            data-tooltip={
-              editable
-                ? isEditing
-                  ? 'Stop editing cells (Esc)'
-                  : 'Merge, split and resize modules on the board. Or double-click the grid'
-                : 'Cells can be edited on column, modular and bento grids'
-            }
-            disabled={!editable}
-            onClick={() => (isEditing ? gridEditMode.exit() : gridEditMode.enter(nodeId))}
-          >
-            {isEditing ? 'Done editing cells' : 'Edit cells'}
-          </button>
-        </FullRow>
       </Section>
 
       {regular && (
@@ -458,7 +481,7 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
         id="grid-cells"
         title="Cells"
         meta={
-          <span className="gs-specimen" aria-hidden="true">
+          <span className="gsec-specimen" aria-hidden="true">
             <CellFace
               shape={style.shapes[0] ?? 'rect'}
               size={18}
@@ -473,7 +496,7 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
         }
       >
         {mixing ? (
-          <div className="gs-shapes" role="group" aria-label="Shapes in the mix">
+          <div className="gsec-shapes" role="group" aria-label="Shapes in the mix">
             {CELL_SHAPES.map((shape: CellShape) => {
               const on = style.shapes.includes(shape);
               return (
@@ -557,7 +580,7 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
         title="Colour"
         meta={GRID_PALETTES.find((p) => p.colors.join() === style.palette.join())?.name ?? 'Custom'}
       >
-        <div className="gs-palettes" role="radiogroup" aria-label="Palette">
+        <div className="gsec-palettes" role="radiogroup" aria-label="Palette">
           {GRID_PALETTES.map((palette) => {
             const on = palette.colors.join() === style.palette.join();
             return (
@@ -567,19 +590,19 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
                 role="radio"
                 aria-checked={on}
                 aria-label={palette.name}
-                className="gs-palette"
+                className="gsec-palette"
                 data-tooltip={palette.name}
                 onClick={() => patchStyle({ palette: palette.colors })}
               >
                 {palette.colors.map((c) => (
-                  <span key={c} className="gs-palette__chip" style={{ background: c }} />
+                  <span key={c} className="gsec-palette__chip" style={{ background: c }} />
                 ))}
               </button>
             );
           })}
         </div>
         <Row label="Colours">
-          <div className="gs-swatches">
+          <div className="gsec-swatches">
             {style.palette.map((color, i) => (
               <ColorPickerPopover
                 key={i}
@@ -614,7 +637,7 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
             <Note>
               <button
                 type="button"
-                className="gs-link"
+                className="gsec-link"
                 data-tooltip="Select the content that has no module in this arrangement"
                 onClick={() =>
                   window.dispatchEvent(new CustomEvent('requestSelectNodes', { detail: { ids: content.parkedIds } }))
@@ -673,7 +696,7 @@ const AlignMatrix: React.FC<{ value: CellAlign; onChange: (next: CellAlign) => v
   };
   return (
     <div
-      className="gs-matrix"
+      className="gsec-matrix"
       role="radiogroup"
       aria-label="Content alignment"
       data-stretch-x={value.x === 'stretch' || undefined}
@@ -700,14 +723,14 @@ const AlignMatrix: React.FC<{ value: CellAlign; onChange: (next: CellAlign) => v
               aria-checked={checked}
               aria-label={`Align ${name}`}
               tabIndex={isFocus ? 0 : -1}
-              className="gs-matrix__cell"
+              className="gsec-matrix__cell"
               data-h={inH || undefined}
               data-v={inV || undefined}
               onClick={() => pick(x, y)}
             >
-              <span className="gs-matrix__mark" />
-              {inH && <span className="gs-matrix__bar gs-matrix__bar--h" aria-hidden="true" />}
-              {inV && <span className="gs-matrix__bar gs-matrix__bar--v" aria-hidden="true" />}
+              <span className="gsec-matrix__mark" />
+              {inH && <span className="gsec-matrix__bar gsec-matrix__bar--h" aria-hidden="true" />}
+              {inV && <span className="gsec-matrix__bar gsec-matrix__bar--v" aria-hidden="true" />}
             </button>
           );
         })
@@ -740,11 +763,11 @@ const TrackList: React.FC<{
   const shown = Math.min(n, 24);
   const letter = axis === 'cols' ? 'C' : 'R';
   return (
-    <div className="gs-tracks" role="group" aria-label={title}>
-      <div className="gs-tracks__head">
+    <div className="gsec-tracks" role="group" aria-label={title}>
+      <div className="gsec-tracks__head">
         <span>{title}</span>
         {tracks && (
-          <button type="button" className="gs-link" onClick={() => resetTracks(node.id, axis)}>
+          <button type="button" className="gsec-link" onClick={() => resetTracks(node.id, axis)}>
             Make even
           </button>
         )}
@@ -754,8 +777,8 @@ const TrackList: React.FC<{
         const k = trackKind(t);
         const value = k === 'px' ? (t as { px: number }).px : k === 'fr' && t ? (t as { fr: number }).fr : Math.round(sizes[i]);
         return (
-          <div className="gs-track" key={i}>
-            <span className="gs-track__name">{`${letter}${i + 1}`}</span>
+          <div className="gsec-track" key={i}>
+            <span className="gsec-track__name">{`${letter}${i + 1}`}</span>
             <Select<TrackKind>
               label={`${letter}${i + 1} sizing`}
               value={tracks ? k : 'fr'}
