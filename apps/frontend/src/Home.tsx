@@ -241,12 +241,19 @@ export const Home: React.FC = () => {
     return pool.slice(0, 8);
   }, []);
   const [seamGrid, setSeamGrid] = useState<HTMLDivElement | null>(null);
-  const seamColumns = useGridColumns(seamGrid, 5);
+  /**
+   * Row lengths are measured from the layout, and the peek changes the layout:
+   * it narrows the stage. Measured live, opening the peek on the last card of
+   * a row dropped that card from the row, which closed the peek, which widened
+   * the stage, which brought the card back and reopened it, every frame. So
+   * the counts hold still while a peek is open and catch up when it closes.
+   */
+  const seamColumns = useHeldWhile(useGridColumns(seamGrid, 5), peekId !== null);
   const suggestedTemplates = useMemo(() => templatePool.slice(0, Math.max(1, seamColumns)), [templatePool, seamColumns]);
   const starters = useMemo(() => templatePool.slice(0, 3), [templatePool]);
   /** Browsing every category, each one is a single row; its button shows the rest. */
   const [shelfGrid, setShelfGrid] = useState<HTMLDivElement | null>(null);
-  const shelfColumns = useGridColumns(shelfGrid, 5);
+  const shelfColumns = useHeldWhile(useGridColumns(shelfGrid, 5), peekId !== null);
 
   const hasRooms = recentRooms.length > 0;
 
@@ -269,6 +276,10 @@ export const Home: React.FC = () => {
   const peekIndex = peekTemplate ? visibleTemplates.findIndex((t) => t.id === peekTemplate.id) : -1;
   // The peek belongs to the templates on screen; switching views or filtering one away closes it.
   const peeking = peekTemplate && peekIndex >= 0 ? peekTemplate : null;
+  // A peek whose template left the screen is forgotten, not kept to reopen when it returns.
+  useEffect(() => {
+    if (peekId && peekIndex < 0) setPeekId(null);
+  }, [peekId, peekIndex]);
 
   const roving = useRovingGrid(`${view}|${layout}|${sort}|${query}|${category}|${recentRooms.length}|${Object.keys(pins).length}|${renaming}`);
 
@@ -1266,3 +1277,10 @@ export const Home: React.FC = () => {
     </div>
   );
 };
+
+/** `value`, except that it keeps the value it had when `held` turned on until `held` turns off. */
+function useHeldWhile<T>(value: T, held: boolean): T {
+  const kept = useRef(value);
+  if (!held) kept.current = value;
+  return held ? kept.current : value;
+}
