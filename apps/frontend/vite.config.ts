@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { pageHtml, PUBLIC_PAGES, sitemapXml } from './src/engine/share/sitePages.ts';
@@ -73,6 +77,64 @@ function publicPages(siteUrl: string): Plugin {
 }
 
 /**
+ * Template covers, drawn once at build time instead of on every visit.
+ *
+ * The gallery used to draw each cover in the browser: download the chart,
+ * table and connector engines, build the template, and write ~100 kB of SVG,
+ * one cover per idle slot, on every page load. Fifty covers took about two
+ * seconds of main-thread work on a fast desktop and several times that on a
+ * phone, and nothing was kept between visits.
+ *
+ * The build now runs the same recipe (`coverRender.ts`) in Node and emits each
+ * cover as a content-hashed file under `assets/`, which the CDN serves as
+ * immutable. `virtual:template-covers` maps template ids to those URLs. In dev
+ * the map is empty and the gallery draws covers live, so editing a template
+ * shows straight away. `VEGA_SKIP_COVERS=1` skips baking for a faster build.
+ */
+function templateCovers(): Plugin {
+  const ID = 'virtual:template-covers';
+  const RESOLVED = '\0' + ID;
+  let bake = false;
+  return {
+    name: 'vega-template-covers',
+    configResolved(config) {
+      bake = config.command === 'build' && !process.env.VEGA_SKIP_COVERS;
+    },
+    resolveId: (id) => (id === ID ? RESOLVED : undefined),
+    async load(id) {
+      if (id !== RESOLVED) return;
+      if (!bake) return 'export default {};';
+      const started = Date.now();
+      // In a child process: see `scripts/bake-covers.mjs` for why.
+      let baked: { covers: Array<{ id: string; svg: string }>; failed: string[] };
+      try {
+        const { stdout } = await promisify(execFile)(
+          process.execPath,
+          [fileURLToPath(new URL('./scripts/bake-covers.mjs', import.meta.url))],
+          { cwd: fileURLToPath(new URL('.', import.meta.url)), maxBuffer: 256 * 1024 * 1024, timeout: 180_000 }
+        );
+        baked = JSON.parse(stdout);
+      } catch (err) {
+        // Never fail the build for covers: the gallery draws them in the browser instead.
+        this.warn(`template covers not baked, drawn in the browser instead: ${String((err as Error)?.message ?? err).slice(0, 400)}`);
+        return 'export default {};';
+      }
+      const { covers, failed } = baked;
+      for (const line of failed) this.warn(`cover not baked, drawn in the browser instead: ${line}`);
+      const entries = covers.map(({ id: templateId, svg }) => {
+        const hash = createHash('sha256').update(svg).digest('base64url').slice(0, 10);
+        const fileName = `assets/cover-${templateId}-${hash}.svg`;
+        this.emitFile({ type: 'asset', fileName, source: svg });
+        return `${JSON.stringify(templateId)}:${JSON.stringify(fileName)}`;
+      });
+      const kb = Math.round(covers.reduce((n, c) => n + c.svg.length, 0) / 1024);
+      this.info(`baked ${covers.length} template covers (${kb} kB) in ${Date.now() - started} ms`);
+      return `const base = import.meta.env.BASE_URL;\nconst files = {${entries.join(',')}};\nexport default Object.fromEntries(Object.entries(files).map(([k, v]) => [k, base + v]));`;
+    },
+  };
+}
+
+/**
  * Modules under `engine/export/` that the live canvas legitimately shares, and
  * which must therefore stay out of the lazy export chunk.
  *
@@ -112,6 +174,7 @@ const inSource = (pattern: RegExp) => (id: string) => pattern.test(posixId(id));
 export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
+    templateCovers(),
     siteMeta(loadEnv(mode, process.cwd(), 'VITE_').VITE_SITE_URL || DEFAULT_SITE_URL),
     publicPages(loadEnv(mode, process.cwd(), 'VITE_').VITE_SITE_URL || DEFAULT_SITE_URL),
   ],

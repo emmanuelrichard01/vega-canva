@@ -36,7 +36,7 @@ export const MAX_VERSION_NAME = 80;
 export const MAX_VERSION_DESCRIPTION = 500;
 
 /** Largest page of the update log one request may ask for. */
-export const MAX_HISTORY_PAGE = 1000;
+export const MAX_HISTORY_PAGE = 2000;
 
 export interface VersionAuthor {
   id: string;

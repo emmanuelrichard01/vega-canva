@@ -16,6 +16,12 @@
  *   player names in `retain` are kept: what plays now, what comes next, and
  *   anything still fading out. A track dropped from `retain` has its download
  *   aborted and its buffers released.
+ * - Finished downloads are kept on the device in Cache Storage (`TrackStore`),
+ *   newest `MAX_CACHED_TRACKS`, so a track heard before needs no network: the
+ *   loader reads it from disk, and `localUrl` hands the player a blob URL to
+ *   stream from at once. Tracks are immutable under a versioned path, so a
+ *   cached copy never goes stale. Storage that is full or unavailable (private
+ *   windows) just means no cache.
  * - The request is CORS, without credentials: the bucket route serves the
  *   audio to any origin and needs no cookie.
  */
@@ -27,6 +33,42 @@ export interface DecodedTrack {
   /** The real audio inside the buffer, with encoder priming and padding left out. */
   window: TrimWindow;
   cues: Cues;
+}
+
+/** Tracks kept on the device, about 2.5 MB each. */
+export const MAX_CACHED_TRACKS = 24;
+const CACHE_NAME = 'vega-music-v1';
+
+/** Where finished downloads are kept between visits. */
+export interface TrackStore {
+  match(url: string): Promise<Response | undefined>;
+  put(url: string, bytes: ArrayBuffer): Promise<void>;
+}
+
+/** Cache Storage, or null where there is none (tests, very old browsers, some private modes). */
+export function browserTrackStore(): TrackStore | null {
+  if (typeof caches === 'undefined') return null;
+  const open = () => caches.open(CACHE_NAME);
+  return {
+    async match(url) {
+      try {
+        return (await (await open()).match(url)) ?? undefined;
+      } catch {
+        return undefined;
+      }
+    },
+    async put(url, bytes) {
+      try {
+        const cache = await open();
+        await cache.put(url, new Response(bytes, { headers: { 'Content-Type': 'audio/mp4' } }));
+        // Keys come back in insertion order: the oldest go first.
+        const keys = await cache.keys();
+        for (const old of keys.slice(0, Math.max(0, keys.length - MAX_CACHED_TRACKS))) await cache.delete(old);
+      } catch {
+        // Quota or a storage that refuses writes: carry on without the cache.
+      }
+    },
+  };
 }
 
 /** A download with no new bytes for this long is given up. */
@@ -58,13 +100,31 @@ export class TrackLoader {
   private fetchImpl: typeof fetch;
   private stallMs: number;
   private decoding = false;
+  private store: TrackStore | null;
   /** Called when a track finishes decoding, so the player can schedule with it. */
   onReady: ((id: string) => void) | null = null;
 
-  constructor(ctx: BaseAudioContext, fetchImpl: typeof fetch = (...args) => fetch(...args), stallMs = STALL_MS) {
+  constructor(
+    ctx: BaseAudioContext,
+    fetchImpl: typeof fetch = (...args) => fetch(...args),
+    stallMs = STALL_MS,
+    store: TrackStore | null = browserTrackStore()
+  ) {
+    this.store = store;
     this.ctx = ctx;
     this.fetchImpl = fetchImpl;
     this.stallMs = stallMs;
+  }
+
+  /** A blob URL for a track kept on the device, or null. The caller revokes it. */
+  async localUrl(track: LibraryTrack): Promise<string | null> {
+    const hit = await this.store?.match(track.url);
+    if (!hit) return null;
+    try {
+      return URL.createObjectURL(await hit.blob());
+    } catch {
+      return null;
+    }
   }
 
   get(id: string): DecodedTrack | null {
@@ -126,11 +186,23 @@ export class TrackLoader {
       stall = setTimeout(() => entry.abort.abort(), this.stallMs);
     };
     try {
+      const kept = this.store ? await this.store.match(track.url) : undefined;
+      if (kept) {
+        const bytes = await kept.arrayBuffer();
+        if (this.entries.get(track.id) !== entry) return;
+        entry.bytes = bytes;
+        entry.state = 'fetched';
+        this.pump();
+        return;
+      }
+      if (signal.aborted || this.entries.get(track.id) !== entry) return;
       bump();
       const res = await this.fetchImpl(track.url, { mode: 'cors', credentials: 'omit', signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const bytes = await readBytes(res, signal, bump);
       if (this.entries.get(track.id) !== entry) return;
+      // A copy: decoding detaches the buffer it is given.
+      void this.store?.put(track.url, bytes.slice(0));
       entry.bytes = bytes;
       entry.state = 'fetched';
       this.pump();

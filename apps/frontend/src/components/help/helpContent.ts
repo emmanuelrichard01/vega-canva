@@ -372,6 +372,9 @@ export function buildShortcutGroups(): ShortcutGroup[] {
       rows: [
         { keys: '/', what: 'Cursor chat: type a line beside your pointer', short: 'Chat' },
         { keys: 'Shift + Alt + click', what: 'Ping: draw everyone’s eye to that spot', short: 'Ping' },
+        { keys: 'Hold W', what: 'Emote wheel: point at a slice and release to float it for everyone', short: 'Emote' },
+        { keys: 'Command palette: timer, dot vote', what: 'Run a shared countdown or a dot vote. Facilitators start them; everyone sees and votes' },
+        { keys: 'Command palette: Bring everyone to my view', what: 'Offer your view to the room; each person joins with one tap' },
         { keys: 'C', what: 'Comment tool: pin a thread to anything', short: 'Comment' },
         { keys: 'Click a face', what: 'Follow that person’s view. Click it again, move the board, or press Esc to stop' },
         { keys: 'Present, then Invite everyone', what: 'Ask the room to follow your slides. Nobody is moved without choosing to' },

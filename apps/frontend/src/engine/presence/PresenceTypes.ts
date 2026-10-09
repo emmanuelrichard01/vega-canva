@@ -79,4 +79,6 @@ export interface PresenceState {
   chat?: { text: string; open: boolean; at: number } | null;
   /** "Look here": a world point, shown to everyone for a moment. Never persisted. */
   ping?: { x: number; y: number; at: number } | null;
+  /** An emote thrown at a world point, shown for a moment. Never persisted. */
+  emote?: { id: string; x: number; y: number; at: number } | null;
 }

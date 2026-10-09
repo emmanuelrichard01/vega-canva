@@ -1,10 +1,10 @@
 import type * as Y from 'yjs';
 import { groupsMap, objectsMap, DERIVED_ORIGIN } from './doc';
-import { applyGroupPlan, applyNodePatches } from './mutations';
+import { applyGroupPlan, applyNodePatches, writeGroupRecords } from './mutations';
 import { observeGroups, observeNodes } from './observe';
 import { isElectedWriter } from './election';
 import { canEditObjects } from '../model/permissions';
-import { emptyGroups, type GroupedNode, type Groups } from '../model/groupTree';
+import { canonicalGroups, emptyGroups, groupRepairs, type GroupedNode, type Groups } from '../model/groupTree';
 import { boxIsInside, centreIsInside, frameForNode, nodesInMembershipCycles } from '../model/frames';
 
 /**
@@ -64,6 +64,29 @@ export function sweepEmptyGroups(origin: unknown): void {
   });
   const dead = emptyGroups(Object.keys(objects), objects, Object.fromEntries(groupsMap.entries()) as Groups);
   if (dead.length > 0) applyGroupPlan({ nodes: [], groups: [], remove: dead }, { origin });
+}
+
+/**
+ * Bring the stored group table to its canonical form (`canonicalGroups`).
+ *
+ * Writes a record for every group the flat model left as a bare shared
+ * `parentId`, clears parents that no longer exist, and breaks loops a merge
+ * closed. Deterministic, so several editors running it on the same state
+ * write identical values, and idempotent: a canonical table writes nothing.
+ *
+ * @returns how many records were written.
+ */
+export function repairGroupRecords(origin: unknown): number {
+  const parents: string[] = [];
+  objectsMap.forEach((ymap) => {
+    const parentId = ymap.get('parentId');
+    if (typeof parentId === 'string' && parentId) parents.push(parentId);
+  });
+  if (parents.length === 0 && groupsMap.size === 0) return 0;
+  const stored = Object.fromEntries(groupsMap.entries()) as Groups;
+  const repairs = groupRepairs(stored, canonicalGroups(stored, parents));
+  if (repairs.length > 0) writeGroupRecords(repairs, { origin });
+  return repairs.length;
 }
 
 /**
@@ -149,7 +172,10 @@ export function startDocumentUpkeep(): () => void {
     remoteGroupsDirty = false;
     if (!isElectedWriter()) return;
     if (dirty && dirty.size > 0) repairFrameMembership(dirty, DERIVED_ORIGIN);
-    if (groupsDirty) sweepEmptyGroups(DERIVED_ORIGIN);
+    if (groupsDirty) {
+      repairGroupRecords(DERIVED_ORIGIN);
+      sweepEmptyGroups(DERIVED_ORIGIN);
+    }
   };
 
   const scheduleRemote = () => {

@@ -108,3 +108,21 @@ describe('references follow their cells', () => {
     expect(rewriteRefs('"A1"&A1', true, (r) => r + 1, (c) => c)).toBe('"A1"&A2');
   });
 });
+
+describe('dynamic-array lookups (first value, no spill)', () => {
+  const data = [['k', 'v', 'f'], ['b', '20', '0'], ['a', '10', '1'], ['b', '30', '1']];
+  it('XLOOKUP', () => expect(one('=XLOOKUP("a",A2:A4,B2:B4)', data)).toBe(10));
+  it('XLOOKUP if_not_found', () => expect(one('=XLOOKUP("z",A2:A4,B2:B4,"none")', data)).toBe('none'));
+  it('FILTER returns the first included row', () => expect(one('=FILTER(B2:B4,C2:C4)', data)).toBe(10));
+  it('FILTER if_empty', () => expect(one('=FILTER(B2:B4,C2:C4*0,"nothing")', data)).toBeDefined());
+  it('UNIQUE', () => expect(one('=UNIQUE(A2:A4)', data)).toBe('b'));
+  it('SORT ascending and descending', () => {
+    expect(one('=SORT(A2:B4)', data)).toBe('a');
+    expect(one('=SORT(A2:B4,2,-1)', data)).toBe('b');
+  });
+  it('SEQUENCE', () => {
+    expect(one('=SEQUENCE(5)', data)).toBe(1);
+    expect(one('=SEQUENCE(3,1,10,2)', data)).toBe(10);
+    expect(one('=SEQUENCE(0)', data)).toEqual({ err: '#VALUE!' });
+  });
+});

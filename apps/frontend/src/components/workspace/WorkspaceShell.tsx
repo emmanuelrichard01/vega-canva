@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { useRoomState } from '../../hooks/useSync';
+import { useRoomState, useSyncMeta } from '../../hooks/useSync';
 import { CollaborationLayer } from './CollaborationLayer';
 import {
   ArrowLeft,
@@ -165,35 +165,72 @@ const BoardHeaderLeftInner: React.FC<LeftProps> = ({
    * Saved, saving, offline — and only the last two always speak. The resting
    * state is a tick; the word appears for a few seconds each time a save lands.
    */
+  const { queued, lastSyncedAt } = useSyncMeta();
+  const [browserOnline, setBrowserOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
+  useEffect(() => {
+    const on = () => setBrowserOnline(true);
+    const off = () => setBrowserOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => {
+      window.removeEventListener('online', on);
+      window.removeEventListener('offline', off);
+    };
+  }, []);
+  const [settledAt, setSettledAt] = useState(0);
+  const [hadQueue, setHadQueue] = useState(false);
+  const lastSyncedText = lastSyncedAt
+    ? `Last synced ${new Date(lastSyncedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`
+    : 'Not synced yet.';
+  const queuedText = queued > 0 ? ` ${queued} change${queued === 1 ? '' : 's'} queued.` : '';
   const syncStatus =
     status !== 'connected'
-      ? {
-          label: 'Offline',
-          text: 'Offline. Your work is safe on this device and will reach everyone else when you reconnect.',
-          tone: 'offline' as const,
-        }
+      ? browserOnline && status === 'disconnected' && lastSyncedAt !== null
+        ? {
+            label: queued > 0 ? `Reconnecting · ${queued}` : 'Reconnecting',
+            text: `Reconnecting.${queuedText} Edits are saved on this device and will merge when you are back online. ${lastSyncedText}`,
+            tone: 'syncing' as const,
+          }
+        : {
+            label: queued > 0 ? `Offline · ${queued}` : 'Offline',
+            text: `Offline.${queuedText} Edits are saved on this device and will merge when you are back online. ${lastSyncedText}`,
+            tone: 'offline' as const,
+          }
       : !synced
-        ? { label: 'Saving', text: 'Sending your latest changes.', tone: 'syncing' as const }
-        : { label: 'Saved', text: 'Saved. Everyone on this board has your latest changes.', tone: 'idle' as const };
+        ? { label: 'Saving', text: `Sending your latest changes. ${lastSyncedText}`, tone: 'syncing' as const }
+        : {
+            label: hadQueue ? 'All changes synced' : 'Saved',
+            text: `${hadQueue ? 'All changes synced.' : 'Saved.'} Everyone on this board has your latest changes. ${lastSyncedText}`,
+            tone: 'idle' as const,
+          };
 
   const [justSaved, setJustSaved] = useState(true);
   const wasSyncing = useRef(false);
   useEffect(() => {
+    if (queued > 0) setHadQueue(true);
+  }, [queued]);
+  useEffect(() => {
     const settled = status === 'connected' && synced;
-    if (settled && wasSyncing.current) setJustSaved(true);
+    if (settled && wasSyncing.current) {
+      setJustSaved(true);
+      setSettledAt(Date.now());
+    }
     wasSyncing.current = !settled;
   }, [status, synced]);
   useEffect(() => {
     if (!justSaved) return;
-    const t = window.setTimeout(() => setJustSaved(false), 2600);
+    const t = window.setTimeout(() => {
+      setJustSaved(false);
+      setHadQueue(false);
+    }, 3200);
     return () => window.clearTimeout(t);
-  }, [justSaved]);
+  }, [justSaved, settledAt]);
   /**
    * In the panel the word comes and goes; in the pill only Offline keeps it,
    * a state that must not be missed. Saving comes and goes too often to be
    * worth the pill's width changing under the name.
    */
-  const showLabel = variant === 'panel' ? syncStatus.tone !== 'idle' || justSaved : syncStatus.tone === 'offline';
+  const showLabel = variant === 'panel' ? syncStatus.tone !== 'idle' || justSaved : syncStatus.tone === 'offline' || (syncStatus.tone === 'syncing' && status !== 'connected');
 
   const startRename = () => {
     titleBeforeEditRef.current = localTitle;

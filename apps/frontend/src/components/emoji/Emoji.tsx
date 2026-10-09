@@ -11,6 +11,12 @@ export interface EmojiProps {
   /** Accessible name. Omit for a decorative emoji beside text that says the same. */
   label?: string;
   className?: string;
+  /**
+   * `lazy` (the default) for emoji scattered through long content. A
+   * virtualised grid passes `eager`: everything it mounts is already in view,
+   * and lazy loading would only add a frame of delay before the fetch.
+   */
+  loading?: 'lazy' | 'eager';
 }
 
 /**
@@ -22,7 +28,7 @@ export interface EmojiProps {
  * artwork is missing the native glyph is shown in its place rather than a
  * broken image.
  */
-export const Emoji: React.FC<EmojiProps> = ({ native, code, size = 20, label, className }) => {
+export const Emoji: React.FC<EmojiProps> = ({ native, code, size = 20, label, className, loading = 'lazy' }) => {
   const resolved = code ?? (native ? codeOf(native) : '');
   const [failed, setFailed] = useState(false);
   const style = { width: size, height: size, fontSize: Math.round(size * 0.86) } as React.CSSProperties;
@@ -42,7 +48,7 @@ export const Emoji: React.FC<EmojiProps> = ({ native, code, size = 20, label, cl
       alt={label ?? ''}
       aria-hidden={label ? undefined : true}
       draggable={false}
-      loading="lazy"
+      loading={loading}
       decoding="async"
       onError={() => setFailed(true)}
     />

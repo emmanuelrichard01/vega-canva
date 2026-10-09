@@ -4,6 +4,7 @@ import type { Template } from '../../engine/templates/templates';
 import { WorkspaceCover } from '../WorkspaceCover';
 import { templateCover } from './templateCover';
 import { boardPicture, type BoardPicture } from './templatePicture';
+import { BAKED_COVERS } from './bakedCovers';
 import './gallery.css';
 
 interface Props {
@@ -167,13 +168,15 @@ export const BoardViewer: React.FC<Props> = ({ template, slot, interactive = fal
 
   const fallback = useMemo(() => (failed ? templateCover(template) : null), [failed, template]);
   const zoomed = view.k > 1;
+  // The baked cover stands in while the full picture is drawn, so the window is never empty.
+  const still = !picture && !failed ? BAKED_COVERS[template.id] : undefined;
 
   return (
     <div className="bview" data-interactive={interactive || undefined}>
       <div
         ref={boxRef}
         className="bview__window"
-        data-state={failed ? 'failed' : picture ? 'ready' : 'waiting'}
+        data-state={failed ? 'failed' : picture ? 'ready' : still ? 'still' : 'waiting'}
         data-zoomed={zoomed || undefined}
         data-dragging={dragging || undefined}
         role={interactive ? 'group' : 'img'}
@@ -201,6 +204,8 @@ export const BoardViewer: React.FC<Props> = ({ template, slot, interactive = fal
             // Markup written by `boardSvg` from the template's own nodes; every string in it is escaped there.
             dangerouslySetInnerHTML={{ __html: picture.svg }}
           />
+        ) : still ? (
+          <img className="bview__still" src={still} alt="" decoding="async" draggable={false} />
         ) : null}
       </div>
 

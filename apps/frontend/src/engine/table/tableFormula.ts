@@ -2049,6 +2049,71 @@ const FUNCS: Record<string, Fn> = {
       return args[3] && args[3].k !== 'blank' ? scalar(args, 3, ctx) : fail('#N/A');
     },
   },
+  // Dynamic arrays. A cell holds one value, so these do not spill: each
+  // returns the first value of the array a spreadsheet would spill, which is
+  // what a lone cell shows and what INDEX/SUM-style wrappers usually want.
+  FILTER: {
+    group: 'Lookup',
+    sig: 'FILTER(range, include, [if_empty])',
+    doc: 'The first row of a range whose matching include cell is true or non-zero (no spill: one value).',
+    run: (args, ctx) => {
+      if (!args[0] || !args[1]) return fail('#N/A');
+      const grid = gridOf(args[0], ctx);
+      if (isErr(grid)) return grid;
+      const inc = valuesOf(args[1], ctx).values;
+      for (let i = 0; i < grid.length; i++) {
+        const flag = inc[i];
+        if (isErr(flag)) return flag;
+        if (flag === true || (typeof flag === 'number' && flag !== 0) || (typeof flag === 'string' && flag !== '')) return grid[i][0];
+      }
+      return args[2] ? scalar(args, 2, ctx) : fail('#N/A');
+    },
+  },
+  UNIQUE: {
+    group: 'Lookup',
+    sig: 'UNIQUE(range)',
+    doc: 'The distinct values of a range in order of appearance (no spill: the first).',
+    run: (args, ctx) => {
+      if (!args[0]) return fail('#N/A');
+      const list = valuesOf(args[0], ctx).values.filter((v) => v !== null && v !== '');
+      const first = list.find((v) => !isErr(v));
+      return first === undefined ? fail('#N/A') : first;
+    },
+  },
+  SORT: {
+    group: 'Lookup',
+    sig: 'SORT(range, [sort_index], [order])',
+    doc: 'A range sorted by a column, ascending or descending (1 or -1): no spill, so the first value of the first column.',
+    run: (args, ctx) => {
+      if (!args[0]) return fail('#N/A');
+      const grid = gridOf(args[0], ctx);
+      if (isErr(grid)) return grid;
+      const by = numberArg(args, 1, ctx, 1);
+      const order = numberArg(args, 2, ctx, 1);
+      if (isErr(by)) return by;
+      if (isErr(order)) return order;
+      const col = Math.trunc(by) - 1;
+      if (grid.length === 0 || col < 0 || col >= grid[0].length) return fail('#VALUE!');
+      const rows = grid.filter((r) => !isErr(r[col]) && r[col] !== null);
+      if (rows.length === 0) return fail('#N/A');
+      rows.sort((a, b) => (order < 0 ? -1 : 1) * compareValues(a[col], b[col]));
+      return rows[0][0];
+    },
+  },
+  SEQUENCE: {
+    group: 'Maths',
+    sig: 'SEQUENCE(rows, [columns], [start], [step])',
+    doc: 'A run of numbers (no spill: the first, which is start). Rows and columns must be at least 1.',
+    run: (args, ctx) => {
+      const rows = numberArg(args, 0, ctx, 1);
+      const cols = numberArg(args, 1, ctx, 1);
+      const start = numberArg(args, 2, ctx, 1);
+      const step = numberArg(args, 3, ctx, 1);
+      for (const v of [rows, cols, start, step]) if (isErr(v)) return v;
+      if ((rows as number) < 1 || (cols as number) < 1) return fail('#VALUE!');
+      return start as number;
+    },
+  },
   TODAY: {
     group: 'Date',
     sig: 'TODAY()',

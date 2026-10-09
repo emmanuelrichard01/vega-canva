@@ -1,5 +1,6 @@
 import { roomHistoryUrl, roomRequestHeaders } from '../../utils/endpoints';
 import { decodeBase64Update, type RawUpdate } from './sessionTimeline';
+import { clearCachedHistory, readCachedHistory, writeCachedHistory, type CachedHistory } from './historyCache';
 
 /**
  * The history endpoints: the paged update log and version history.
@@ -94,7 +95,12 @@ async function request<T>(url: string, init: RequestInit = {}, signal?: AbortSig
   }
 }
 
-export const HISTORY_PAGE_SIZE = 1000;
+/**
+ * Rows per page. Retention keeps about 1500 rows, so one page usually carries
+ * the whole log: on a slow link every page is a full round trip. A server
+ * with a lower cap answers with fewer rows and a cursor, which still works.
+ */
+export const HISTORY_PAGE_SIZE = 2000;
 
 export function fetchHistoryPage(
   roomId: string,
@@ -115,12 +121,13 @@ export function fetchHistoryPage(
 export async function loadHistory(
   roomId: string,
   handlers: { onFirst: (page: HistoryPage) => void; onRows: (rows: RawUpdate[]) => void },
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  fetchPage: typeof fetchHistoryPage = fetchHistoryPage
 ): Promise<void> {
   let after: number | null = null;
   let trimmed: number | undefined;
   for (let page = 0; page < 10_000; page++) {
-    const result = await fetchHistoryPage(roomId, after, signal);
+    const result = await fetchPage(roomId, after, signal);
     if (page === 0) {
       trimmed = result.trimmedCount;
       handlers.onFirst(result);
@@ -162,4 +169,100 @@ export function renameVersion(
 
 export function deleteVersion(roomId: string, id: number): Promise<void> {
   return request<void>(`${versionsUrl(roomId)}/${id}`, { method: 'DELETE' });
+}
+
+/** Where `loadHistoryCached` keeps the log between visits. Injectable for tests. */
+export interface HistoryCacheIO {
+  read: (roomId: string) => Promise<CachedHistory | null>;
+  write: (entry: Omit<CachedHistory, 'v' | 'savedAt'>) => Promise<void>;
+  clear: (roomId: string) => Promise<void>;
+}
+
+const idbCache: HistoryCacheIO = { read: readCachedHistory, write: writeCachedHistory, clear: clearCachedHistory };
+
+/**
+ * `loadHistory`, with the log kept in IndexedDB between visits.
+ *
+ * A cached copy is handed over first (`onFirst` with `fromCache`, then its
+ * rows, then `onCached`), so the timeline can be built and shown before any
+ * request returns. Only the rows after the copy's last id are then fetched:
+ * usually one small page instead of the whole log. If retention has trimmed
+ * the log since the copy was taken (the trim counter moved), the copy is
+ * dropped and a 409 asks the caller to start over, which then reads the log
+ * whole. A full read is saved for next time once it completes.
+ */
+export async function loadHistoryCached(
+  roomId: string,
+  handlers: {
+    onFirst: (page: HistoryPage, info: { fromCache: boolean }) => void;
+    onRows: (rows: RawUpdate[]) => void;
+    onCached?: () => void;
+  },
+  signal?: AbortSignal,
+  cache: HistoryCacheIO = idbCache,
+  fetchPage: typeof fetchHistoryPage = fetchHistoryPage
+): Promise<void> {
+  const cached = await cache.read(roomId).catch(() => null);
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
+  if (cached) {
+    handlers.onFirst(
+      {
+        updates: [],
+        nextAfter: null,
+        baseline: cached.baseline,
+        total: cached.rows.length,
+        trimmed: cached.trimmedCount > 0,
+        trimmedCount: cached.trimmedCount,
+      },
+      { fromCache: true }
+    );
+    handlers.onRows(cached.rows);
+    handlers.onCached?.();
+
+    const fresh: RawUpdate[] = [];
+    let after: number | null = cached.rows[cached.rows.length - 1].id as number;
+    for (let page = 0; page < 10_000; page++) {
+      const result = await fetchPage(roomId, after, signal);
+      if (result.trimmedCount !== cached.trimmedCount) {
+        await cache.clear(roomId);
+        throw new HistoryError('The history log moved while loading.', 409);
+      }
+      const rows = result.updates ?? [];
+      for (const r of rows) fresh.push(r);
+      handlers.onRows(rows);
+      if (result.nextAfter == null || result.nextAfter === after) break;
+      after = result.nextAfter;
+    }
+    if (fresh.length > 0) {
+      void cache.write({
+        roomId,
+        baseline: cached.baseline,
+        trimmedCount: cached.trimmedCount,
+        rows: cached.rows.concat(fresh),
+      });
+    }
+    return;
+  }
+
+  let baseline: string | null = null;
+  let trimmedCount = 0;
+  const all: RawUpdate[] = [];
+  await loadHistory(
+    roomId,
+    {
+      onFirst: (page) => {
+        baseline = typeof page.baseline === 'string' ? page.baseline : null;
+        trimmedCount = Number(page.trimmedCount ?? 0);
+        handlers.onFirst(page, { fromCache: false });
+      },
+      onRows: (rows) => {
+        for (const r of rows) all.push(r);
+        handlers.onRows(rows);
+      },
+    },
+    signal,
+    fetchPage
+  );
+  void cache.write({ roomId, baseline, trimmedCount, rows: all });
 }

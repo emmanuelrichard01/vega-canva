@@ -220,6 +220,20 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
     setCursor({ kind: 'moment', index: target });
   }, [history.status, history.timeline, moments, only, versionsOpen]);
 
+  // A cached log opens first and newer rows fold in after: whoever is still
+  // parked on the latest moment follows it to the new latest.
+  const lastCount = useRef(0);
+  useEffect(() => {
+    const before = lastCount.current;
+    lastCount.current = moments.length;
+    if (before === 0 || moments.length <= before || playing) return;
+    setCursor((c) => {
+      if (c?.kind !== 'moment' || c.index !== before - 1) return c;
+      if (only) return only.length > 0 ? { kind: 'moment', index: only[only.length - 1] } : c;
+      return { kind: 'moment', index: moments.length - 1 };
+    });
+  }, [moments, only, playing]);
+
   // A new filter lands on that object's latest change.
   const lastFilter = useRef(filterId);
   useEffect(() => {

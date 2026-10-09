@@ -161,17 +161,44 @@ function publish() {
   );
 }
 
-/** Loads the manifest once; later calls return the same result. */
+/** The last manifest that loaded, so the next visit can play before the network answers. */
+const MANIFEST_KEY = 'vega.music.manifest';
+
+function applyManifest(raw: unknown, url: string): boolean {
+  const parsed = parseManifest(raw, url);
+  if (parsed.tracks.length === 0) return false;
+  const last = parsed.tracks.find((t) => t.id === saved.lastTrack) ?? null;
+  // Keep the playing track's object when it survives a refresh, so nothing downstream sees a change.
+  const current = state.current ? parsed.tracks.find((t) => t.id === state.current!.id) ?? state.current : last;
+  set({ status: 'ready', error: null, tracks: parsed.tracks, categories: parsed.categories, current });
+  return true;
+}
+
+/**
+ * Loads the manifest once; later calls return the same result.
+ *
+ * Stale-while-revalidate: the manifest that last loaded is used straight from
+ * storage, so a station plays without waiting a round trip for the list, and
+ * the network copy replaces it when it arrives. Tracks are immutable, so an
+ * old list can only lack new tracks, never point at changed ones.
+ */
 let loading: Promise<void> | null = null;
 export function loadLibrary(fetchImpl: typeof fetch = fetch): Promise<void> {
   const url = manifestUrl();
   if (state.status === 'ready') return Promise.resolve();
+  const stored = storageGetJson<{ url?: string; raw?: unknown } | null>(MANIFEST_KEY, null);
+  if (stored?.url === url && stored.raw && applyManifest(stored.raw, url)) {
+    void refreshManifest(fetchImpl, url);
+    return Promise.resolve();
+  }
   loading ??= (async () => {
     set({ status: 'loading', error: null });
     try {
       const res = await fetchImpl(url, { cache: 'no-cache', mode: 'cors', credentials: 'omit' });
       if (!res.ok) throw new Error(`The music library could not be loaded (${res.status}).`);
-      const parsed = parseManifest(await res.json(), url);
+      const raw = await res.json();
+      storageSet(MANIFEST_KEY, JSON.stringify({ url, raw }));
+      const parsed = parseManifest(raw, url);
       if (parsed.problems.length > 0) console.warn('[music] manifest problems:\n' + parsed.problems.join('\n'));
       // A station with no tracks stays chosen: the player says so rather than switching away.
       const category = state.category;
@@ -186,10 +213,75 @@ export function loadLibrary(fetchImpl: typeof fetch = fetch): Promise<void> {
   return loading;
 }
 
+/** Replaces a stored manifest with the network's, quietly: a failure keeps the stored one. */
+async function refreshManifest(fetchImpl: typeof fetch, url: string): Promise<void> {
+  try {
+    const res = await fetchImpl(url, { cache: 'no-cache', mode: 'cors', credentials: 'omit' });
+    if (!res.ok) return;
+    const raw = await res.json();
+    if (applyManifest(raw, url)) storageSet(MANIFEST_KEY, JSON.stringify({ url, raw }));
+  } catch {
+    // Offline or the server asleep: the stored list stands.
+  }
+}
+
+/**
+ * Gets music ready to start the moment it is asked for: the manifest, and a
+ * warm connection to wherever the tracks live. Call when music becomes likely
+ * (the player is hovered or opened); cheap to call again.
+ */
+let warmed = false;
+export function warmLibrary(): void {
+  if (!warmed && typeof document !== 'undefined') {
+    warmed = true;
+    try {
+      const origin = new URL(manifestUrl(), location.href).origin;
+      if (origin !== location.origin) {
+        const link = document.createElement('link');
+        link.rel = 'preconnect';
+        link.href = origin;
+        link.crossOrigin = 'anonymous';
+        document.head.appendChild(link);
+      }
+    } catch {
+      // A malformed URL: loadLibrary reports it.
+    }
+  }
+  void loadLibrary();
+}
+
+/** The track a station starts with, chosen once so that arming it and playing it agree. */
+const starts = new Map<string, string>();
+function startOf(category: string): LibraryTrack | null {
+  const tracks = tracksIn(state, category);
+  if (tracks.length === 0) return null;
+  const chosen = starts.get(category);
+  const known = chosen ? tracks.find((t) => t.id === chosen) : undefined;
+  if (known) return known;
+  const start = state.shuffle ? tracks[Math.floor(Math.random() * tracks.length)] : tracks[0];
+  starts.set(category, start.id);
+  return start;
+}
+
+/**
+ * Starts buffering the track a station would open with, so picking it plays
+ * at once. For hover and focus; does nothing for the station already playing.
+ */
+export function armStation(category: string): void {
+  if (state.status !== 'ready') {
+    warmLibrary();
+    return;
+  }
+  if (state.current?.category === category) return;
+  ensurePlayer().arm(startOf(category));
+}
+
 /** Fetches the manifest again, for Retry: picks up new tracks or a server that came back. */
 export function reloadLibrary(fetchImpl: typeof fetch = fetch): Promise<void> {
   if (loading) return loading;
   set({ status: 'idle' });
+  // Retry means the network: a stored list is what the person is trying to get past.
+  storageSet(MANIFEST_KEY, 'null');
   return loadLibrary(fetchImpl);
 }
 
@@ -236,7 +328,8 @@ export async function playCategory(category: string): Promise<void> {
     if (!state.playing) await resumeLibrary();
     return;
   }
-  const start = state.shuffle ? tracks[Math.floor(Math.random() * tracks.length)] : tracks[0];
+  const start = startOf(category) ?? tracks[0];
+  starts.delete(category);
   await playTrack(start.id);
 }
 

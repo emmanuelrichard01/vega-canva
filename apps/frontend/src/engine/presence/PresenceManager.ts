@@ -2,6 +2,7 @@ import { provider } from '../document';
 import { CHAT_MAX_CHARS, type ActivityKind } from './collaborators';
 import { SPOTLIGHT_MS } from './spotlight';
 import { PING_COOLDOWN_MS, PING_MS } from './ping';
+import { EMOTE_COOLDOWN_MS, EMOTE_MS, emoteById } from './emote';
 import type { PresenceState } from "./PresenceTypes";
 
 /**
@@ -37,6 +38,7 @@ class PresenceEngine {
   private spotlightTimeout: ReturnType<typeof setTimeout> | null = null;
   private chatTimeout: ReturnType<typeof setTimeout> | null = null;
   private pingTimeout: ReturnType<typeof setTimeout> | null = null;
+  private emoteTimeout: ReturnType<typeof setTimeout> | null = null;
   private spotlightListeners = new Set<() => void>();
 
   private pendingUpdate = false;
@@ -287,6 +289,24 @@ class PresenceEngine {
       this.localState.ping = null;
       this.scheduleUpdate();
     }, PING_MS);
+    return true;
+  }
+
+  /** Throw an emote at a world point for everyone. Cleared after `EMOTE_MS`; returns whether it went out. */
+  public emote(id: string, x: number, y: number): boolean {
+    const now = Date.now();
+    const last = this.localState.emote;
+    if (last && now - last.at < EMOTE_COOLDOWN_MS) return false;
+    if (!emoteById(id) || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+    if (this.emoteTimeout) clearTimeout(this.emoteTimeout);
+    this.localState.emote = { id, x, y, at: now };
+    this.resetIdleTimer();
+    this.scheduleUpdate();
+    this.emoteTimeout = setTimeout(() => {
+      this.emoteTimeout = null;
+      this.localState.emote = null;
+      this.scheduleUpdate();
+    }, EMOTE_MS);
     return true;
   }
 

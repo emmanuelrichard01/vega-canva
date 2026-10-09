@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 import { nanoid } from 'nanoid';
-import { doc, objectsMap, commentsMap, createNode, deleteNode, metadataMap } from '../document';
+import { doc, objectsMap, commentsMap, groupsMap, createNode, deleteNode, metadataMap } from '../document';
 import { canEditObjects } from '../model/permissions';
 import type { ImportedDocument } from './DocumentImport';
 
@@ -56,6 +56,7 @@ export function restoreDocument(
       // Left in place they would hang on the ids of objects that no longer
       // exist, so every pin would collapse onto the origin.
       Array.from(commentsMap.keys()).forEach((id) => commentsMap.delete(id));
+      Array.from(groupsMap.keys()).forEach((id) => groupsMap.delete(id));
     }
 
     /**
@@ -68,6 +69,12 @@ export function restoreDocument(
     const remap = new Map<string, string>();
     if (mode === 'merge') {
       Object.keys(imported.nodes).forEach((id) => remap.set(id, nanoid()));
+      // Group ids too, or a merged copy would join the board's own groups.
+      const groupIds = new Set(Object.keys(imported.groups ?? {}));
+      for (const node of Object.values(imported.nodes)) {
+        if (typeof node.parentId === 'string') groupIds.add(node.parentId);
+      }
+      groupIds.forEach((id) => remap.set(id, nanoid()));
     }
     const idFor = (id: string) => remap.get(id) ?? id;
 
@@ -89,6 +96,17 @@ export function restoreDocument(
       // assignment a freshly drawn one does.
       createNode(next as Parameters<typeof createNode>[0], { preserveAuthorship: true });
       summary.added += 1;
+    }
+
+    // The hierarchy, remapped with everything else. Files without group
+    // records restore their groups flat; the store reads those as top level.
+    for (const [id, group] of Object.entries(imported.groups ?? {})) {
+      const parentId = group.parentId ? idFor(group.parentId) : undefined;
+      groupsMap.set(idFor(id), {
+        id: idFor(id),
+        ...(parentId ? { parentId } : null),
+        ...(group.name ? { name: group.name } : null),
+      });
     }
 
     summary.comments = restoreComments(imported.comments, idFor, remap.size > 0);

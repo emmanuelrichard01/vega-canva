@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { applyNodePatches, groupsMap, normalizeNode, objectsMap, observeGroups, observeNodes, provider, scheduleMigration } from '../engine/document';
 import { storageGet, storageSet } from '../utils/safeStorage';
-import type { GroupRecord } from '../engine/model/groupTree';
+import { canonicalGroups, type GroupRecord, type Groups } from '../engine/model/groupTree';
 import { STICKY_THEMES, type AnyNode, type StickyTheme } from '../engine/model/schema';
 import { sceneGraph } from '../engine/SceneGraph';
 import { mergeReplayObjects } from '../engine/history/replayMerge';
@@ -401,7 +401,7 @@ export const useStore = create<StoreState>((set) => ({
       set((state) => ({
         objects: live,
         objectCount: Object.keys(live).length,
-        groups: Object.fromEntries(groupsMap.entries()),
+        groups: readGroups(live),
         version: state.version + 1,
         lastChangedIds: Object.keys(live),
         lastRemovedIds: Object.keys(previous).filter((id) => !live[id]),
@@ -781,6 +781,19 @@ let bridgeDisposer: (() => void) | null = null;
 let groupsDisposer: (() => void) | null = null;
 let migrationDisposer: (() => void) | null = null;
 
+function parentsOf(objects: Record<string, AnyNode>): (string | undefined)[] {
+  return Object.values(objects).map((node) => node.parentId);
+}
+
+/**
+ * The group table in canonical form (see `canonicalGroups`): flat-model
+ * groups read as records, dangling parents and merge-made loops repaired.
+ * Readers see the repaired table before any editor has written it back.
+ */
+function readGroups(objects: Record<string, AnyNode>): Groups {
+  return canonicalGroups(Object.fromEntries(groupsMap.entries()) as Groups, parentsOf(objects));
+}
+
 /**
  * Read one node from the document in canonical form.
  *
@@ -828,11 +841,11 @@ export const initSyncBridge = () => {
     lastRemovedIds: [],
   });
 
-  useStore.setState({ groups: Object.fromEntries(groupsMap.entries()) });
+  useStore.setState({ groups: readGroups(initialObjects) });
   groupsDisposer = observeGroups((groups) => {
     // Replay drives the canvas from snapshots; live traffic must not fight it.
     if (useStore.getState().isReplaying) return;
-    useStore.setState({ groups });
+    useStore.setState((state) => ({ groups: canonicalGroups(groups, parentsOf(state.objects)) }));
   });
 
   bridgeDisposer = observeNodes(({ changed, removed, local }) => {
@@ -844,7 +857,15 @@ export const initSyncBridge = () => {
       const objects = { ...state.objects };
       let objectCount = state.objectCount;
 
+      // A member of a group with no stored record (a flat-model group) changes
+      // what the canonical table holds, so only then is it rebuilt.
+      let groupsStale = false;
+      const touch = (parent: string | undefined) => {
+        if (parent && !groupsMap.has(parent)) groupsStale = true;
+      };
+
       removed.forEach((id) => {
+        touch(objects[id]?.parentId);
         if (id in objects) objectCount -= 1;
         delete objects[id];
         sceneGraph.removeNode(id);
@@ -853,6 +874,8 @@ export const initSyncBridge = () => {
       changed.forEach((id) => {
         const node = readCanonical(id);
         if (!node) return;
+        touch(objects[id]?.parentId);
+        touch(node.parentId);
         if (!(id in objects)) objectCount += 1;
         objects[id] = node;
         sceneGraph.upsertNode(id, node);
@@ -865,6 +888,7 @@ export const initSyncBridge = () => {
         lastChangedIds: [...changed],
         lastRemovedIds: [...removed],
         lastChangeLocal: local,
+        ...(groupsStale ? { groups: readGroups(objects) } : null),
       };
     });
   });

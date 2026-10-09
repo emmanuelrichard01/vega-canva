@@ -4,7 +4,7 @@ import { useStore } from './useStore';
 import { canSelectWith, opensPathWith } from '../engine/tools/shortcuts';
 import { DirectSelectTool } from '../engine/tools/DirectSelectTool';
 import { pathEdit } from '../engine/interaction/pathEdit';
-import { groupToEnter, nodesInGroup, selectionWithin } from '../engine/model/groupTree';
+import { escapeTarget, groupToEnter, nodesInGroup, selectionWithin } from '../engine/model/groupTree';
 import { anchorNear } from '../engine/model/pathEditing';
 import { cameraSystem } from '../engine/CameraSystem';
 import { applyMarquee, expandToUnits, marqueeHits, type MarqueeMode } from '../engine/interaction/marquee';
@@ -67,6 +67,16 @@ export function useCanvasSelection({
   const selectedRef = useRef<readonly string[]>(selectedIds ?? []);
   selectedRef.current = selectedIds ?? selectedRef.current;
 
+  // Anything else that sets the entered group (a breadcrumb, a panel) is
+  // followed here, so clicks resolve against the same level it shows.
+  useEffect(
+    () =>
+      useStore.subscribe((state) => {
+        enteredGroupRef.current = state.enteredGroupId;
+      }),
+    []
+  );
+
   // Global event listeners for node selection and marquee
   useEffect(() => {
     const handleSelectNode = (e: any) => {
@@ -118,13 +128,21 @@ export function useCanvasSelection({
       setSelectedIds((prev) => selectSimilar(Object.values(objects), prev, key));
     };
 
+    // Escape climbs one level: it selects the group holding the selection
+    // (or the entered group) and steps out to that group's parent.
     const handleExitGroup = () => {
-      if (enteredGroupRef.current) {
-        const { groups } = useStore.getState();
-        const parent = groups[enteredGroupRef.current]?.parentId ?? null;
-        enteredGroupRef.current = parent;
-        useStore.getState().setEnteredGroupId(parent);
-      }
+      const { objects, groups } = useStore.getState();
+      const up = escapeTarget(
+        Object.keys(objects),
+        objects as NodeTable,
+        groups,
+        selectedRef.current,
+        enteredGroupRef.current
+      );
+      if (!up) return;
+      enteredGroupRef.current = up.entered;
+      useStore.getState().setEnteredGroupId(up.entered);
+      setSelectedIds(up.select);
     };
 
     const handleDeselectAll = () => {

@@ -1,3 +1,4 @@
+import { createSyncMeta, type SyncMeta } from './syncMeta';
 import * as Y from 'yjs';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { IndexeddbPersistence } from 'y-indexeddb';
@@ -240,3 +241,15 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
  * `doc.transact`.
  */
 export const DERIVED_ORIGIN = 'derived';
+
+/** Queued-edit count and last-synced time for the sync chip. See `syncMeta.ts`. */
+export const syncMeta: SyncMeta = createSyncMeta(
+  doc,
+  (origin) =>
+    origin === provider ||
+    origin === indexeddbProvider ||
+    (typeof origin === 'object' && origin !== null && 'configuration' in origin),
+  { online: (currentStatus as ConnectionStatus) === 'connected' }
+);
+onStatusChange((s) => syncMeta.setOnline(s === 'connected'));
+onSyncedChange(() => syncMeta.markSynced());

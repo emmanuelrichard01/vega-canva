@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import {
   getConnectionStatus,
   metadataMap,
@@ -6,6 +6,7 @@ import {
   onSyncedChange,
   provider,
   roomId,
+  syncMeta,
   type ConnectionStatus,
 } from '../engine/document';
 
@@ -63,4 +64,9 @@ export function useRoomState() {
   }, []);
 
   return { synced, status, roomId, awarenessUsers, metadata };
+}
+
+/** Queued local edits and the last-synced time, for the sync chip. */
+export function useSyncMeta() {
+  return useSyncExternalStore(syncMeta.subscribe, syncMeta.get, syncMeta.get);
 }

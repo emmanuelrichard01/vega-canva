@@ -23,6 +23,15 @@
   --da-plate: #F8F9FB;
   --da-plate-shadow: rgba(17, 24, 39, 0.22);
 
+  /* Frame art (`FrameArt.tsx`): a device body is a dark bezel in both themes,
+     as hardware is; paper stays paper, a step off white on the dark plate. */
+  --da-bezel: #273142;
+  --da-paper: #FFFFFF;
+  --da-sheet-shadow: rgba(17, 24, 39, 0.16);
+  --da-ink-line: color-mix(in srgb, var(--text-tertiary, #6B7280) 48%, transparent);
+  --da-screen-ink: rgba(255, 255, 255, 0.92);
+  --da-screen-card: rgba(255, 255, 255, 0.42);
+
   /* Chart chrome, from the text roles so increased contrast strengthens it. */
   --da-axis: color-mix(in srgb, var(--text-tertiary, #6B7280) 58%, transparent);
   --da-rule: color-mix(in srgb, var(--text-tertiary, #6B7280) 20%, transparent);
@@ -103,6 +112,11 @@
   --da-plate-low: #2B2B31;
   --da-plate: #323238;
   --da-plate-shadow: rgba(0, 0, 0, 0.6);
+
+  --da-bezel: #141418;
+  --da-paper: #E9E9EC;
+  --da-sheet-shadow: rgba(0, 0, 0, 0.5);
+  --da-ink-line: rgba(39, 49, 66, 0.42);
 
   --da-0-base: #1D4ED8;
   --da-1-base: #B45309;
@@ -272,3 +286,20 @@
   .data-art .da-plate { stroke: CanvasText; }
   .data-art .da-plate-shadow { display: none; }
 }
+
+/* ------------------------------------------------------------ frame art
+
+   The Frame seat's sizes (`FrameArt.tsx`): devices and sheets on the plate. */
+
+.data-art .da-bezel { fill: var(--da-bezel); }
+.data-art .da-paper { fill: var(--da-paper); stroke: var(--da-edge); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.data-art .da-sheet-shadow { fill: var(--da-sheet-shadow); }
+.data-art .da-fold { fill: color-mix(in srgb, var(--da-paper) 82%, var(--da-ink-line)); }
+.data-art .da-text-line { fill: none; stroke: var(--da-ink-line); stroke-width: 1.2; stroke-linecap: round; }
+.data-art .da-screen-ink { fill: var(--da-screen-ink); }
+.data-art .da-screen-card { fill: var(--da-screen-card); }
+.data-art .da-play { fill: #FFFFFF; }
+.data-art .da-frame-fill { fill: var(--da-0-field); }
+.data-art .da-dash { fill: none; stroke: var(--da-0); stroke-width: 1.1; stroke-dasharray: 2.4 1.6; }
+.data-art .da-handle { fill: var(--da-plate-top); stroke: var(--da-0); stroke-width: 0.9; }
+.data-art .da-cursor { fill: var(--da-bezel); stroke: var(--da-plate-top); stroke-width: 0.7; stroke-linejoin: round; }

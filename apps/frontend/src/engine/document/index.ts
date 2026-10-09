@@ -22,6 +22,7 @@ export {
   whenSynced,
   whenDocumentReady,
   DERIVED_ORIGIN,
+  syncMeta,
 } from './doc';
 export type { ConnectionStatus } from './doc';
 
@@ -42,7 +43,7 @@ export {
   setBoardMetadata,
 } from './mutations';
 export type { NewNodeInput, CreateNodeOptions, WriteOptions } from './mutations';
-export { applyGroupPlan, renameGroup } from './mutations';
+export { applyGroupPlan, renameGroup, writeGroupRecords } from './mutations';
 export { observeGroups } from './observe';
 
 export { observeNodes } from './observe';

@@ -2,6 +2,7 @@ import * as Y from 'yjs';
 import { normalizeNode } from '../document/normalize';
 import { nodeLabel } from '../model/nodeLabel';
 import { unionBounds, type FitBounds } from '../cameraFit';
+import { FrameTrack, PatchRecorder, readTrackFrame } from './frameTrack';
 
 /**
  * Turns the server's raw CRDT update log into a human session timeline.
@@ -322,6 +323,12 @@ export interface TimelineBuilderOptions {
    * seeks stay O(interval).
    */
   maxKeyframes?: number;
+  /**
+   * Record a `FrameTrack` (per-row patches plus a checkpoint every `track`
+   * rows; `true` for the default spacing) so seeks never touch Yjs. When on,
+   * Yjs keyframes are not encoded: nothing reads them.
+   */
+  track?: boolean | number;
 }
 
 /**
@@ -353,6 +360,8 @@ export class TimelineBuilder {
   private readonly coalesceWindow: number;
   private destroyed = false;
   private readonly listener: (events: Y.YEvent<any>[]) => void;
+  private readonly track: FrameTrack | null = null;
+  private readonly recorder: PatchRecorder | null = null;
 
   constructor(options: TimelineBuilderOptions = {}) {
     this.coalesceWindow = options.coalesceWindowMs ?? DEFAULT_COALESCE_MS;
@@ -369,6 +378,11 @@ export class TimelineBuilder {
       } catch {
         // An unreadable baseline degrades to a replay that starts from nothing.
       }
+    }
+    if (options.track) {
+      // Read after the baseline and before any row: index -1 of the track.
+      this.track = new FrameTrack(readTrackFrame(this.doc), typeof options.track === 'number' ? options.track : undefined);
+      this.recorder = new PatchRecorder(this.doc);
     }
     this.objects = this.doc.getMap<Y.Map<unknown>>('objects');
     // Identities recorded by `publishLocalIdentity`: unlike `createdByName`,
@@ -419,6 +433,11 @@ export class TimelineBuilder {
     return this.rows;
   }
 
+  /** The replay track, when the builder was asked to record one. Grows with `step`. */
+  get frameTrack(): FrameTrack | null {
+    return this.track;
+  }
+
   /** Rows processed so far. */
   get processed(): number {
     return this.cursor;
@@ -437,6 +456,8 @@ export class TimelineBuilder {
     const deadline = now() + budgetMs;
     while (this.cursor < this.rows.length) {
       this.applyRow(this.cursor);
+      // Whatever the row changed, even if it threw part-way, is what the track records.
+      if (this.track && this.recorder) this.track.record(this.recorder.take());
       this.cursor++;
       // Checked every fourth row: cheap, and bounds the overshoot to a few rows.
       if (this.cursor % 4 === 0 && now() > deadline) break;
@@ -463,10 +484,12 @@ export class TimelineBuilder {
     if (this.destroyed) return;
     this.destroyed = true;
     this.objects.unobserveDeep(this.listener);
+    this.recorder?.detach();
     this.doc.destroy();
   }
 
   private addKeyframe(index: number) {
+    if (this.track) return;
     this.keyframes.push({ index, state: Y.encodeStateAsUpdate(this.doc) });
     if (this.keyframes.length > this.maxKeyframes) {
       this.keyframes = this.keyframes.filter((_k, i) => i % 2 === 1);

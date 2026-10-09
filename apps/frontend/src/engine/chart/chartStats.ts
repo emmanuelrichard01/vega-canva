@@ -148,3 +148,35 @@ export function kernelDensityEstimation(
     };
   });
 }
+
+/**
+ * The KDE as expected counts per bucket, over the histogram's own domain.
+ *
+ * The bars span exactly [min, max] of the samples, so the curve is evaluated
+ * on that interval (`t` is 0..1 across it) and scaled by `n * bucketWidth`,
+ * putting it on the same axis as the bar heights. It used to be normalised to
+ * its own peak, so it could be compared with neither the bars nor the axis.
+ */
+export function histogramKdeCounts(
+  values: number[],
+  bins: number,
+  points = 40
+): Array<{ t: number; x: number; count: number }> | null {
+  const clean = values.filter((v) => Number.isFinite(v));
+  if (clean.length < 2 || bins < 1) return null;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const v of clean) {
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  if (!(hi > lo)) return null;
+  const xs: number[] = [];
+  for (let i = 0; i <= points; i += 1) xs.push(lo + (i / points) * (hi - lo));
+  const width = (hi - lo) / bins;
+  return kernelDensityEstimation(clean, xs).map((d, i) => ({
+    t: i / points,
+    x: d.x,
+    count: d.density * clean.length * width,
+  }));
+}

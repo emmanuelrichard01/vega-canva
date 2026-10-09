@@ -19,6 +19,7 @@
 
 import type { ViewportState } from './PresenceTypes';
 import { readPing, type PingState } from './ping';
+import { readEmote, type EmoteState } from './emote';
 
 export interface Point {
   x: number;
@@ -157,6 +158,8 @@ export interface Collaborator {
   chat: CursorChat | null;
   /** "Look here": a point on the board they just pinged. See `ping.ts`. */
   ping?: PingState | null;
+  /** An emote thrown at a point on the board. See `emote.ts`. */
+  emote?: EmoteState | null;
 }
 
 /** A cursor chat line. `open` is true while they are still typing it. */
@@ -299,6 +302,7 @@ export function readCollaborators(
       listening: readListening(state.listening),
       chat: readChat(state.chat),
       ping: readPing(state.ping),
+      emote: readEmote(state.emote),
     });
   });
 
@@ -339,7 +343,7 @@ export function rosterSignature(list: Collaborator[]): string {
           c.spotlightAt ?? ''
         }:${c.selection.join(',')}:${c.listening ?? ''}:${
           c.chat ? `${c.chat.open ? 1 : 0}${c.chat.text}` : ''
-        }:${c.ping?.at ?? ''}`
+        }:${c.ping?.at ?? ''}:${c.emote?.at ?? ''}`
     )
     .join('|');
 }

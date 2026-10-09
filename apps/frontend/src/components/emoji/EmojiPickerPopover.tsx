@@ -2,10 +2,17 @@ import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { Popover } from '../ui/Popover';
 import type { EmojiPickerProps } from './EmojiPicker';
 import { OPEN_EMOJI_PICKER, type OpenEmojiPickerDetail } from './openEmojiPicker';
+import { loadEmojiIndex } from '../../engine/emoji/emojiIndex';
+import { scheduleEmojiPrefetch } from '../../engine/emoji/emojiPrefetch';
 import './emoji.css';
 
 /** The picker's code arrives with its first opening, not with the board. */
-const LazyPicker = lazy(() => import('./EmojiPicker').then((m) => ({ default: m.EmojiPicker })));
+const importPicker = () => import('./EmojiPicker');
+// The catalogue is fetched alongside the script chunk, not after it: two round trips in parallel instead of in series.
+const LazyPicker = lazy(() => {
+  void loadEmojiIndex().catch(() => undefined);
+  return importPicker().then((m) => ({ default: m.EmojiPicker }));
+});
 
 const Loading: React.FC = () => (
   <div className="emoji-picker emoji-picker--loading" aria-busy="true" aria-label="Loading emoji picker" />
@@ -62,6 +69,9 @@ export const CanvasEmojiPickerHost: React.FC = () => {
   const [request, setRequest] = useState<OpenEmojiPickerDetail | null>(null);
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLDivElement>(null);
+
+  // Mounted once with the canvas: a good moment to warm the picker for later.
+  useEffect(() => scheduleEmojiPrefetch(importPicker), []);
 
   useEffect(() => {
     const onOpen = (e: Event) => {

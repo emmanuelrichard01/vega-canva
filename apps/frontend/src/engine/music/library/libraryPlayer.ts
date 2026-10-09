@@ -4,6 +4,15 @@
  * - **First play streams.** A track that has not been decoded yet plays from
  *   an `<audio>` element routed into the graph, so it starts as soon as its
  *   first seconds arrive. Meanwhile the whole file is downloaded and decoded.
+ * - **The stream gets the bandwidth first.** Whole-file downloads (this
+ *   track's, for gapless loops, and the next one's) wait until the stream has
+ *   enough buffered to play through (`settled`). On a slow link, three
+ *   transfers at once used to leave the audible one a third of the pipe.
+ * - **A track heard before starts from the device.** Downloaded files are kept
+ *   in Cache Storage (`TrackLoader`), and a cached track streams from a blob
+ *   URL with no network at all.
+ * - **A station can be armed before it is picked** (`arm`): hovering it
+ *   starts buffering its first track in an element the play then adopts.
  * - **Everything after that is buffers.** Transitions, loops and the next
  *   track play from decoded `AudioBufferSourceNode`s started at an exact time
  *   on the audio clock, with the encoder's priming and padding trimmed off.
@@ -60,6 +69,11 @@ const RESUME_FADE = 0.3;
 const SEEK_FADE = 0.12;
 /** A streamed track's fade finishes this long before the element's reported end. */
 const STREAM_END_MARGIN = 0.2;
+/** A stream counts as settled once it has this many seconds buffered ahead, or has played this long. */
+const SETTLED_AHEAD_S = 20;
+const SETTLED_PLAYED_S = 10;
+/** Armed elements kept at most; each holds a few seconds of buffered audio. */
+const MAX_ARMED = 2;
 /** Small offset so nothing is scheduled in the audio thread's past. */
 const LEAD = 0.03;
 
@@ -99,6 +113,10 @@ interface Voice {
   disposed: boolean;
   /** An unrouted element standing in for a routed one after a failed CORS probe. */
   noCors?: boolean;
+  /** Audio-clock time the stream first sounded. */
+  since?: number;
+  /** A blob URL the element plays from, revoked with the voice. */
+  localUrl?: string;
 }
 
 interface Pending {
@@ -128,6 +146,10 @@ export class LibraryPlayer {
   /** Audio-clock time before which no stream voice stands in for a missing buffer. */
   private streamBlockedUntil = 0;
   private reviving = false;
+  /** Elements already buffering a track's start, by track id, for `play` to adopt. */
+  private armed = new Map<string, HTMLAudioElement>();
+  /** Bumped by each `play`, so one that awaited can tell it was superseded. */
+  private playSeq = 0;
   private events: LibraryPlayerEvents;
   private fetchImpl: typeof fetch;
 
@@ -161,6 +183,27 @@ export class LibraryPlayer {
   }
 
   /**
+   * Starts buffering `track`'s opening ahead of a likely play, such as a
+   * station under the pointer. Cheap and safe to call repeatedly; the oldest
+   * armed element is let go past `MAX_ARMED`.
+   */
+  arm(track: LibraryTrack | null): void {
+    if (!track || this.armed.has(track.id) || this.current?.track.id === track.id) return;
+    if (typeof Audio === 'undefined') return;
+    const el = new Audio();
+    el.preload = 'auto';
+    if (!this.unrouted) el.crossOrigin = 'anonymous';
+    el.src = track.url;
+    this.armed.set(track.id, el);
+    while (this.armed.size > MAX_ARMED) {
+      const [id, old] = this.armed.entries().next().value as [string, HTMLAudioElement];
+      this.armed.delete(id);
+      old.removeAttribute('src');
+      old.load();
+    }
+  }
+
+  /**
    * Creates and resumes the context. Call synchronously inside the gesture
    * that will start music, before any `await`: browsers grant playback to the
    * activation that is still live.
@@ -173,6 +216,7 @@ export class LibraryPlayer {
   /** Plays `track` from `from` seconds: a short crossfade from whatever plays, or a soft start from silence. */
   async play(track: LibraryTrack, from = 0): Promise<void> {
     const ctx = this.ensureContext();
+    const token = ++this.playSeq;
     // A new track gets a fresh try at the routed (gapless) path.
     this.unrouted = false;
     this.streamBlockedUntil = 0;
@@ -187,7 +231,14 @@ export class LibraryPlayer {
         // Resumed by the next gesture instead.
       }
     }
-    if (!this.unrouted) this.loader!.want(track);
+    const decoded = this.decodedFor(track.id);
+    // A track kept on the device plays from it: no round trip at all.
+    const local = decoded || this.unrouted ? null : await this.loader!.localUrl(track);
+    if (token !== this.playSeq) {
+      // A later play took over while the cache was read.
+      if (local) URL.revokeObjectURL(local);
+      return;
+    }
     if (wasAudible && this.current) {
       // Keeps playing at full level until the new track is actually sounding; see `handOver`.
       this.retiring.push({ voice: this.current, until: Infinity });
@@ -196,8 +247,9 @@ export class LibraryPlayer {
       this.retiring = [];
     }
 
-    const decoded = this.decodedFor(track.id);
-    const incoming = decoded ? this.bufferVoice(track, decoded, from, ctx.currentTime + LEAD) : this.streamVoice(track, from);
+    const incoming = decoded
+      ? this.bufferVoice(track, decoded, from, ctx.currentTime + LEAD)
+      : this.streamVoice(track, from, !this.unrouted, 0, local ?? undefined);
     this.current = incoming;
     this.ensureTimer();
 
@@ -459,12 +511,22 @@ export class LibraryPlayer {
     return voice;
   }
 
-  private streamVoice(track: LibraryTrack, from: number, routed = !this.unrouted, attempt = 0): Voice {
+  private streamVoice(track: LibraryTrack, from: number, routed = !this.unrouted, attempt = 0, localUrl?: string): Voice {
     const ctx = this.ctx!;
-    const el = new Audio();
-    el.preload = 'auto';
-    if (routed) el.crossOrigin = 'anonymous';
-    el.src = track.url;
+    const armed = this.armed.get(track.id);
+    this.armed.delete(track.id);
+    // An armed element has its opening buffered already; one armed for another route is no use.
+    const adopt = armed && !localUrl && attempt === 0 && (armed.crossOrigin === 'anonymous') === routed ? armed : null;
+    if (armed && !adopt) {
+      armed.removeAttribute('src');
+      armed.load();
+    }
+    const el = adopt ?? new Audio();
+    if (!adopt) {
+      el.preload = 'auto';
+      if (routed && !localUrl) el.crossOrigin = 'anonymous';
+      el.src = localUrl ?? track.url;
+    }
     if (from > 0) el.currentTime = from;
     let gain: GainNode | null = null;
     if (routed) {
@@ -486,9 +548,11 @@ export class LibraryPlayer {
       audible: false,
       ended: false,
       disposed: false,
+      localUrl,
     };
     el.addEventListener('playing', () => {
       voice.audible = true;
+      voice.since ??= this.ctx?.currentTime;
       // The routed element failed, the probe says CORS is refused, and this unrouted one plays: the host has no CORS.
       if (!routed && voice.noCors && !this.unrouted) {
         this.unrouted = true;
@@ -636,6 +700,7 @@ export class LibraryPlayer {
       voice.el.removeAttribute('src');
       voice.el.load();
     }
+    if (voice.localUrl) URL.revokeObjectURL(voice.localUrl);
     voice.gain?.disconnect();
   }
 
@@ -656,6 +721,19 @@ export class LibraryPlayer {
       if (at >= ranges.start(i) - 0.25 && at <= ranges.end(i)) return Math.min(duration, ranges.end(i));
     }
     return Math.min(duration, at);
+  }
+
+  /** Whether a voice can play on without the network's full attention: a buffer, a local file, or a stream well ahead. */
+  private settled(v: Voice, now: number): boolean {
+    const el = v.el;
+    if (!el || v.localUrl || v.decoded) return true;
+    if (el.readyState >= 4) return true;
+    if (v.since !== undefined && now - v.since >= SETTLED_PLAYED_S) return true;
+    const ranges = el.buffered;
+    for (let i = 0; i < ranges.length; i += 1) {
+      if (ranges.start(i) <= el.currentTime && ranges.end(i) - el.currentTime >= SETTLED_AHEAD_S) return true;
+    }
+    return false;
   }
 
   private lengthOf(v: Voice): number {
@@ -776,9 +854,11 @@ export class LibraryPlayer {
     const cur = this.current;
     const next = cur ? this.events.nextTrack() : null;
     if (this.loader) {
-      if (cur && !this.unrouted) this.loader.want(cur.track);
-      // The next track is fetched now and decoded when its transition nears.
-      if (next && !this.unrouted) this.loader.want(next, { decode: false });
+      // Nothing competes with a stream for bandwidth until it can play through.
+      const free = !cur || this.settled(cur, now);
+      if (cur && free && !this.unrouted) this.loader.want(cur.track);
+      // The next track is fetched then, and decoded when its transition nears.
+      if (next && free && !this.unrouted) this.loader.want(next, { decode: false });
       this.loader.retain(
         [cur?.track.id, next?.id, this.pending?.to.track.id, ...this.retiring.map((r) => r.voice.track.id)].filter((id): id is string => Boolean(id))
       );

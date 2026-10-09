@@ -686,13 +686,16 @@ export interface BaseNode {
    * slottable carry it; the read boundary drops it on every other type.
    */
   gridSlot?: GridSlot;
-  /** Shared synthetic id linking the members of a group. */
+  /**
+   * The group this node sits in directly: a key of the `groups` map, whose
+   * records nest through their own `parentId` (`engine/model/groupTree.ts`).
+   * A value with no record is a flat-model group and reads as top level.
+   */
   parentId?: string;
   /**
    * The frame this node sits inside, by node id.
    *
-   * **Deliberately not `parentId`.** That is a *synthetic* id shared by the
-   * members of a group and belonging to no node at all, and the two answer
+   * **Deliberately not `parentId`.** That names a group record, not a node, and the two answer
    * different questions: everything sharing a `parentId` is selected together
    * as one group, which is emphatically not what should happen when you click
    * one object inside a frame. Overloading it would also make the Layers
@@ -1481,10 +1484,9 @@ export interface FrameNode extends BaseNode, SlideFields {
    * second implementation beside it.
    *
    * Auto-layout is Phase 6 in `docs/CANVAS-SPEC.md`, and that phase states its
-   * own prerequisite: real nesting. Groups here are flat — members share a
-   * synthetic `parentId`, there is no enter-group editing — so the declaration
-   * was not merely unimplemented, it was ahead of something that does not
-   * exist. Reintroduce it *with* the renderer that honours it and the panel
+   * own prerequisite: real nesting. Groups nest now (group records with a
+   * parent each, enter-group editing), but groups hold no layout of their own,
+   * so the declaration would still be ahead of anything that honours it. Reintroduce it *with* the renderer that honours it and the panel
    * controls that reach it, which is the order the invariant asks for.
    *
    * Nothing migrates. Nothing ever wrote the field, so no stored document

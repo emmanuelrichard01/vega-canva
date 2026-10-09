@@ -7,6 +7,7 @@ import { IpDailyByteTracker } from '../quota';
 import { mintShareToken } from '../shareToken';
 import { fakePool, testConfig } from '../testSupport';
 import type { Config } from '../config';
+import { MAX_HISTORY_PAGE } from '../historyVersions';
 
 /**
  * Time Travel's REST surface: the paged update log and version history,
@@ -107,7 +108,7 @@ describe('GET /rooms/:id/history', () => {
     const h = await start([]);
     await fetch(`${h.base}/rooms/${ROOM}/history?limit=100000`);
     const page = h.pool.queries.find((q) => /SELECT id, update_data/.test(q.sql))!;
-    expect(page.params[2]).toBe(1001); // MAX_HISTORY_PAGE + 1 to detect a next page
+    expect(page.params[2]).toBe(MAX_HISTORY_PAGE + 1); // +1 to detect a next page
     expect((await fetch(`${h.base}/rooms/${ROOM}/history?after=-3`)).status).toBe(400);
     expect((await fetch(`${h.base}/rooms/${ROOM}/history?limit=0`)).status).toBe(400);
   });

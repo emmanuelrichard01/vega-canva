@@ -33,8 +33,9 @@ interface Props {
  * for a board this device has never opened, which is the one case where there
  * is genuinely nothing to show and a placeholder is the honest answer.
  */
-export const WorkspaceCover: React.FC<Props> = ({ workspaceId, name, preview: supplied }) => {
-  const loaded = useMemo(() => loadPreview(workspaceId), [workspaceId]);
+export const WorkspaceCover: React.FC<Props> = React.memo(({ workspaceId, name, preview: supplied }) => {
+  // A caller that passes a preview (even null) has already read storage; parsing it again per card is waste.
+  const loaded = useMemo(() => (supplied === undefined ? loadPreview(workspaceId) : null), [supplied, workspaceId]);
   const preview = supplied ?? loaded;
 
   if (preview && preview.items.length > 0) {
@@ -295,4 +296,5 @@ export const WorkspaceCover: React.FC<Props> = ({ workspaceId, name, preview: su
       </span>
     </div>
   );
-};
+});
+WorkspaceCover.displayName = 'WorkspaceCover';

@@ -584,8 +584,10 @@ export function applyGroupPlan(plan: GroupPlan, options: WriteOptions = {}): voi
     if (plan.create) groupsMap.set(plan.create.id, stripUndefined(plan.create));
 
     for (const { id, parentId } of plan.groups) {
-      const existing = groupsMap.get(id);
-      if (!existing) continue;
+      // A flat-model group the store reads from its members alone has no
+      // stored record until the migration writes one; the plan named it, so
+      // the record is written here rather than the nesting being dropped.
+      const existing = groupsMap.get(id) ?? { id };
       groupsMap.set(id, stripUndefined({ ...existing, parentId }));
     }
 
@@ -617,6 +619,20 @@ function stripUndefined(record: GroupRecord): GroupRecord {
   if (record.name !== undefined) out.name = record.name;
   if (record.grid !== undefined) out.grid = record.grid;
   return out;
+}
+
+/**
+ * Write whole group records, as one transaction.
+ *
+ * For repairs computed by `canonicalGroups` — records the flat model never
+ * wrote, parents that vanished, loops a merge closed. Each record is the full
+ * canonical value, so two clients writing the same repair write the same thing.
+ */
+export function writeGroupRecords(records: readonly GroupRecord[], options: WriteOptions = {}): void {
+  if (records.length === 0 || refuseWrite('writeGroupRecords')) return;
+  doc.transact(() => {
+    for (const record of records) groupsMap.set(record.id, stripUndefined(record));
+  }, options.origin ?? null);
 }
 
 /** Rename a group. The one field of a group anybody edits directly. */

@@ -2,7 +2,7 @@ import React, { useCallback, useMemo } from 'react';
 import {
   Clock, Download, Layers as LayersIcon, MessageSquare, Mic, MousePointer2,
   PenLine, Play, Share2, Sparkles, Square, StickyNote, Type,
-  Code2, HelpCircle, ArrowLeft, Link2, Contrast, Presentation, LayoutGrid, MousePointerSquareDashed,
+  Code2, HelpCircle, Timer, Vote, Smile, Radio, ArrowLeft, Link2, Contrast, Presentation, LayoutGrid, MousePointerSquareDashed,
 } from 'lucide-react';
 import { isContrastEnhanced, toggleContrast } from '../engine/ui/contrast';
 import { HandIcon } from './workspace/HandIcon';
@@ -20,6 +20,8 @@ import { provider } from '../engine/document';
  * surface that never got the memo.
  */
 import { nodeLabel } from '../engine/model/nodeLabel';
+import { openWorkshop } from '../engine/presence/WorkshopBar';
+import { presenceManager } from '../engine/presence/PresenceManager';
 import { viewportCenter } from '../engine/presence/PresenceTypes';
 import { useStore } from '../hooks/useStore';
 import { TOOL_SHORTCUTS } from '../engine/tools/shortcuts';
@@ -112,6 +114,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
 
       { id: 'timetravel', label: 'Version history', detail: 'Scrub the board’s history and restore a version', group: 'Session', icon: <Clock size={16} />, perform: run('timetravel') },
       { id: 'play', label: 'Toggle physics play mode', group: 'Session', icon: <Play size={16} />, perform: run('play') },
+      { id: 'timer', label: 'Start a workshop timer', detail: 'A shared countdown everyone sees, with a soft chime at zero', keywords: 'countdown clock facilitate', group: 'Session', icon: <Timer size={16} />, perform: () => openWorkshop('timer') },
+      { id: 'vote', label: 'Start a dot vote', detail: 'Everyone clicks objects to place dots, then you reveal the counts', keywords: 'voting poll dots facilitate', group: 'Session', icon: <Vote size={16} />, perform: () => openWorkshop('vote') },
+      { id: 'bring-everyone', label: 'Bring everyone to my view', detail: 'Offers your view to the room; each person joins with one tap', keywords: 'spotlight follow present show', group: 'Session', icon: <Radio size={16} />, perform: () => presenceManager.setSpotlight(true) },
+      { id: 'cursor-chat', label: 'Cursor chat', detail: 'Type a line beside your pointer for everyone to see', keywords: 'message talk say', group: 'Session', icon: <MessageSquare size={16} />, shortcut: '/', perform: () => window.dispatchEvent(new CustomEvent('vega:cursor-chat')) },
+      { id: 'emote', label: 'Send an emote', detail: 'Hold W over the board, point at a slice, release', keywords: 'reaction wheel thumbs heart', group: 'Session', icon: <Smile size={16} />, shortcut: 'W', perform: () => window.dispatchEvent(new CustomEvent('vega:emote-hint')) },
       { id: 'share', label: 'Share workspace link', group: 'Session', icon: <Share2 size={16} />, perform: run('share') },
       /**
        * The second route out, for the people the corner mark does not reach.

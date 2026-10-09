@@ -46,7 +46,7 @@ import './dataArt.css';
 
 export type DataSeat = 'chart' | 'grid' | 'table';
 
-type Hue = 0 | 1 | 2 | 3 | 4;
+export type Hue = 0 | 1 | 2 | 3 | 4;
 
 const W = 64;
 const H = 48;
@@ -58,7 +58,7 @@ const TOP = 10;
 const BASE = 36;
 
 /** Two decimals: plenty at this size, and it keeps the markup short. */
-const n = (v: number) => Math.round(v * 100) / 100;
+export const n = (v: number) => Math.round(v * 100) / 100;
 
 /**
  * How strongly a mark is painted: the hue itself, a step back, or a tint.
@@ -69,10 +69,10 @@ const n = (v: number) => Math.round(v * 100) / 100;
  * light plate, the hue's own deep shade on the dark one (`dataArt.css`) -- so
  * a quieter cell stays the same colour, only calmer.
  */
-type Tier = 0 | 1 | 2;
+export type Tier = 0 | 1 | 2;
 
 /** What a scene asks of the art around it: gradients, each created on first use. */
-interface Paint {
+export interface Paint {
   /** A hue lit from above, at a tier. */
   fill(h: Hue, tier?: Tier): string;
   /** A hue fading downwards, for the space under a curve. */
@@ -81,7 +81,7 @@ interface Paint {
   glow(h: Hue): string;
 }
 
-type Scene = (p: Paint) => React.ReactNode;
+export type Scene = (p: Paint) => React.ReactNode;
 
 interface Used {
   fill: Set<string>;
@@ -152,7 +152,7 @@ function Plate({ id }: { id: string }) {
 }
 
 /** One tile: the plate, the scene, and the gradients the scene used. */
-function Tile({ scene, size, kind }: { scene: Scene; size: number; kind: string }) {
+export function Tile({ scene, size, kind }: { scene: Scene; size: number; kind: string }) {
   const id = `da${useId().replace(/:/g, '')}`;
   const { paint, used } = paintFor(id);
   // The scene runs first so `Defs` knows which gradients it reached for.

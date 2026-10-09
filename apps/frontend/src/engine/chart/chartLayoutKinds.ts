@@ -713,6 +713,95 @@ export function networkGroups(n: number, edges: readonly NetworkEdge[]): number[
 }
 
 /**
+ * Force placement in unit space (Fruchterman–Reingold, ~150 ms for a dozen
+ * nodes at 300 steps). It depends only on the graph and the aspect ratio, so a
+ * restyle, a hover or a resize of a pixel never needs it again: results are
+ * kept in a small cache and handed out as copies.
+ */
+const POSITION_CACHE = new Map<string, Point[]>();
+const POSITION_CACHE_MAX = 16;
+export const networkPlacementStats = { computed: 0, cached: 0 };
+
+function networkPositions(
+  n: number,
+  links: readonly NetworkEdge[],
+  group: readonly number[],
+  degree: readonly number[],
+  aspect: number,
+  ring: boolean
+): Point[] {
+  const key = [n, aspect, ring ? 'r' : 'f', group.join(','), links.map((e) => e.i + '-' + e.j + ':' + Math.round(e.w * 1e6)).join(';')].join('|');
+  const hit = POSITION_CACHE.get(key);
+  if (hit) {
+    networkPlacementStats.cached += 1;
+    POSITION_CACHE.delete(key);
+    POSITION_CACHE.set(key, hit);
+    return hit.map((p) => ({ ...p }));
+  }
+  networkPlacementStats.computed += 1;
+  const groupCount = Math.max(-1, ...group) + 1;
+  const sameGroup = (a: number, b: number) => group[a] >= 0 && group[a] === group[b];
+  const maxLink = Math.max(1e-9, ...links.map((e) => e.w));
+  // Around the circle by group, most connected first within each.
+  const groupKey = (i: number) => (group[i] < 0 ? groupCount : group[i]);
+  const around = Array.from({ length: n }, (_, i) => i).sort(
+    (a, b) => groupKey(a) - groupKey(b) || degree[b] - degree[a] || a - b
+  );
+  const pos: Point[] = new Array(n);
+  around.forEach((node, slot) => {
+    const a = (slot / n) * Math.PI * 2 - Math.PI / 2;
+    const r = ring ? 0.5 : 0.35;
+    pos[node] = { x: aspect / 2 + r * aspect * Math.cos(a), y: 0.5 + r * Math.sin(a) };
+  });
+
+  if (!ring && n > 2) {
+    const k = Math.sqrt(aspect / n) * 0.9;
+    const ITER = 300;
+    for (let it = 0; it < ITER; it++) {
+      const temp = 0.1 * (1 - it / ITER) + 0.002;
+      const disp = pos.map(() => ({ x: 0, y: 0 }));
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          const dx = pos[i].x - pos[j].x;
+          const dy = pos[i].y - pos[j].y;
+          const d = Math.max(0.01, Math.hypot(dx, dy));
+          const f = (k * k) / d;
+          disp[i].x += (dx / d) * f;
+          disp[i].y += (dy / d) * f;
+          disp[j].x -= (dx / d) * f;
+          disp[j].y -= (dy / d) * f;
+        }
+      }
+      for (const e of links) {
+        const dx = pos[e.i].x - pos[e.j].x;
+        const dy = pos[e.i].y - pos[e.j].y;
+        const d = Math.max(0.01, Math.hypot(dx, dy));
+        // Inside a group pulls harder than across one, so groups read as
+        // groups and their bridges stretch.
+        const f = ((d * d) / k) * (0.35 + 0.65 * (e.w / maxLink)) * (sameGroup(e.i, e.j) ? 1.2 : 0.7);
+        disp[e.i].x -= (dx / d) * f;
+        disp[e.i].y -= (dy / d) * f;
+        disp[e.j].x += (dx / d) * f;
+        disp[e.j].y += (dy / d) * f;
+      }
+      for (let i = 0; i < n; i++) {
+        // A gentle pull to the centre, so a disconnected node does not drift
+        // off and leave the rest of the graph squeezed into a corner.
+        disp[i].x += (aspect / 2 - pos[i].x) * 0.4;
+        disp[i].y += (0.5 - pos[i].y) * 0.4;
+        const len = Math.max(1e-9, Math.hypot(disp[i].x, disp[i].y));
+        const step = Math.min(len, temp);
+        pos[i].x += (disp[i].x / len) * step;
+        pos[i].y += (disp[i].y / len) * step;
+      }
+    }
+  }
+  POSITION_CACHE.set(key, pos.map((p) => ({ ...p })));
+  if (POSITION_CACHE.size > POSITION_CACHE_MAX) POSITION_CACHE.delete(POSITION_CACHE.keys().next().value as string);
+  return pos;
+}
+
+/**
  * Nodes and weighted links.
  *
  * ## The table
@@ -834,62 +923,11 @@ export function layoutNetwork(
     width: Math.max(1, plot.width - mx * 2),
     height: Math.max(1, plot.height - my * 2),
   };
-  const aspect = clampTo(avail.width / avail.height, 0.6, 2.2);
+  // Quantised, so a resize of a pixel or two reuses the cached placement.
+  const aspect = Math.round(clampTo(avail.width / avail.height, 0.6, 2.2) * 50) / 50;
 
-  // Around the circle by group, most connected first within each.
   const groupKey = (i: number) => (group[i] < 0 ? groupCount : group[i]);
-  const around = Array.from({ length: n }, (_, i) => i).sort(
-    (a, b) => groupKey(a) - groupKey(b) || degree[b] - degree[a] || a - b
-  );
-  const pos: Point[] = new Array(n);
-  around.forEach((node, slot) => {
-    const a = (slot / n) * Math.PI * 2 - Math.PI / 2;
-    const r = ring ? 0.5 : 0.35;
-    pos[node] = { x: aspect / 2 + r * aspect * Math.cos(a), y: 0.5 + r * Math.sin(a) };
-  });
-
-  if (!ring && n > 2) {
-    const k = Math.sqrt(aspect / n) * 0.9;
-    const ITER = 300;
-    for (let it = 0; it < ITER; it++) {
-      const temp = 0.1 * (1 - it / ITER) + 0.002;
-      const disp = pos.map(() => ({ x: 0, y: 0 }));
-      for (let i = 0; i < n; i++) {
-        for (let j = i + 1; j < n; j++) {
-          const dx = pos[i].x - pos[j].x;
-          const dy = pos[i].y - pos[j].y;
-          const d = Math.max(0.01, Math.hypot(dx, dy));
-          const f = (k * k) / d;
-          disp[i].x += (dx / d) * f;
-          disp[i].y += (dy / d) * f;
-          disp[j].x -= (dx / d) * f;
-          disp[j].y -= (dy / d) * f;
-        }
-      }
-      for (const e of links) {
-        const dx = pos[e.i].x - pos[e.j].x;
-        const dy = pos[e.i].y - pos[e.j].y;
-        const d = Math.max(0.01, Math.hypot(dx, dy));
-        // Inside a group pulls harder than across one, so groups read as
-        // groups and their bridges stretch.
-        const f = ((d * d) / k) * (0.35 + 0.65 * (e.w / maxLink)) * (sameGroup(e.i, e.j) ? 1.2 : 0.7);
-        disp[e.i].x -= (dx / d) * f;
-        disp[e.i].y -= (dy / d) * f;
-        disp[e.j].x += (dx / d) * f;
-        disp[e.j].y += (dy / d) * f;
-      }
-      for (let i = 0; i < n; i++) {
-        // A gentle pull to the centre, so a disconnected node does not drift
-        // off and leave the rest of the graph squeezed into a corner.
-        disp[i].x += (aspect / 2 - pos[i].x) * 0.4;
-        disp[i].y += (0.5 - pos[i].y) * 0.4;
-        const len = Math.max(1e-9, Math.hypot(disp[i].x, disp[i].y));
-        const step = Math.min(len, temp);
-        pos[i].x += (disp[i].x / len) * step;
-        pos[i].y += (disp[i].y / len) * step;
-      }
-    }
-  }
+  const pos = networkPositions(n, links, group, degree, aspect, ring);
 
   // Fit into the room left for nodes and names. Stretching is allowed a
   // little, so a wide plot is used, but not so much that distance stops

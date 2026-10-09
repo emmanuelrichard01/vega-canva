@@ -60,12 +60,6 @@
   max-width: calc(100vw - 2 * var(--gutter));
 }
 
-/* The frame sizes' three columns share the md width rather than holding a
-   400px floor of their own past its insets. */
-.tool-dock .dock-flyout__panel[data-size] .frame-picker {
-  min-width: 0;
-}
-
 /* ------------------------------------------------------------ drawing tray */
 
 /* The Draw seat's tray: the tools as objects standing in a recess and the ink
@@ -498,6 +492,30 @@ body:has(.dock-tray__inner[data-mode='glyph']) {
 
 .tool-dock[data-editing] .dock-caret {
   display: none;
+}
+
+/* A long press is how touch opens a seat's menu, so the press must not also
+   raise the system's callout or start a text selection, and a double tap must
+   not zoom the page. */
+.tool-dock .dock-btn,
+.tool-dock .dock-caret {
+  -webkit-touch-callout: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+/* On touch the caret's corner is too small to hit. Its drawn mark stays the
+   same; an invisible pad grows the target to 24px, out over the seat's
+   corner, which is the corner a thumb reaches for. */
+@media (pointer: coarse) {
+  .dock-caret::before {
+    content: '';
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 24px;
+    height: 24px;
+  }
 }
 
 /* --------------------------------------------------------- receding dock */

@@ -1,5 +1,6 @@
 import * as Y from 'yjs';
 import { decodeBase64Update, type Keyframe, type RawUpdate } from './sessionTimeline';
+import type { FrameTrack } from './frameTrack';
 
 /**
  * Replay frames: the board's objects as plain data at one point in the log.
@@ -130,6 +131,11 @@ export interface ReplaySource {
   log: () => readonly RawUpdate[];
   keyframes: () => readonly Keyframe[];
   baseline: Uint8Array | null;
+  /**
+   * Per-row patches and checkpoints recorded by the builder. When present,
+   * seeks read it and never touch Yjs; the keyframe path is the fallback.
+   */
+  track?: FrameTrack | null;
 }
 
 export interface SeekResult {
@@ -158,6 +164,8 @@ export class ReplayEngine {
   private docIndex = -2;
   private docState: FrameState | null = null;
   private shown: Frame = {};
+  /** The track frame most recently produced, so the next forward seek starts from it. */
+  private trackAt: { index: number; frame: FrameState } | null = null;
   private readonly touched = new Set<string>();
   private groupsTouched = false;
   private readonly cache: LruCache<FrameState>;
@@ -178,7 +186,7 @@ export class ReplayEngine {
   seek(index: number): SeekResult {
     const target = this.clamp(index);
     const cached = this.cache.get(target);
-    const state = cached ?? this.materialise(target);
+    const state = cached ?? (this.source.track ? this.fromTrack(target, true) : this.materialise(target));
     const changedIds = changedBetween(this.shown, state.objects);
     this.shown = state.objects;
     return { state, changedIds, cached: !!cached };
@@ -192,6 +200,7 @@ export class ReplayEngine {
     const target = this.clamp(index);
     const cached = this.cache.get(target);
     if (cached) return cached;
+    if (this.source.track) return this.fromTrack(target, false);
     const { doc } = this.rebuild(target);
     const state = { objects: readFrame(doc, this.docState?.objects ?? this.shown), groups: readGroups(doc) };
     doc.destroy();
@@ -211,8 +220,17 @@ export class ReplayEngine {
     this.cache.clear();
   }
 
+  private fromTrack(target: number, advance: boolean): FrameState {
+    const track = this.source.track!;
+    const frame = track.frameAt(target, this.trackAt) as FrameState;
+    if (advance) this.trackAt = { index: target, frame };
+    this.cache.set(target, frame);
+    return frame;
+  }
+
   private clamp(index: number): number {
-    const last = this.source.log().length - 1;
+    const rows = this.source.log().length;
+    const last = (this.source.track ? Math.min(rows, this.source.track.length) : rows) - 1;
     return Math.max(-1, Math.min(index, last));
   }
 

@@ -90,6 +90,7 @@ export interface SheetLayout {
 export const SHEET_LAYOUT = {
   chart: { cols: 4, tile: 92, gap: 2, pic: { width: 72, height: 44 } },
   grid: { cols: 4, tile: 92, gap: 2, pic: { width: 72, height: 44 } },
+  frame: { cols: 4, tile: 92, gap: 2, pic: { width: 72, height: 44 } },
   table: { cols: 3, tile: 124, gap: 2, pic: { width: 96, height: 56 } },
 } as const satisfies Record<string, SheetLayout>;
 

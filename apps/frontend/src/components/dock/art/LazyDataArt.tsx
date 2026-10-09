@@ -23,3 +23,11 @@ export const GridKindArt: React.FC<{ kind: React.ComponentProps<typeof GridKind>
     <GridKind kind={kind} size={size} />
   </Suspense>
 );
+
+const Frame = lazy(() => import('./FrameArt').then((m) => ({ default: m.FrameArt })));
+
+export const FrameArt: React.FC<React.ComponentProps<typeof Frame>> = ({ size = 64, ...rest }) => (
+  <Suspense fallback={blank(size)}>
+    <Frame size={size} {...rest} />
+  </Suspense>
+);

@@ -23,6 +23,8 @@ import { roomFingerprint } from '../room/roomCode';
 
 export interface ImportedDocument {
   nodes: Record<string, Record<string, unknown>>;
+  /** Group records by id; empty for files written before groups were exported. */
+  groups?: Record<string, { id: string; parentId?: string; name?: string }>;
   comments: unknown[];
   exportedAt: string | null;
   /**
@@ -144,6 +146,7 @@ export function parseDocumentExport(text: string): ImportResult {
     warnings,
     document: {
       nodes,
+      groups: readGroups(doc.groups),
       comments: Array.isArray(doc.comments) ? doc.comments : [],
       exportedAt: typeof doc.exportedAt === 'string' ? doc.exportedAt : null,
       title: typeof doc.title === 'string' && doc.title.trim() ? doc.title.trim() : null,
@@ -152,6 +155,22 @@ export function parseDocumentExport(text: string): ImportResult {
       schemaVersion: typeof doc.schemaVersion === 'number' ? doc.schemaVersion : null,
     },
   };
+}
+
+/** Group records, keeping only the fields a group has and only well-formed ones. */
+function readGroups(value: unknown): NonNullable<ImportedDocument['groups']> {
+  const out: NonNullable<ImportedDocument['groups']> = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return out;
+  for (const [id, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const record = raw as Record<string, unknown>;
+    out[id] = {
+      id,
+      ...(typeof record.parentId === 'string' && record.parentId ? { parentId: record.parentId } : null),
+      ...(typeof record.name === 'string' && record.name ? { name: record.name } : null),
+    };
+  }
+  return out;
 }
 
 /** The provenance block, if the file carries one that makes sense. */

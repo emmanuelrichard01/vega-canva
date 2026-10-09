@@ -100,6 +100,11 @@ export const ToolLibrary: React.FC<Props> = ({ label, entries, searchPlaceholder
     } else if (e.key === 'Enter') {
       e.preventDefault();
       rows()[0]?.click();
+    } else if (e.key === 'Escape' && query) {
+      // The first Escape clears the search; the next one closes the library,
+      // as in every sheet the dock opens.
+      e.stopPropagation();
+      setQuery('');
     }
   };
 

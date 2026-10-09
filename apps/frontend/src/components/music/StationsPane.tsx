@@ -7,6 +7,7 @@ import {
   reloadLibrary,
   tracksIn,
   useLibrary,
+  armStation,
 } from '../../engine/music/library/libraryStore';
 import { categoryBlurb, categoryLabel, formatDuration } from '../../engine/music/library/manifest';
 import { creditFor } from '../../engine/music/library/credits';
@@ -163,6 +164,8 @@ const StationGrid: React.FC = () => {
             tabIndex={i === (current < 0 ? 0 : current) ? 0 : -1}
             className={`music-tile${selected ? ' is-selected' : ''}${live ? ' is-live' : ''}`}
             onClick={() => void selectStation(id)}
+            onPointerEnter={() => armStation(id)}
+            onFocus={() => armStation(id)}
             onKeyDown={(e) => onKey(e, i)}
             data-tooltip={categoryBlurb(id) ?? undefined}
           >

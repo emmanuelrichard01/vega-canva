@@ -215,12 +215,48 @@ export const EmojiPicker: React.FC<EmojiPickerProps> = ({ onPick, onRemove, remo
       </div>
     );
   } else if (!index) {
+    // Recents are stored as glyphs, so they paint before the catalogue
+    // arrives: the emoji people reach for most are there on the first frame.
+    const early = query ? [] : recents;
+    const earlyRows = Math.ceil(early.length / COLUMNS);
     body = (
-      <div className="emoji-picker__skeleton" aria-busy="true" aria-label="Loading emoji">
-        {Array.from({ length: 40 }, (_, i) => (
-          <span key={i} className="emoji-picker__bone" />
-        ))}
-      </div>
+      <>
+        {earlyRows > 0 && (
+          <div className="emoji-picker__space" style={{ height: HEADER + earlyRows * CELL }}>
+            <div className="emoji-picker__heading" style={{ top: 0 }}>
+              Recently used
+            </div>
+            {Array.from({ length: earlyRows }, (_, r) => (
+              <div key={r} className="emoji-picker__row" style={{ top: HEADER + r * CELL }} role="presentation">
+                {early.slice(r * COLUMNS, (r + 1) * COLUMNS).map((native) => (
+                  <button
+                    key={native}
+                    type="button"
+                    role="option"
+                    tabIndex={-1}
+                    aria-selected={false}
+                    aria-label={native}
+                    className="emoji-picker__cell"
+                    data-current={current === native ? true : undefined}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      pushRecentEmoji(native);
+                      onPick(native);
+                    }}
+                  >
+                    <Emoji native={native} size={24} loading="eager" />
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="emoji-picker__skeleton" aria-busy="true" aria-label="Loading emoji">
+          {Array.from({ length: Math.max(8, 40 - earlyRows * COLUMNS) }, (_, i) => (
+            <span key={i} className="emoji-picker__bone" />
+          ))}
+        </div>
+      </>
     );
   } else if (query && flat.length === 0) {
     body = (
@@ -267,7 +303,7 @@ export const EmojiPicker: React.FC<EmojiPickerProps> = ({ onPick, onRemove, remo
                         pick(entry);
                       }}
                     >
-                      <Emoji code={code} native={native} size={24} />
+                      <Emoji code={code} native={native} size={24} loading="eager" />
                     </button>
                   );
                 })}

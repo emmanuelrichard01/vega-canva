@@ -33,6 +33,8 @@ export interface PlotSample {
 /** How far a curve may be from its chord before the segment is split. */
 const FLATNESS = 0.35;
 const MAX_DEPTH = 6;
+/** Halving knots placed into each domain edge. */
+const EDGE_KNOTS = 10;
 
 /**
  * A jump larger than this multiple of the median step is read as a
@@ -71,12 +73,22 @@ export function samplePlot(
     return Number.isFinite(y) ? y : null;
   };
 
-  let prevX = from;
-  let prevY = value(from);
+  // The grid, plus knots that halve their way into each edge. A start like
+  // sqrt(x) at 0, ln(x) just above 0 or 1/x near 0 is nearly vertical inside
+  // the first step, and a uniform grid with a depth-limited midpoint test
+  // either steps over it or drops it when the edge itself is undefined.
+  const xs: number[] = [from];
+  for (let k = EDGE_KNOTS; k >= 1; k -= 1) xs.push(from + step / 2 ** k);
+  for (let i = 1; i < base; i += 1) xs.push(from + i * step);
+  for (let k = 1; k <= EDGE_KNOTS; k += 1) xs.push(to - step / 2 ** k);
+  xs.push(to);
+
+  let prevX = xs[0];
+  let prevY = value(prevX);
   out.push({ x: prevX, y: prevY });
 
-  for (let i = 1; i <= base; i += 1) {
-    const x = from + i * step;
+  for (let i = 1; i < xs.length; i += 1) {
+    const x = xs[i];
     const y = value(x);
     if (prevY !== null && y !== null) {
       subdivide(f, prevX, prevY, x, y, 0, out);

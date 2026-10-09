@@ -5,6 +5,7 @@ import { roomFingerprint } from '../room/roomCode';
 import { SCHEMA_VERSION } from '../model/schema';
 import { EXPORT_ENVELOPE_VERSION } from './DocumentImport';
 import { exportIdSet } from './exportScope';
+import { ancestorsOf, type GroupRecord } from '../model/groupTree';
 
 export class JSONExporter implements Exporter {
   type: ExportFormat = "json";
@@ -78,6 +79,7 @@ export class JSONExporter implements Exporter {
        */
       schemaVersion: SCHEMA_VERSION,
       objects,
+      groups: groupsFor(objects, state.groups),
       comments,
       metadata: {
         selectedOnly: options.selectedOnly || false,
@@ -89,4 +91,22 @@ export class JSONExporter implements Exporter {
 
     return JSON.stringify(documentData, null, 2);
   }
+}
+
+/**
+ * The group records the exported objects sit in, with their ancestors, so a
+ * restore brings the hierarchy back rather than a flat bag. Optional in the
+ * envelope: a reader that ignores it still gets every object.
+ */
+function groupsFor(
+  objects: Readonly<Record<string, { parentId?: string }>>,
+  groups: Readonly<Record<string, GroupRecord>>
+): Record<string, GroupRecord> {
+  const out: Record<string, GroupRecord> = {};
+  for (const node of Object.values(objects)) {
+    const parent = node.parentId;
+    if (!parent || out[parent] || !groups[parent]) continue;
+    for (const id of [parent, ...ancestorsOf(groups, parent)]) out[id] = groups[id];
+  }
+  return out;
 }

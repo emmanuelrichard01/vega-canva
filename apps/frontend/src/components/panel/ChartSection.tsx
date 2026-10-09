@@ -1824,10 +1824,12 @@ const LabelFields: React.FC<FieldProps & { can: ReturnType<typeof chartCapabilit
             { id: 'legend', icon: <Tag size={13} />, label: 'Legend', on: shown.showLegend },
             ...(can.valueLabels ? [{ id: 'values', icon: <Hash size={13} />, label: 'Values', on: shown.showValues }] : []),
             ...(can.gridLines ? [{ id: 'grid', icon: <Grid3x3 size={13} />, label: 'Grid', on: shown.showGrid }] : []),
+            ...(can.gridLines ? [{ id: 'axes', icon: <Ruler size={13} />, label: 'Axes', on: spec.showAxes !== false }] : []),
           ]}
           onToggle={(id) => {
             if (id === 'legend') patch({ showLegend: !shown.showLegend });
             else if (id === 'values') patch({ showValues: !shown.showValues });
+            else if (id === 'axes') patch({ showAxes: spec.showAxes === false ? undefined : false });
             else patch({ showGrid: !shown.showGrid });
           }}
         />

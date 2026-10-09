@@ -72,6 +72,17 @@ export const CursorChatComposer: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
+  // The palette opens it without a pointer on the board.
+  useEffect(() => {
+    const onCommand = () => {
+      setText('');
+      setOpen(true);
+      presenceManager.updateChat('', true);
+    };
+    window.addEventListener('vega:cursor-chat', onCommand);
+    return () => window.removeEventListener('vega:cursor-chat', onCommand);
+  }, []);
+
   useEffect(() => {
     if (!open) return;
     place();

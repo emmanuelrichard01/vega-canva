@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, Lock, LockOpen } from 'lucide-react';
+import { rovingIndex } from '../dock/seatMenuModel';
 
 /**
  * The menu a seat with choices opens: a short row first, everything on request.
@@ -88,26 +89,41 @@ export function SeatMenu<T extends string>({
   trailing,
 }: Props<T>) {
   const [expanded, setExpanded] = useState(false);
+  const sheetRef = useRef<HTMLDivElement>(null);
 
   const row = quick.some((q) => q.id === current.id) ? quick : [...quick.slice(0, -1), current];
 
   // Left and right walk the row; the dock's own arrow handling stands down
   // inside a flyout, so without this the row would be tab stops only.
+  // Home and End reach the first choice and the padlock.
   const onRowKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button'));
     const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
     if (at < 0) return;
+    // Up climbs into the sheet above the row, opening it first if it is shut:
+    // the sheet hangs above, so the arrow points where it is.
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!expanded) setExpanded(true);
+      else {
+        const tiles = sheetRef.current?.querySelectorAll<HTMLElement>('[role="menuitemradio"]');
+        tiles?.[tiles.length - 1]?.focus();
+      }
+      return;
+    }
+    const next = rovingIndex(e.key, at, buttons.length, 'horizontal');
+    if (next === null) return;
     e.preventDefault();
     e.stopPropagation();
-    buttons[(at + (e.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+    buttons[next]?.focus();
   };
 
   return (
     <div className="seat-menu">
       {header && <div className="seat-menu__header">{header}</div>}
       {expanded && (
-        <div className="seat-menu__sheet">{typeof sheet === 'function' ? sheet(() => setExpanded(false)) : sheet}</div>
+        <div className="seat-menu__sheet" ref={sheetRef}>{typeof sheet === 'function' ? sheet(() => setExpanded(false)) : sheet}</div>
       )}
 
       <div className="seat-menu__row" onKeyDown={onRowKey}>

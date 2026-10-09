@@ -8,7 +8,21 @@ import { useMiniMode, usePlayingSignal } from '../../engine/music/playingSignal'
 import { usePhone } from '../workspace/usePhone';
 import './trigger.css';
 
-const MusicPanel = lazy(() => import('./MusicPanel'));
+const loadPanel = () => import('./MusicPanel');
+const MusicPanel = lazy(loadPanel);
+
+/**
+ * Intent to open the player: fetch its code, the manifest and a connection to
+ * the music host while the pointer is still on its way to the click, so the
+ * panel opens drawn and the first station starts without a cold round trip.
+ */
+let warmed = false;
+function warmMusic() {
+  if (warmed) return;
+  warmed = true;
+  void loadPanel().catch(() => { warmed = false; });
+  void import('../../engine/music/library/libraryStore').then((m) => m.warmLibrary()).catch(() => undefined);
+}
 
 /**
  * The record beside your avatar: always there, still when idle, turning at
@@ -46,6 +60,8 @@ export const MusicButton: React.FC<{ className?: string }> = ({ className }) => 
         className={`btn-icon music-trigger${playing ? ' is-playing' : ''}${showLine ? ' music-trigger--line' : ''}${className ? ` ${className}` : ''}`}
         aria-haspopup="dialog"
         aria-expanded={open}
+        onPointerEnter={warmMusic}
+        onFocus={warmMusic}
         aria-pressed={playing}
         aria-label="Music"
         data-tooltip={open ? undefined : tooltip}

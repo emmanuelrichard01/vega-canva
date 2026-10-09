@@ -3,7 +3,7 @@ import { sceneGraph } from '../SceneGraph';
 import type { AnyNode } from '../model/schema';
 import { nanoid } from 'nanoid';
 import { applyGroupPlan, provider, type CreateNodeOptions, type NewNodeInput } from '../document';
-import { planGroup, planUngroup, rootGroupOf } from '../model/groupTree';
+import { groupsToUngroup, planGroup, planUngroup, type GroupPlan } from '../model/groupTree';
 import { useStore } from '../../hooks/useStore';
 import { cameraSystem } from '../CameraSystem';
 import { fitPose, type FitBounds, type FitOptions } from '../cameraFit';
@@ -103,26 +103,28 @@ export class EditorAPI {
    * the command unrepeatable in the direction people expect — there would be
    * nothing left to press it on.
    *
-   * Accepts member ids because that is what a selection holds; the groups they
-   * belong to are what actually comes apart. Outermost first, so ungrouping a
-   * selection spanning a nest does not try to unwrap a folder that a previous
-   * step has already lifted.
+   * Accepts member ids because that is what a selection holds. The groups
+   * that come apart are the ones the selection names whole (`groupsToUngroup`),
+   * at whatever depth: a child group selected inside an entered group opens
+   * that group, and an object deep-selected out of a group opens nothing.
+   * The targets are disjoint subtrees, so each plan is computed against the
+   * same table and applied in one transaction — one undo step.
    */
   ungroupNodes(childIds: string[]) {
     const { objects, groups } = useStore.getState();
     const order = Object.keys(objects);
+    const targets = groupsToUngroup(order, objects, groups, childIds);
+    if (targets.length === 0) return;
 
-    const targets = new Set<string>();
-    for (const id of childIds) {
-      const parent = objects[id]?.parentId;
-      if (parent && groups[parent]) targets.add(rootGroupOf(groups, parent));
-    }
-    if (targets.size === 0) return;
-
+    const merged: GroupPlan = { nodes: [], groups: [], remove: [] };
     for (const groupId of targets) {
       const plan = planUngroup(order, objects, groups, groupId);
-      if (plan) applyGroupPlan(plan);
+      if (!plan) continue;
+      merged.nodes.push(...plan.nodes);
+      merged.groups.push(...plan.groups);
+      merged.remove.push(...plan.remove);
     }
+    applyGroupPlan(merged);
   }
 
   // --- Selection & Presence --- //

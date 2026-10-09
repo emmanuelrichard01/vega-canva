@@ -467,3 +467,146 @@ export function remapGroups(
 
   return { records, mapping };
 }
+
+/**
+ * The group table every reader should see, repaired from whatever is stored.
+ *
+ * Three things can be wrong with the stored table, and none needs a person to
+ * have made a mistake:
+ *
+ *  - **A member names a group with no record.** Every document written by the
+ *    flat model is like this: its groups are a shared `parentId` and nothing
+ *    else. A concurrent merge can produce the same shape — one person
+ *    ungroups while another drops something into that group. Read as a
+ *    top-level group, which is exactly what the flat model meant by it.
+ *  - **A group names a parent that does not exist.** Read as top level.
+ *  - **A loop.** Two people nesting A in B and B in A at the same moment both
+ *    write valid records, and the merge is a cycle. Broken at the member of
+ *    the loop with the smallest id, so every client that repairs the same
+ *    state arrives at the same answer and the repair can be written by
+ *    several of them at once without disagreeing.
+ *
+ * Pure and deterministic: the same inputs give the same table on every peer,
+ * and repairing a repaired table changes nothing. Returns the input by
+ * reference when nothing needed repairing, so store selectors stay still.
+ */
+export function canonicalGroups(groups: Groups, memberParents: Iterable<string | undefined>): Groups {
+  let out: Record<string, GroupRecord> | null = null;
+  const edit = (): Record<string, GroupRecord> => (out ??= { ...groups });
+  const table = (): Groups => out ?? groups;
+
+  for (const [key, record] of Object.entries(groups)) {
+    if (!record || typeof record !== 'object') {
+      edit()[key] = { id: key };
+    } else if (record.id !== key) {
+      edit()[key] = { ...record, id: key };
+    }
+  }
+
+  for (const parent of memberParents) {
+    if (parent && !table()[parent]) edit()[parent] = { id: parent };
+  }
+
+  for (const [key, record] of Object.entries(table())) {
+    const parent = record.parentId;
+    if (parent !== undefined && (parent === key || !table()[parent])) {
+      edit()[key] = withoutParent(record);
+    }
+  }
+
+  // Each group has one parent, so loops are disjoint and each is found whole
+  // by walking up from any of its members.
+  const settled = new Set<string>();
+  for (const start of Object.keys(table()).sort()) {
+    const path: string[] = [];
+    const onPath = new Set<string>();
+    let at: string | undefined = start;
+    while (at && !settled.has(at) && !onPath.has(at)) {
+      onPath.add(at);
+      path.push(at);
+      at = table()[at]?.parentId;
+    }
+    if (at && onPath.has(at)) {
+      const loop = path.slice(path.indexOf(at));
+      const cut = [...loop].sort()[0];
+      edit()[cut] = withoutParent(table()[cut]);
+    }
+    for (const id of path) settled.add(id);
+  }
+
+  return table();
+}
+
+function withoutParent(record: GroupRecord): GroupRecord {
+  const { parentId: _drop, ...rest } = record;
+  return rest;
+}
+
+/**
+ * The records to write so the stored table matches `canonicalGroups`.
+ *
+ * Only what differs, so a document that is already canonical costs nothing to
+ * check and writes nothing.
+ */
+export function groupRepairs(stored: Groups, canonical: Groups): GroupRecord[] {
+  const out: GroupRecord[] = [];
+  for (const [key, record] of Object.entries(canonical)) {
+    const before = stored[key];
+    if (!before || before.id !== record.id || before.parentId !== record.parentId) out.push(record);
+  }
+  return out;
+}
+
+/**
+ * The groups a selection names as whole units — what Ungroup takes apart.
+ *
+ * Ungroup acts on the group you have selected, at whatever depth you selected
+ * it. Inside an entered group, selecting a child group and ungrouping must
+ * open *that* group, not the outermost one around it; and a deep-selected
+ * object inside a group names no group at all, so ungrouping it does nothing
+ * rather than dismantling the assembly it sits in.
+ */
+export function groupsToUngroup(
+  order: readonly string[],
+  objects: NodeTable,
+  groups: Groups,
+  selected: readonly string[]
+): string[] {
+  return selectionUnits(order, objects, groups, selected).groups;
+}
+
+/**
+ * Where Escape takes you: one level up from the selection.
+ *
+ * Inside an entered group, Escape selects the group you were in and steps out
+ * of it. With a selection inside a group (a deep-selected object, or a child
+ * group reached by entering), it selects the group that holds the selection.
+ * With a whole top-level group, or nothing grouped, there is nowhere further
+ * up and it returns `null`.
+ */
+export function escapeTarget(
+  order: readonly string[],
+  objects: NodeTable,
+  groups: Groups,
+  selected: readonly string[],
+  entered: string | null
+): { select: string[]; entered: string | null } | null {
+  const units = selectionUnits(order, objects, groups, selected);
+  const parents = [
+    ...units.nodes.map((id) => objects[id]?.parentId),
+    ...units.groups.map((id) => groups[id]?.parentId),
+  ];
+  const holder =
+    units.nodes.length + units.groups.length > 0
+      ? commonAncestor(groups, parents)
+      : entered && groups[entered]
+        ? entered
+        : undefined;
+
+  if (!holder) {
+    return entered ? { select: [...selected], entered: null } : null;
+  }
+  const inside = nodesInGroup(order, objects, groups, holder);
+  if (inside.length === 0) return null;
+  return { select: inside, entered: groups[holder]?.parentId ?? null };
+}

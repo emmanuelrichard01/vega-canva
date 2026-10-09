@@ -73,6 +73,7 @@ const VIEW_KEYS: Record<string, Binding> = {
   '0': { label: '100%', description: 'Reset the view to the origin at 100%', kind: 'view' },
   '=': { label: 'Zoom in', description: 'Zoom in', kind: 'view' },
   '-': { label: 'Zoom out', description: 'Zoom out', kind: 'view' },
+  w: { label: 'Emote', description: 'Hold to open the emote wheel at your pointer, release to send', kind: 'view' },
   '\\': { label: 'Focus', description: 'Focus mode: hide or show the panels', kind: 'view' },
 };
 

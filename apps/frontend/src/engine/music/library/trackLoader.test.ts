@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TrackLoader } from './trackLoader';
+import { TrackLoader, type TrackStore } from './trackLoader';
 import { DECODE_LEAD, FALLBACK_LEAD, SCHEDULE_LEAD, transitionStep } from './crossfade';
 import type { LibraryTrack } from './manifest';
 
@@ -33,6 +33,42 @@ const flush = async () => {
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
+
+/** An in-memory stand-in for Cache Storage. */
+function memoryStore(seed: string[] = []): TrackStore & { puts: string[] } {
+  const kept = new Set(seed);
+  const puts: string[] = [];
+  return {
+    puts,
+    match: async (url) => (kept.has(url) ? ({ arrayBuffer: async () => new ArrayBuffer(16), blob: async () => new Blob(['x']) } as unknown as Response) : undefined),
+    put: async (url) => {
+      kept.add(url);
+      puts.push(url);
+    },
+  };
+}
+
+describe('TrackLoader on-device cache', () => {
+  it('decodes a kept track without touching the network', async () => {
+    const { ctx, state } = fakeContext();
+    const fetchImpl = vi.fn(async () => bytesResponse());
+    const loader = new TrackLoader(ctx, fetchImpl as unknown as typeof fetch, 25_000, memoryStore([track('kept').url]));
+    loader.want(track('kept'));
+    await flush();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(state.started).toBe(1);
+  });
+
+  it('keeps a finished download for next time', async () => {
+    const { ctx } = fakeContext();
+    const store = memoryStore();
+    const loader = new TrackLoader(ctx, vi.fn(async () => bytesResponse()) as unknown as typeof fetch, 25_000, store);
+    loader.want(track('fresh'), { decode: false });
+    await flush();
+    expect(store.puts).toEqual([track('fresh').url]);
+    expect(await loader.localUrl(track('missing'))).toBeNull();
+  });
+});
 
 describe('TrackLoader', () => {
   it('never decodes more than one track at a time, and holds at most the retained ones, while skipping fast', async () => {

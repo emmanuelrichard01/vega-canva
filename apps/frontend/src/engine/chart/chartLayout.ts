@@ -40,7 +40,7 @@ import {
 import { monotoneSplinePoints } from './monotoneSpline';
 import { layoutCombo } from './chartCombo';
 import { integrateStreamline } from './streamline';
-import { linearRegression, optimalBinCount, kernelDensityEstimation } from './chartStats';
+import { linearRegression, optimalBinCount, histogramKdeCounts } from './chartStats';
 import { compileCurves, samplePlot, sampleParametric, samplePolar } from './chartPlot';
 import {
   differentiate,
@@ -600,24 +600,22 @@ interface LegendOverride {
  * samples themselves: by the time a layout is drawn the spec holds bucket
  * counts, and the counts' own domain says nothing about where samples lie.
  */
-function histogramDensityCurve(raw: ChartSpec, layout: { plot: { x: number; y: number; width: number; height: number }; bars: unknown[] }): Point[] | null {
+function histogramDensityCurve(
+  raw: ChartSpec,
+  layout: { plot: { x: number; y: number; width: number; height: number }; bars: unknown[]; domain: Domain }
+): Point[] | null {
   const values = raw.series.flatMap((s) => s.values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v)));
   if (values.length < 2 || layout.bars.length === 0) return null;
-  const numEval = 40;
-  let lo = Infinity;
-  let hi = -Infinity;
-  for (const v of values) {
-    if (v < lo) lo = v;
-    if (v > hi) hi = v;
-  }
-  const evalPts: number[] = [];
-  for (let i = 0; i <= numEval; i += 1) evalPts.push(lo + (i / numEval) * (hi - lo));
-  const densities = kernelDensityEstimation(values, evalPts);
-  const maxDensity = Math.max(...densities.map((d) => d.density), 1e-6);
+  // The bars are counts across [min, max]; the curve is expected count per
+  // bucket on that same value axis, so the two can be compared.
+  const curve = histogramKdeCounts(values, layout.bars.length, 40);
+  if (!curve) return null;
   const { plot } = layout;
-  return densities.map((d, i) => ({
-    x: plot.x + (i / numEval) * plot.width,
-    y: plot.y + plot.height - (d.density / maxDensity) * (plot.height * 0.85),
+  const [d0, d1] = layout.domain;
+  const span = d1 - d0 || 1;
+  return curve.map((c) => ({
+    x: plot.x + c.t * plot.width,
+    y: plot.y + plot.height - Math.max(0, Math.min(1, (c.count - d0) / span)) * plot.height,
   }));
 }
 
@@ -950,12 +948,15 @@ function layoutChartCore(
     }
   }
 
+  const axesHidden = spec.showAxes === false && !isRadial(spec.kind) && !isPolar(spec.kind);
+
   return {
     ...layout,
+    ...(axesHidden ? { axisLabels: [], categoryLabels: [], baseline: null, zeroRule: null } : null),
     subtitle,
     footnote,
-    xAxisTitle,
-    yAxisTitle,
+    xAxisTitle: axesHidden ? null : xAxisTitle,
+    yAxisTitle: axesHidden ? null : yAxisTitle,
     toleranceBand: layout.toleranceBand ?? toleranceBand,
     kdeCurve,
     categoryNames: spec.categories,

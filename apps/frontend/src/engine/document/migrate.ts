@@ -1,5 +1,6 @@
 import { SCHEMA_VERSION } from '../model/schema';
-import { doc, groupsMap, metadataMap, objectsMap } from './doc';
+import { DERIVED_ORIGIN, doc, groupsMap, metadataMap, objectsMap } from './doc';
+import { repairGroupRecords } from './upkeep';
 import { migrateGridGroups } from '../grid/gridMigrate';
 import { migrateDoc } from './migrateDoc';
 import { canEditObjects } from '../model/permissions';
@@ -54,6 +55,16 @@ export function scheduleMigration(provider: {
      */
     const grids = migrateGridGroups(doc, objectsMap, groupsMap as never);
     if (grids > 0) console.info(`[schema] folded ${grids} grid group(s) into grid nodes`);
+
+    /**
+     * Flat groups get group records, also outside the version gate and for
+     * the same reason: a flat group is a shape, not a version. Readers already
+     * see these records (the store canonicalises on read); this makes the
+     * stored document agree, so nesting one writes onto a record that exists.
+     * Deterministic, so editors joining together write the same values.
+     */
+    const groupFixes = repairGroupRecords(DERIVED_ORIGIN);
+    if (groupFixes > 0) console.info(`[schema] wrote ${groupFixes} record(s) for flat groups`);
 
     const storedVersion = Number(metadataMap.get('schemaVersion') ?? 0);
     // A newer peer may already have migrated this document.

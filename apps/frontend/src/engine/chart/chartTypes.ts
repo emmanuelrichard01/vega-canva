@@ -420,6 +420,8 @@ export interface ChartSpec {
   showLegend?: boolean;
   /** Horizontal rules behind the marks. Absent is on for axis charts. */
   showGrid?: boolean;
+  /** Axis ticks, labels and titles. Absent is shown; `false` hides them (radial and polar kinds have none). */
+  showAxes?: boolean;
   /** The number on each bar or point. Absent is off — it crowds quickly. */
   showValues?: boolean;
   /**

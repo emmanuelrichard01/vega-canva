@@ -95,6 +95,7 @@ export const LiveCover: React.FC<Props> = ({ template }) => {
           className="gcover__img"
           src={url}
           alt=""
+          loading="lazy"
           decoding="async"
           draggable={false}
           onLoad={() => setLoaded(true)}

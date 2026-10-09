@@ -8,6 +8,8 @@ import { announceLocalPing, isPingGesture } from '../engine/presence/ping';
 import { useFollowLink } from '../engine/presence/useFollowLink';
 import { cameraSystem } from '../engine/CameraSystem';
 import { PingLayer } from './PingLayer';
+import { EmoteLayer } from '../engine/presence/EmoteLayer';
+import { WorkshopBar } from '../engine/presence/WorkshopBar';
 import { chipColorsFor } from '../engine/cursor/remoteCursor';
 import { provider } from '../engine/document';
 
@@ -90,6 +92,8 @@ export const PresenceStage: React.FC = () => {
   return (
     <>
       <PingLayer />
+      <EmoteLayer />
+      <WorkshopBar />
       {/*
         * Your audience.
         *
