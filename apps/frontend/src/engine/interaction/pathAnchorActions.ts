@@ -14,9 +14,10 @@ import type { HandleMode } from '../model/pathGeometry';
 import { flattenToPath } from '../document/vectorOps';
 import type { AlignEdge } from '../model/align';
 import { pathEdit } from './pathEdit';
+import { reboxedPosition, type Boxed } from '../model/rebox';
 
 /** The path currently open for editing, and its geometry, or `null`. */
-function editing(): { id: string; node: { x: number; y: number }; geometry: ContourGeometry; anchors: AnchorRef[] } | null {
+function editing(): { id: string; node: Boxed; geometry: ContourGeometry; anchors: AnchorRef[] } | null {
   const selection = pathEdit.getSnapshot();
   if (!selection) return null;
   const node = useStore.getState().objects[selection.nodeId];
@@ -24,18 +25,24 @@ function editing(): { id: string; node: { x: number; y: number }; geometry: Cont
   return { id: node.id, node, geometry: node.geometry, anchors: selection.anchors };
 }
 
-/** Write an edited geometry back from outside the component. */
-function write(id: string, node: { x: number; y: number }, next: ContourGeometry | null) {
+/**
+ * Write an edited geometry back from outside the component.
+ *
+ * Re-boxed through the node's own rotation and scale, so trimming a turned
+ * path does not swing it about a new centre.
+ */
+function write(id: string, node: Boxed, next: ContourGeometry | null) {
   if (!next) {
     deleteNode(id);
     pathEdit.exit();
     return;
   }
   const framed = reframePath(next);
+  const at = reboxedPosition(node, framed);
   updateNode(id, {
     geometry: framed.geometry,
-    x: node.x + framed.dx,
-    y: node.y + framed.dy,
+    x: at.x,
+    y: at.y,
     width: framed.width,
     height: framed.height,
   });
@@ -61,6 +68,7 @@ export function nudgePickedAnchors(dx: number, dy: number): boolean {
   const state = editing();
   if (!state || state.anchors.length === 0) return false;
   write(state.id, state.node, moveAnchors(state.geometry, state.anchors, dx, dy));
+  // Held arrows fold into one undo step through the history's capture window.
   return true;
 }
 
@@ -131,5 +139,21 @@ export function selectAllAnchors(): boolean {
   const state = editing();
   if (!state) return false;
   pathEdit.select(contours(state.geometry).flatMap((c) => c.anchors.map((_, index) => ({ sub: c.sub, index }))));
+  return true;
+}
+
+/**
+ * Pick every anchor on the contours that already have a picked anchor: one
+ * letter's outline, or one piece of a compound path.
+ */
+export function selectPickedContours(): boolean {
+  const state = editing();
+  if (!state || state.anchors.length === 0) return false;
+  const subs = new Set(state.anchors.map((r) => r.sub));
+  pathEdit.select(
+    contours(state.geometry)
+      .filter((c) => subs.has(c.sub))
+      .flatMap((c) => c.anchors.map((_, index) => ({ sub: c.sub, index })))
+  );
   return true;
 }

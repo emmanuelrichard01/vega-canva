@@ -24,6 +24,9 @@ import { placementSize } from './imageFrame';
 /** Pasted pictures arrive a little smaller than dropped files: they are usually references, not artwork. */
 const PASTED_IMAGE_MAX = 640;
 
+/** How long a large picture is waited for in total. */
+const PICTURE_PATIENCE_MS = 45_000;
+
 export type ImageFromUrlResult =
   | { ok: true; id: string }
   | { ok: false; reason: string; kind: 'invalid' | 'not-image' | 'failed' | 'read-only' };
@@ -42,6 +45,32 @@ function measure(url: string): Promise<{ width: number; height: number } | null>
 async function naturalSizeOf(meta: Pick<LinkMeta, 'image' | 'imageWidth' | 'imageHeight'>) {
   if (meta.imageWidth && meta.imageHeight) return { width: meta.imageWidth, height: meta.imageHeight };
   return meta.image ? measure(meta.image) : null;
+}
+
+/** The words for why the server did not keep a picture, from the code it reports. */
+export function imageIssueMessage(issue: string | undefined): string {
+  switch (issue) {
+    case 'too-large':
+      return 'That picture is too large to bring in (12 MB is the limit). Download it and upload a smaller copy instead.';
+    case 'svg':
+      return 'SVG pictures cannot be brought in from a link, because they can carry scripts. Download the file and use Import SVG instead.';
+    case 'avif':
+    case 'heic':
+    case 'bmp':
+    case 'tiff':
+    case 'format':
+      return 'That picture is in a format boards cannot show. PNG, JPEG, GIF and WebP work.';
+    case 'small':
+      return 'That picture is too small to place.';
+    case 'not-image':
+      return 'That address says it is a picture, but the file is not one boards can show.';
+    case 'quota':
+      return 'This board has no room left for more pictures.';
+    case 'unreachable':
+      return 'The site did not hand over that picture. It may block other sites from using it; download it and upload a copy instead.';
+    default:
+      return 'The picture at that address could not be kept.';
+  }
 }
 
 /** What the preview service says about an address, reduced to "is it a picture we now hold". */
@@ -104,17 +133,21 @@ export async function insertImageFromUrl(raw: string, at?: { x: number; y: numbe
   if (!parsed) return { ok: false, kind: 'invalid', reason: 'That is not a web address.' };
 
   let answer = await fetchLinkPreview(parsed.url.href);
-  // The picture is stored by the second half of a two-part answer.
-  if (answer.meta && answer.pending) {
-    const settled = await fetchLinkPreview(parsed.url.href, 25_000);
-    if (settled.meta) answer = settled;
+  // The picture is stored by the later parts of a multi-part answer. A large
+  // picture takes longer than one request is held open for, so ask again until
+  // the server says it is settled (or we run out of patience).
+  const deadline = Date.now() + PICTURE_PATIENCE_MS;
+  while (answer.meta && answer.pending && (!answer.meta.type || answer.meta.type === 'image') && Date.now() < deadline) {
+    const next = await fetchLinkPreview(parsed.url.href, 25_000);
+    if (!next.meta) break;
+    answer = next;
   }
   if (!answer.meta) return { ok: false, kind: 'failed', reason: answer.error ?? 'That address could not be reached.' };
   const src = storedPicture(answer.meta);
   if (!src) {
     return answer.meta.type && answer.meta.type !== 'image'
       ? { ok: false, kind: 'not-image', reason: 'That address is a page, not a picture.' }
-      : { ok: false, kind: 'failed', reason: 'The picture at that address could not be kept.' };
+      : { ok: false, kind: 'failed', reason: imageIssueMessage(answer.meta.imageIssue) };
   }
   const natural = await naturalSizeOf(answer.meta);
   if (!natural) return { ok: false, kind: 'failed', reason: 'The picture at that address could not be read.' };

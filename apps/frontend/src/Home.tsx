@@ -36,6 +36,7 @@ import { AuthModal } from './components/AuthModal';
 import { Logo } from './components/ui/Logo';
 import { Avatar } from './components/ui/Avatar';
 import { storageGet, storageSet } from './utils/safeStorage';
+import { homePath, homeTitle } from './engine/share/sitePages';
 import './components/home/home.css';
 
 const HomePalette = lazy(() => import('./components/home/HomePalette').then((m) => ({ default: m.HomePalette })));
@@ -56,6 +57,9 @@ const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(
 
 /** Read from storage, not state, so the first render already shows the right view. */
 function initialView(): View {
+  // `/templates` is the gallery's own address: a page of its own for search and
+  // link previews (see `engine/share/sitePages.ts`).
+  if (window.location.pathname.replace(/\/+$/, '') === '/templates') return 'templates';
   const asked = new URLSearchParams(window.location.search).get('view');
   if (asked === 'boards' || asked === 'templates') return asked;
   return storageGet(VIEW_KEY) === 'templates' ? 'templates' : 'boards';
@@ -119,6 +123,22 @@ export const Home: React.FC = () => {
   const retried = useRef(new Set<string>());
 
   useEffect(() => { storageSet(VIEW_KEY, view); }, [view]);
+
+  // The address, tab title and canonical follow the view, so the gallery's URL
+  // is the one copied and a script-running crawler reads the page it is on.
+  useEffect(() => {
+    document.title = homeTitle(view);
+    const { pathname, search, hash } = window.location;
+    const path = homePath(view);
+    if ((pathname === '/' || pathname.replace(/\/+$/, '') === '/templates') && pathname !== path) {
+      const params = new URLSearchParams(search);
+      params.delete('view');
+      const rest = params.toString();
+      window.history.replaceState(window.history.state, '', `${path}${rest ? `?${rest}` : ''}${hash}`);
+    }
+    const canonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+    if (canonical) canonical.href = new URL(path, canonical.href).toString();
+  }, [view]);
   useEffect(() => { storageSet(LAYOUT_KEY, layout); }, [layout]);
   useEffect(() => { storageSet(SORT_KEY, sort); }, [sort]);
   // Switching views starts a new screen, so it starts at the top of one.

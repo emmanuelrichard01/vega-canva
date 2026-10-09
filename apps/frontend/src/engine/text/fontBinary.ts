@@ -43,7 +43,7 @@ export interface ParsedFont {
    */
   layout(text: string): {
     glyphs: Array<{ path: { commands: Array<{ command: string; args: number[] }> } }>;
-    positions: Array<{ xAdvance: number }>;
+    positions: Array<{ xAdvance: number; xOffset?: number; yOffset?: number }>;
   };
 }
 

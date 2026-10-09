@@ -32,7 +32,7 @@
       "name": "Browse templates",
       "short_name": "Templates",
       "description": "Start from a retro, a roadmap, a flowchart and more",
-      "url": "/?view=templates",
+      "url": "/templates",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ],

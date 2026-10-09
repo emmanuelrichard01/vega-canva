@@ -1186,6 +1186,15 @@ export interface BezierGeometry {
 export interface CompoundGeometry {
   kind: 'compound';
   subpaths: BezierGeometry[];
+  /**
+   * How the contours combine. Absent means `evenodd`, the rule above.
+   *
+   * Outlined text is `nonzero`, because that is the rule fonts are drawn with:
+   * a variable font's letterforms overlap their own contours (the bar of a
+   * `t` crossing its stem), and even-odd would punch a hole wherever two parts
+   * of one letter meet.
+   */
+  fillRule?: 'nonzero' | 'evenodd';
 }
 
 export type PathGeometry = FreehandGeometry | BezierGeometry | CompoundGeometry;

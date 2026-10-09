@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { guardedLookup, isBlockedHostname, isPublicAddress, parseV6 } from './netGuard';
 import { checkFetchableUrl, FetchRefused, type SafeFetchResult } from './safeFetch';
 import { decodeEntities, parseHtmlMeta, sniffCharset, sniffImage, textFromEmbedHtml } from './unfurlParse';
-import { createUnfurler, UnfurlError } from './unfurl';
+import { createUnfurler, UnfurlError, DIRECT_IMAGE_BYTES } from './unfurl';
 
 describe('isPublicAddress', () => {
   it('refuses every private, loopback and link-local IPv4 range', () => {
@@ -625,5 +625,83 @@ describe('createUnfurler', () => {
     });
     await Promise.all([unfurler.unfurl('r', 'https://acme.test/'), unfurler.unfurl('r', 'https://acme.test/')]);
     expect(calls).toBe(1);
+  });
+});
+
+describe('unfurl of a link that is itself a picture', () => {
+  const pngOf = (w: number, h: number, pad = 0) => {
+    const b = Buffer.alloc(33 + pad);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b, 0);
+    b.writeUInt32BE(w, 16);
+    b.writeUInt32BE(h, 20);
+    return b;
+  };
+  const res = (url: string, body: Buffer | string, contentType: string, truncated = false): SafeFetchResult => ({
+    url,
+    status: 200,
+    contentType,
+    body: typeof body === 'string' ? Buffer.from(body) : body,
+    truncated,
+  });
+  const run = async (fetch: (url: string, o?: any) => Promise<SafeFetchResult>) => {
+    const stored: number[] = [];
+    const u = createUnfurler({
+      fetch,
+      graceMs: 5000,
+      store: async (_r, bytes, image) => {
+        stored.push(bytes.length);
+        return `https://api.test/m/${stored.length}${image.ext}`;
+      },
+    });
+    const { preview } = await u.unfurl('r', 'https://cdn.test/pic');
+    return { preview, stored };
+  };
+
+  it('keeps a small direct picture (below the card-thumbnail size floor)', async () => {
+    const { preview } = await run(async (url) => res(url, pngOf(40, 40), 'image/png'));
+    expect(preview).toMatchObject({ type: 'image', image: 'https://api.test/m/1.png' });
+  });
+
+  it('keeps a large picture past the 3MB thumbnail cap and the 768KB page read', async () => {
+    const big = pngOf(4000, 3000, 5 * 1024 * 1024);
+    const { preview } = await run(async (url, o) => {
+      if (o?.truncate) return res(url, big.subarray(0, 768 * 1024), 'image/png', true);
+      expect(o?.maxBytes).toBe(DIRECT_IMAGE_BYTES);
+      return res(url, big, 'image/png');
+    });
+    expect(preview.image).toBe('https://api.test/m/1.png');
+    expect(preview.imageWidth).toBe(4000);
+  });
+
+  it('recognises a picture served as octet-stream, with no extension', async () => {
+    const { preview } = await run(async (url) => res(url, pngOf(300, 200), 'application/octet-stream'));
+    expect(preview).toMatchObject({ type: 'image', image: 'https://api.test/m/1.png' });
+  });
+
+  it('reports a picture over the limit as too large', async () => {
+    const { preview } = await run(async (url, o) => {
+      if (o?.truncate) return res(url, pngOf(9000, 9000, 700 * 1024).subarray(0, 700 * 1024), 'image/png', true);
+      throw new FetchRefused('That file is too large to preview', 'too-large');
+    });
+    expect(preview.image).toBeUndefined();
+    expect(preview.imageIssue).toBe('too-large');
+  });
+
+  it('refuses an SVG and says so, rather than storing a document', async () => {
+    const { preview, stored } = await run(async (url) => res(url, '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>', 'image/svg+xml'));
+    expect(stored).toEqual([]);
+    expect(preview).toMatchObject({ type: 'image', imageIssue: 'svg' });
+  });
+
+  it('names an AVIF as an unsupported format', async () => {
+    const avif = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypavif'), Buffer.alloc(16)]);
+    const { preview } = await run(async (url) => res(url, avif, 'image/avif'));
+    expect(preview.imageIssue).toBe('avif');
+  });
+
+  it('reports a full quota when the store declines the picture', async () => {
+    const u = createUnfurler({ fetch: async (url) => res(url, pngOf(300, 200), 'image/png'), store: async () => null, graceMs: 5000 });
+    const { preview } = await u.unfurl('r', 'https://cdn.test/pic');
+    expect(preview.imageIssue).toBe('quota');
   });
 });

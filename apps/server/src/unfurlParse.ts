@@ -381,6 +381,24 @@ export function sniffImage(b: Buffer): SniffedImage | null {
   return null;
 }
 
+/**
+ * Pictures we recognise and deliberately do not keep: an SVG is a document that
+ * can carry script, and the other formats are not ones the board's media store
+ * serves. Named so the person is told why, not just that it failed.
+ */
+export function sniffUnsupportedImage(b: Buffer): 'svg' | 'avif' | 'heic' | 'bmp' | 'tiff' | null {
+  const head = b.toString('latin1', 0, Math.min(b.length, 1024)).replace(/^\u00EF\u00BB\u00BF/, '').trimStart();
+  if (/^(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*(<!doctype svg[^>]*>\s*)?<svg[\s>]/i.test(head)) return 'svg';
+  if (b.length >= 12 && b.toString('latin1', 4, 8) === 'ftyp') {
+    const brand = b.toString('latin1', 8, 12);
+    if (brand === 'avif' || brand === 'avis') return 'avif';
+    if (/^(heic|heix|hevc|mif1|msf1)$/.test(brand)) return 'heic';
+  }
+  if (b.length >= 2 && b[0] === 0x42 && b[1] === 0x4d) return 'bmp';
+  if (b.length >= 4 && ((b[0] === 0x49 && b[1] === 0x49 && b[2] === 0x2a && b[3] === 0) || (b[0] === 0x4d && b[1] === 0x4d && b[2] === 0 && b[3] === 0x2a))) return 'tiff';
+  return null;
+}
+
 function jpegSize(b: Buffer): { width?: number; height?: number } {
   let i = 2;
   while (i + 9 < b.length) {

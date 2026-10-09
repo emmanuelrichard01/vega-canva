@@ -37,10 +37,21 @@ export interface CardItem {
   no?: 1;
 }
 
+/**
+ * A frame on the board, by id: what a `?frame=` link names in its unfurl.
+ * Only the frame's own label and emoji, and only while previews are on.
+ */
+export interface CardFrame {
+  id: string;
+  name: string;
+  icon?: string;
+}
+
 export interface CardPreview {
   ratio: number;
   total: number;
   items: CardItem[];
+  frames?: CardFrame[];
 }
 
 export interface BoardCard {
@@ -53,6 +64,8 @@ export interface BoardCard {
 export const MAX_CARD_ITEMS = 170;
 const MAX_LINE_NUMBERS = 200;
 export const MAX_NAME = 120;
+export const MAX_CARD_FRAMES = 64;
+const MAX_FRAME_NAME = 80;
 const FALLBACK_COLOR = '#94A3B8';
 
 const COLOR =
@@ -83,13 +96,52 @@ function invisible(code: number): boolean {
   );
 }
 
-export function cleanName(v: unknown): string {
+export function cleanName(v: unknown, max = MAX_NAME): string {
   if (typeof v !== 'string') return '';
   return Array.from(v, (ch) => (invisible(ch.codePointAt(0)!) ? ' ' : ch))
     .join('')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, MAX_NAME);
+    .slice(0, max);
+}
+
+/**
+ * A frame's emoji: a few code points, none of them ASCII, so it can only ever
+ * be a glyph — never markup, never words smuggled in where an icon goes.
+ */
+function cleanIcon(v: unknown): string | undefined {
+  if (typeof v !== 'string') return undefined;
+  const chars = Array.from(v.trim());
+  if (chars.length === 0 || chars.length > 8) return undefined;
+  for (const ch of chars) {
+    const code = ch.codePointAt(0)!;
+    if (code < 0x80 || invisible(code)) {
+      // Zero-width joiners and variation selectors build emoji; nothing else below 0x80 or invisible does.
+      if (code !== 0x200d && !(code >= 0xfe00 && code <= 0xfe0f)) return undefined;
+    }
+  }
+  return chars.join('');
+}
+
+function frames(raw: unknown): CardFrame[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: CardFrame[] = [];
+  const seen = new Set<string>();
+  for (const f of raw.slice(0, MAX_CARD_FRAMES)) {
+    if (!isObj(f) || typeof f.id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(f.id) || seen.has(f.id)) continue;
+    const name = cleanName(f.name, MAX_FRAME_NAME);
+    if (!name) continue;
+    seen.add(f.id);
+    const icon = cleanIcon(f.icon);
+    out.push(icon ? { id: f.id, name, icon } : { id: f.id, name });
+  }
+  return out.length ? out : undefined;
+}
+
+/** The frame a `?frame=` link points at, if the card knows it. */
+export function findFrame(preview: CardPreview | null, id: unknown): CardFrame | null {
+  if (typeof id !== 'string' || !preview?.frames) return null;
+  return preview.frames.find((f) => f.id === id) ?? null;
 }
 
 function color(v: unknown): string {
@@ -138,7 +190,10 @@ export function normalizePreview(raw: unknown): CardPreview | null {
   if (ratio === undefined) return null;
   const items = raw.items.slice(0, MAX_CARD_ITEMS).map(item).filter((i): i is CardItem => i !== null);
   const total = num(raw.total, 0, 10_000_000);
-  return { ratio, items, total: Math.round(total ?? items.length) };
+  const out: CardPreview = { ratio, items, total: Math.round(total ?? items.length) };
+  const named = frames(raw.frames);
+  if (named) out.frames = named;
+  return out;
 }
 
 /** A card upload, rebuilt field by field. `null` when it is not one. */

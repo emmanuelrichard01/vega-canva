@@ -49,8 +49,27 @@ function getWorker(): Worker {
   return w;
 }
 
+/**
+ * Renders already waiting. A burst of distinct cards — a crawler walking
+ * many boards at once — queues on one thread; past this depth a caller should
+ * answer with something it already has rather than join the queue.
+ */
+export const MAX_QUEUED_RENDERS = 6;
+let inProcess = 0;
+
+export function rasterBusy(): boolean {
+  return pending.size + inProcess >= MAX_QUEUED_RENDERS;
+}
+
 export async function svgToPng(svg: string, width?: number): Promise<Buffer> {
-  if (!canUseWorker) return Buffer.from(await renderPng(svg, width));
+  if (!canUseWorker) {
+    inProcess++;
+    try {
+      return Buffer.from(await renderPng(svg, width));
+    } finally {
+      inProcess--;
+    }
+  }
   return new Promise<Buffer>((resolve, reject) => {
     const id = nextId++;
     pending.set(id, { resolve, reject });

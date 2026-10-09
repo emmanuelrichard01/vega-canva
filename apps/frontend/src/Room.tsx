@@ -49,7 +49,7 @@ import { useRoomShortcuts } from './hooks/useRoomShortcuts';
 import { useCanvasAudioRecording } from './hooks/useCanvasAudioRecording';
 import { useCanvasDropZone } from './hooks/useCanvasDropZone';
 import { startGridSlotSync } from './engine/grid/gridSlotApply';
-import { gridEditMode } from './engine/grid/gridEditMode';
+import { gridEditMode, selectionMirror } from './engine/grid/gridEditMode';
 import { GRID_SETTINGS_EVENT } from './engine/grid/gridSettings';
 import { notify } from './engine/ui/notices';
 import { useRoomClipboard } from './hooks/useRoomClipboard';
@@ -336,6 +336,8 @@ export default function Room() {
   useEffect(() => {
     const editing = gridEditMode.get().gridId;
     if (editing && !selectedIds.includes(editing)) gridEditMode.exit();
+    // Grids outline the module that holds a selected object.
+    selectionMirror.set(selectedIds);
   }, [selectedIds]);
   const [isPlayMode, setIsPlayMode] = useState(false);
   // `searchQuery`/`rightTab`/`activeEditor`/`showMagicMenu`/`showOnboarding`
@@ -691,12 +693,13 @@ export default function Room() {
   /** A phone: the bottom bar, sheets instead of columns, and the compact selection bar. */
   const phone = usePhone();
   /**
-   * A tablet's columns are always overlays that open on demand, in landscape
-   * too: they slide over the board rather than standing beside it, and a tap
-   * on the board puts them away. In portrait only one is open at a time.
+   * A tablet in portrait floats its columns over the board, one at a time,
+   * and a tap on the board puts them away. In landscape it docks them like a desktop.
    */
   const tablet = useDeviceClass() === 'tablet';
-  const overlayPanels = isCompact || tablet;
+  // A landscape tablet has the width for docked panels, as a desktop does; only
+  // a narrow window (a portrait tablet, a small laptop) floats them.
+  const overlayPanels = isCompact;
   const oneColumn = phone || (tablet && isCompact);
   const [panelsOpen, setPanelsOpen] = useState(false);
   const panelsVisible = !overlayPanels || panelsOpen;

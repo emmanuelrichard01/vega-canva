@@ -84,15 +84,18 @@ export type HudReadout =
    * Width and height of the thing being drawn or resized: "240 × 180".
    * With a `count` above one, the selection's size of several: "3 objects · 240 × 180".
    */
-  | { kind: 'size'; value: { width: number; height: number; count?: number } }
+  | { kind: 'size'; value: { width: number; height: number; count?: number; noun?: string } }
   /** A run's length, and its direction if known: "128 · 45°". */
   | { kind: 'length'; value: { length: number; angle?: number } }
   /** A rotation: "45°". Pass the angle the person should read; it is shown as given, rounded. */
   | { kind: 'angle'; value: number }
   /** A position on the board: "X 120  Y 80". */
   | { kind: 'position'; value: { x: number; y: number } }
-  /** How far something has been dragged from where it started: "ΔX 12  ΔY −4". */
-  | { kind: 'delta'; value: { dx: number; dy: number } }
+  /**
+   * How far something has been dragged from where it started: "ΔX 12  ΔY −4".
+   * With a `count` above one, prefixed by it: "24 points · ΔX 12  ΔY −4".
+   */
+  | { kind: 'delta'; value: { dx: number; dy: number; count?: number; noun?: string } }
   /** A distance between two things: "24". Drawn in the measurement colour. */
   | { kind: 'distance'; value: number }
   /** A short state word, when there is no number to give: "Connect". */
@@ -106,7 +109,7 @@ export function formatHud(readout: HudReadout, zoom = 1): HudText {
     case 'size':
       return join([
         ...(readout.value.count !== undefined && readout.value.count > 1
-          ? [v(String(readout.value.count)), m(' objects · ')]
+          ? [v(String(readout.value.count)), m(` ${readout.value.noun ?? 'objects'} · `)]
           : []),
         v(formatHudNumber(Math.abs(readout.value.width), zoom)),
         m(' × '),
@@ -128,6 +131,9 @@ export function formatHud(readout: HudReadout, zoom = 1): HudText {
       ]);
     case 'delta':
       return join([
+        ...(readout.value.count !== undefined && readout.value.count > 1
+          ? [v(String(readout.value.count)), m(` ${readout.value.noun ?? 'objects'} · `)]
+          : []),
         m('ΔX '),
         v(formatHudNumber(readout.value.dx, zoom)),
         m('  ΔY '),

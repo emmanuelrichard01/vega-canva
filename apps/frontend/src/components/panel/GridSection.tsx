@@ -16,7 +16,7 @@ import { canEditObjects } from '../../engine/model/permissions';
 import { GRID_PRESETS, gridPresetMatching } from '../../engine/grid/gridPresets';
 import { ColorPickerPopover } from '../ui/ColorPickerPopover';
 import { setGridRecipe } from '../../engine/grid/gridApply';
-import { gridContent } from '../../engine/grid/gridSlotApply';
+import { gridContent, setItemPlacement } from '../../engine/grid/gridSlotApply';
 import { recipeCells, switchKind, withSpec, withStyle, type GridRecipe } from '../../engine/grid/gridBuild';
 import { canEditCells, currentTrackSizes, resetTracks, setTrack, setTrackCount } from '../../engine/grid/gridEdit';
 import { gridEditMode, useGridEditMode } from '../../engine/grid/gridEditMode';
@@ -170,8 +170,9 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
     patchSpec(uniform ? { margin: next.top, padding: undefined } : { padding: next, margin: 0 });
   };
 
-  const setAlign = (next: CellAlign) =>
-    patchSpec({ contentAlign: next.x === 'stretch' && next.y === 'stretch' ? undefined : next });
+  // Through `setItemPlacement`, which re-sets the text in the grid in the same
+  // step: text in a cell takes its alignment from Item placement.
+  const setAlign = (next: CellAlign) => setItemPlacement(nodeId, next);
 
   const rowLabel = hasRings ? 'Rings' : 'Rows';
   const colLabel = hasRings ? 'Spokes' : kind === 'golden' ? 'Steps' : 'Columns';
@@ -186,8 +187,8 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
             {!editable
               ? 'Cells can be edited on column, modular and bento grids'
               : isEditing
-                ? 'Pick modules on the board, then merge, split or drag a track edge. Esc leaves.'
-                : 'Merge, split and resize modules on the board, or double-click the grid.'}
+                ? 'Drag a track edge to resize (Shift: rest even, Alt: grow grid, double-click: fit). Pick modules to merge (M) or split. Esc leaves.'
+                : 'Merge, split and resize tracks on the board, or double-click a gutter. Double-click an empty cell to type in it.'}
           </span>
         </div>
         <button
@@ -552,7 +553,7 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
             onChange={onCommit((v) => patchStyle({ opacity: v / 100 }))}
           />
         </Row>
-        <Row label="Item placement" hint="How objects you drop into a cell sit inside it">
+        <Row label="Item placement" hint="Where things in a cell sit, text included (typed or dropped in)">
           <div className="gsec-align">
             <AlignMatrix value={align} onChange={setAlign} />
             <div className="gsec-align__fill">

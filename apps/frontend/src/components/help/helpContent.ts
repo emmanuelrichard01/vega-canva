@@ -27,7 +27,7 @@ export const HELP_PAGES: readonly HelpPage[] = [
   { id: 'recipes', label: 'Recipes', lede: 'Small projects that use several tools together. Each one can walk you through it on the board.' },
   { id: 'tools', label: 'Tools', lede: 'Every tool has one key. The ones with a gesture worth knowing show it.' },
   { id: 'shortcuts', label: 'Shortcuts', lede: 'Point at a key to see what it does. Hold a modifier to see its layer.' },
-  { id: 'collab', label: 'Collaboration', lede: 'Sharing, comments and working on one board at the same time.' },
+  { id: 'collab', label: 'Collaboration', lede: 'Live cursors, following, pings, comments, reactions and sharing, all on one board.' },
   { id: 'data', label: 'Data tools', lede: 'Tables, charts, grids and diagrams written as code.' },
   { id: 'new', label: "What's new", lede: 'This release, in brief.' },
 ];
@@ -231,13 +231,60 @@ export function buildShortcutGroups(): ShortcutGroup[] {
     },
     {
       id: 'frames',
-      title: 'Frames and presenting',
+      title: 'Frames and slides',
+      blurb: 'A frame is a page and a slide. Slide view lays the whole deck out in one grid.',
       page: 'tools',
       global: true,
       rows: [
         { keys: 'F', what: 'Frame tool' },
         { keys: 'Mod + Alt + Shift + R', what: 'Resize the selected frames to fit what they hold', short: 'Fit frame' },
+        { keys: 'Mod + Alt + S', what: 'Slide view: every frame as a slide in one grid', short: 'Slide view' },
         { keys: 'Mod + Alt + Enter', what: 'Present the frames as slides, from the selected one', short: 'Present' },
+      ],
+    },
+    {
+      id: 'slideview',
+      title: 'In slide view',
+      blurb: 'Click a slide first. Editors can change the deck; everyone else can look.',
+      page: 'tools',
+      global: false,
+      rows: [
+        { keys: 'Arrows', what: 'Move between slides. Shift extends the selection' },
+        { keys: 'Alt + Arrows', what: 'Move the selected slides one place earlier or later' },
+        { keys: 'Enter', what: 'Go to that slide on the board' },
+        { keys: 'Space', what: 'Add or take away a slide from the selection' },
+        { keys: 'Mod + D', what: 'Duplicate the selected slides' },
+        { keys: 'H', what: 'Skip the selected slides in the show, or bring them back' },
+        { keys: 'Delete / Backspace', what: 'Remove the selected slides' },
+        { keys: 'Esc', what: 'Back to the board' },
+      ],
+    },
+    {
+      id: 'presenting',
+      title: 'While presenting',
+      blurb: 'Each slide can arrive by glide, dissolve, smart move, push, slide or zoom.',
+      page: 'tools',
+      global: false,
+      rows: [
+        { keys: 'Right / Down / Space / Enter', what: 'Next slide' },
+        { keys: 'Left / Up / Backspace', what: 'Previous slide' },
+        { keys: 'Home / End', what: 'First or last slide' },
+        { keys: '3, then Enter', what: 'Jump to a slide by its number' },
+        { keys: 'L', what: 'Laser pointer on or off' },
+        { keys: 'B / W', what: 'Black or white screen. Press again to come back' },
+        { keys: 'Esc', what: 'End the show (first, drop a half-typed number)' },
+      ],
+    },
+    {
+      id: 'export',
+      title: 'Export and copy out',
+      blurb: 'PNG, JPEG, WebP, SVG or PDF. More than one file goes out as a ZIP.',
+      page: 'tools',
+      global: true,
+      rows: [
+        { keys: 'Mod + Shift + E', what: 'Export the selection, or the board', short: 'Export' },
+        { keys: 'Right-click', what: 'Copy as PNG or SVG, straight to the clipboard' },
+        { keys: 'Right-click a frame', what: 'Copy link to frame: a link that opens on that frame' },
       ],
     },
     {
@@ -259,8 +306,8 @@ export function buildShortcutGroups(): ShortcutGroup[] {
     },
     {
       id: 'pen',
-      title: 'The Pen and anchors',
-      blurb: 'P draws Bézier paths. A edits anchors on any path.',
+      title: 'The Pen and point editing',
+      blurb: 'P draws Bézier paths. A, Direct select, edits the points of any path.',
       page: 'tools',
       global: false,
       rows: [
@@ -272,7 +319,9 @@ export function buildShortcutGroups(): ShortcutGroup[] {
         { keys: 'Enter', what: 'Finish as an open path' },
         { keys: 'Esc', what: 'Discard the path' },
         { keys: 'Double-click an anchor', what: 'Switch it between corner and smooth' },
+        { keys: 'Drag across points', what: 'Pick several points. They get a box you can drag, scale or turn' },
         { keys: 'Delete', what: 'Delete the selected anchors and bridge the gap' },
+        { keys: 'Enter / Esc', what: 'Done: the path stays selected and the arrow comes back' },
       ],
     },
     {
@@ -290,6 +339,32 @@ export function buildShortcutGroups(): ShortcutGroup[] {
       ],
     },
     {
+      id: 'voice',
+      title: 'Voice notes',
+      blurb: 'M, then click where the note should sit. These keys work while recording.',
+      page: 'collab',
+      global: false,
+      rows: [
+        { keys: 'Space', what: 'Pause or resume the recording' },
+        { keys: 'Enter', what: 'Keep it as a note' },
+        { keys: 'Esc', what: 'Discard the recording' },
+      ],
+    },
+    {
+      id: 'touch',
+      title: 'Touch and Pencil',
+      blurb: 'One finger belongs to the tool. Two or more move the board.',
+      page: 'start',
+      global: false,
+      rows: [
+        { keys: 'Pinch', what: 'Zoom and pan together' },
+        { keys: 'Press and hold', what: 'The context menu for that spot' },
+        { keys: 'Two-finger tap', what: 'Undo' },
+        { keys: 'Three-finger tap', what: 'Redo' },
+        { keys: 'Pencil or stylus', what: 'Draws and selects. A resting palm is ignored, and a finger pans' },
+      ],
+    },
+    {
       id: 'collab',
       title: 'Working together',
       page: 'collab',
@@ -298,9 +373,8 @@ export function buildShortcutGroups(): ShortcutGroup[] {
         { keys: '/', what: 'Cursor chat: type a line beside your pointer', short: 'Chat' },
         { keys: 'Shift + Alt + click', what: 'Ping: draw everyone’s eye to that spot', short: 'Ping' },
         { keys: 'C', what: 'Comment tool: pin a thread to anything', short: 'Comment' },
-        { keys: 'Click a face', what: 'Follow that person’s view. Click again, or move, to stop' },
-        { keys: 'Mod + Shift + E', what: 'Export the selection, or the board', short: 'Export' },
-        { keys: 'Right-click', what: 'Copy as PNG or SVG, straight to the clipboard' },
+        { keys: 'Click a face', what: 'Follow that person’s view. Click it again, move the board, or press Esc to stop' },
+        { keys: 'Present, then Invite everyone', what: 'Ask the room to follow your slides. Nobody is moved without choosing to' },
       ],
     },
     {
@@ -316,6 +390,24 @@ export function buildShortcutGroups(): ShortcutGroup[] {
         { keys: 'Mod + Alt + G', what: 'Put a frame around the selection', short: 'Frame it' },
         { keys: 'Mod + K', what: 'Find “Diagram from code” to write a flowchart as Mermaid' },
         { keys: 'Mod + Enter', what: 'Add the diagram to the board, from the diagram editor' },
+      ],
+    },
+    {
+      id: 'gridedit',
+      title: 'Editing a grid’s cells',
+      blurb: 'Double-click a grid, or select it and press Enter, to edit its cells.',
+      page: 'data',
+      global: false,
+      rows: [
+        { keys: 'Drag a border', what: 'The two tracks either side trade space' },
+        { keys: 'Shift + Drag a border', what: 'The track before it takes the size, the rest share what is left' },
+        { keys: 'Alt + Drag a border', what: 'Only the track before it changes, and the grid grows' },
+        { keys: 'Mod + Drag a border', what: 'Drag without snapping. Esc cancels' },
+        { keys: 'Double-click a border', what: 'Fit the track before it to its content' },
+        { keys: 'Double-click a cell', what: 'Type straight into it' },
+        { keys: 'M', what: 'Merge the selected cells' },
+        { keys: 'Shift + M', what: 'Split the merged cell' },
+        { keys: 'Esc', what: 'Leave Edit cells' },
       ],
     },
     {
@@ -449,8 +541,8 @@ export function buildKeyMap(groups: readonly ShortcutGroup[], keys: ReadonlySet<
 export function pageForLesson(lesson: Lesson): HelpPageId {
   if (lesson.recipe) return 'recipes';
   if (lesson.trigger.on === 'library') {
-    if (lesson.id === 'diagram-code') return 'data';
-    if (lesson.id === 'offline' || lesson.id === 'cursor-chat') return 'collab';
+    if (lesson.id === 'diagram-code' || lesson.id === 'grid-edit-cells') return 'data';
+    if (lesson.id === 'offline' || lesson.id === 'cursor-chat' || lesson.id.startsWith('collab-')) return 'collab';
     return 'tools';
   }
   const tools = lesson.trigger.tools;
@@ -458,6 +550,20 @@ export function pageForLesson(lesson: Lesson): HelpPageId {
   if (tools.some((t) => t === 'comment' || t === 'audio')) return 'collab';
   return 'tools';
 }
+
+/** The order the Collaboration page tells its story in: see people, follow, ask, point, talk, react, share. */
+export const COLLAB_ORDER: readonly string[] = [
+  'collab-cursors',
+  'collab-follow',
+  'collab-spotlight',
+  'collab-ping',
+  'cursor-chat',
+  'collab-reactions',
+  'comment-thread',
+  'collab-share',
+  'voice-note',
+  'offline',
+];
 
 // ---------------------------------------------------------------- search
 
@@ -491,26 +597,51 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: readonly ReleaseNote[] = [
   {
-    title: 'A new layout with no top bar',
-    body: 'The board now runs edge to edge. Layers and the board’s name live in the left column, properties in the right, and the tools in the dock at the bottom, where Insert ＋ adds pictures, links, icons and media and All tools lists every tool. Fold both columns to pills in their corners when you want the room.',
-    keys: ['Mod + \\', '\\', 'F6'],
+    title: 'Phones and tablets',
+    body: 'The board now works with your fingers. Pinch to zoom and pan, press and hold for the menu, tap with two fingers to undo and three to redo, and draw with a Pencil while your palm rests on the screen. Small screens get a phone layout with bottom sheets.',
   },
   {
-    title: 'New tools',
-    body: 'A Pen for Bézier paths and Direct select for their anchors, tables with formulas, charts that read from a table, layout grids, connectors that route around what is in the way, voice notes, and a library of cloud architecture icons.',
-    keys: ['P', 'A', 'B', 'K', 'G', 'Shift + I'],
+    title: 'A new properties panel',
+    body: 'The right column is wider and speaks one grammar: sections for position, fill, stroke, Effects and Export. Shadows come in drop and inner, with live blur and offset, and they travel with SVG and PNG exports.',
   },
   {
-    title: 'More shapes',
-    body: 'The shape picker carries flowchart, logic and diagram symbols alongside the basics, each with handles for its own proportions, and a hand-drawn sketch style for any of them.',
-    keys: ['R'],
+    title: 'Slides and presenting',
+    body: 'Frames are slides. Slide view shows the deck in one grid, each slide has its own transition (glide, dissolve, smart move, push, slide, zoom), and the show has a laser, a presenter view with notes and a timer, and a PDF with a page per slide.',
+    keys: ['Mod + Alt + S', 'Mod + Alt + Enter', 'L'],
   },
   {
-    title: 'Music while you work',
-    body: 'Six stations of recorded focus music, from ambient to retro, play in the music panel. Spotify sits beside them, and people on the board can see what you are listening to.',
+    title: 'Templates and export',
+    body: 'A catalogue of finished boards, from system architecture to retros to slide decks, with real objects and live charts. Export gives you PNG, JPEG, WebP, SVG or PDF at several sizes at once, as a ZIP, with a link that opens on any frame.',
+    keys: ['Mod + Shift + E'],
   },
   {
-    title: 'Fonts',
-    body: 'Pick from a larger built-in library, upload your own fonts to a board, or use fonts installed on this device. Uploaded fonts travel with SVG exports, and fonts from your device can too when you choose.',
+    title: 'Grids you edit cell by cell',
+    body: 'Drag a border to resize tracks, with Shift to share the rest evenly and Alt to grow the grid. Double-click a cell to type in it, merge and split cells, and arrange a loose selection into a live grid.',
+    keys: ['G', 'Alt + Shift + G', 'Mod + Alt + G'],
+  },
+  {
+    title: 'Vector editing, properly',
+    body: 'Direct select picks points singly or by box and moves, scales or turns them together. Text becomes real outlines, and Union, Subtract, Intersect and Exclude preview before you commit. The line tool turns corners and switches to an arrow.',
+    keys: ['A', 'P', 'L'],
+  },
+  {
+    title: 'Notes, sketch and physics',
+    body: 'Sticky notes get a folded corner, stamps and checklists. Shift+S draws the whole board by hand, and Shift+P starts physics with forces you can hold over the board. Stop and everything returns to where it was.',
+    keys: ['S', 'Shift + S', 'Shift + P'],
+  },
+  {
+    title: 'Working together, more alive',
+    body: 'Named cursors, follow mode in the leader’s colour, an invitation when someone presents, pings, cursor chat, reactions that float up during a show, and comment threads pinned to the work. The Collaboration page shows each one moving.',
+    keys: ['/', 'Shift + Alt + click', 'C'],
+  },
+  {
+    title: 'Voice, music and fonts',
+    body: 'Record a voice note with Space to pause, Enter to keep and Esc to discard. The record beside your avatar opens six stations and Spotify. Pick from a larger font library, upload your own or use fonts installed on this device.',
+    keys: ['M'],
+  },
+  {
+    title: 'Version history',
+    body: 'Scrub through everything that happened on the board and restore any moment. Find it in the command palette.',
+    keys: ['Mod + K'],
   },
 ];

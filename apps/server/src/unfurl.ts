@@ -6,7 +6,7 @@ import {
   type SafeFetchOptions,
   type SafeFetchResult,
 } from './safeFetch';
-import { cleanText, decodeHtml, parseHtmlMeta, sniffImage, textFromEmbedHtml, type SniffedImage } from './unfurlParse';
+import { cleanText, decodeHtml, parseHtmlMeta, sniffImage, sniffUnsupportedImage, textFromEmbedHtml, type SniffedImage } from './unfurlParse';
 
 /**
  * # Why a link preview is answered in two parts
@@ -49,6 +49,8 @@ export interface LinkPreview {
   themeColor?: string;
   author?: string;
   type?: string;
+  /** Why a picture that was asked for could not be kept: a short code the client turns into words. */
+  imageIssue?: string;
 }
 
 export type Fetcher = (url: string, options?: SafeFetchOptions) => Promise<SafeFetchResult>;
@@ -65,6 +67,8 @@ export class UnfurlError extends Error {
 }
 
 const IMAGE_BYTES = 3 * 1024 * 1024;
+/** A link that is itself a picture may be a full-size photo; a card thumbnail never needs to be. */
+export const DIRECT_IMAGE_BYTES = 12 * 1024 * 1024;
 const ICON_BYTES = 256 * 1024;
 const HTML_BYTES = 768 * 1024;
 /** Below this on either side, a "preview image" is a spacer or a tracking pixel. */
@@ -78,6 +82,9 @@ const MIN_IMAGE_SIDE = 80;
  * rather than for its actual legal meaning. 503 is Cloudflare's interstitial,
  * which is a challenge page and not an outage.
  */
+/** Types a site gives a file it has not bothered to name; the bytes are the better witness. */
+const OPAQUE_TYPES = new Set(['', 'application/octet-stream', 'binary/octet-stream', 'application/x-download']);
+
 const RETRY_AS_BROWSER = new Set([403, 429, 451, 503]);
 
 interface OEmbed {
@@ -163,6 +170,10 @@ interface PageText {
   icons: string[];
   /** The link was itself a picture, and these are its bytes — already fetched, not to be fetched twice. */
   inline?: { bytes: Buffer; image: SniffedImage };
+  /** The link is a picture (by type or by its bytes), so it is held to "is it a picture", not to a thumbnail size and shape. */
+  direct?: boolean;
+  /** Why that picture will not be kept, when the bytes already read say so. */
+  issue?: string;
   /** The page the pictures were declared on, after redirects. Sent as their `Referer`. */
   pageUrl: string;
   /** That page's origin. The key the icon is shared under — see `iconCache`. */
@@ -277,10 +288,20 @@ export function createUnfurler(deps: {
    * A refusal is retried as a browser for the same reason the page is — image
    * CDNs sit behind the same bot management the pages do.
    */
-  async function fetchImage(url: string | undefined, kind: 'picture' | 'icon', referer?: string) {
+  async function fetchImage(
+    url: string | undefined,
+    kind: 'picture' | 'icon',
+    referer?: string,
+    opts: { direct?: boolean; issues?: string[] } = {}
+  ) {
     if (!url) return null;
-    const maxBytes = kind === 'icon' ? ICON_BYTES : IMAGE_BYTES;
-    const minSide = kind === 'icon' ? 16 : MIN_IMAGE_SIDE;
+    const maxBytes = opts.direct ? DIRECT_IMAGE_BYTES : kind === 'icon' ? ICON_BYTES : IMAGE_BYTES;
+    const minSide = opts.direct ? 1 : kind === 'icon' ? 16 : MIN_IMAGE_SIDE;
+    const note = (issue: string) => {
+      opts.issues?.push(issue);
+      return null;
+    };
+    const why = (err: unknown) => note(err instanceof FetchRefused && err.code === 'too-large' ? 'too-large' : 'unreachable');
     const accept = 'image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8';
 
     const attempt = (extra: SafeFetchOptions) =>
@@ -298,18 +319,19 @@ export function createUnfurler(deps: {
             // sending `navigate` for a .jpg is a tell.
             headers: { ...BROWSER_HEADERS, 'Sec-Fetch-Dest': 'image', 'Sec-Fetch-Mode': 'no-cors', 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-User': undefined, 'Upgrade-Insecure-Requests': undefined },
           });
-        } catch {
-          return null;
+        } catch (err) {
+          return why(err);
         }
       }
-      if (res.status !== 200) return null;
+      if (res.status !== 200) return note('unreachable');
       const image = sniffImage(res.body);
+      if (!image) return note(sniffUnsupportedImage(res.body) ?? 'not-image');
       // An .ico is a favicon, never a preview picture.
-      if (!image || (image.ext === '.ico' && kind === 'picture')) return null;
-      if (image.width !== undefined && image.height !== undefined && (image.width < minSide || image.height < minSide)) return null;
+      if (image.ext === '.ico' && kind === 'picture') return note('format');
+      if (image.width !== undefined && image.height !== undefined && (image.width < minSide || image.height < minSide)) return note('small');
       return { bytes: res.body, image };
-    } catch {
-      return null;
+    } catch (err) {
+      return why(err);
     }
   }
 
@@ -424,6 +446,8 @@ export function createUnfurler(deps: {
     let images: string[] = [];
     let icons: string[] = [];
     let inline: PageText['inline'];
+    let direct = false;
+    let issue: string | undefined;
 
     if (page && page.status < 400) {
       const type = page.contentType.split(';')[0].trim();
@@ -462,12 +486,21 @@ export function createUnfurler(deps: {
           const found = await fetchJson<OEmbed>(meta.oembed);
           if (found) oembed = found;
         }
-      } else if (type.startsWith('image/')) {
-        // The link *is* a picture: it is its own preview. The bytes are already
-        // here, so they travel with the text rather than being fetched twice.
+      } else if (type.startsWith('image/') || (OPAQUE_TYPES.has(type) && (sniffImage(page.body) || sniffUnsupportedImage(page.body)))) {
+        // The link *is* a picture, by its type or, when the site calls it
+        // octet-stream or nothing, by its bytes: it is its own preview. The
+        // bytes are already here, so they travel with the text rather than
+        // being fetched twice.
         const image = sniffImage(page.body);
-        if (image && !page.truncated) inline = { bytes: page.body, image };
-        images = [finalUrl];
+        const unsupported = image ? null : sniffUnsupportedImage(page.body);
+        direct = true;
+        if (image && image.ext !== '.ico') {
+          if (!page.truncated) inline = { bytes: page.body, image };
+          images = [finalUrl];
+        } else if (image) issue = 'format';
+        else if (unsupported) issue = unsupported;
+        else if (page.truncated) images = [finalUrl]; // unknown head of a big file: the full fetch decides
+        else issue = 'not-image';
         preview.title = cleanText(fileName, 200);
         preview.type = 'image';
       } else if (type === 'application/pdf') {
@@ -505,6 +538,8 @@ export function createUnfurler(deps: {
       // it did not. Four icon fetches for every card was most of the tail.
       icons: [...icons, `${origin}/apple-touch-icon.png`, `${origin}/favicon.ico`],
       inline,
+      direct,
+      issue,
       pageUrl: finalUrl,
       origin,
     };
@@ -544,13 +579,21 @@ export function createUnfurler(deps: {
   async function dress(roomId: string, text: PageText): Promise<LinkPreview> {
     const preview: LinkPreview = { ...text.preview };
 
+    const issues: string[] = [];
     const [picture, icon] = await Promise.all([
-      text.inline ? Promise.resolve(text.inline) : firstImage(text.images, 'picture', text.pageUrl),
+      text.inline
+        ? Promise.resolve(text.inline)
+        : text.direct
+          ? text.images[0]
+            ? fetchImage(text.images[0], 'picture', undefined, { direct: true, issues })
+            : Promise.resolve(null)
+          : firstImage(text.images, 'picture', text.pageUrl),
       siteIcon(text),
     ]);
 
     const kept = await keep(roomId, picture);
     if (kept) Object.assign(preview, { image: kept.url, imageWidth: kept.width, imageHeight: kept.height });
+    else if (text.direct) preview.imageIssue = text.issue ?? issues[0] ?? (picture ? 'quota' : 'unreachable');
     const favicon = await keep(roomId, icon);
     if (favicon) preview.favicon = favicon.url;
 

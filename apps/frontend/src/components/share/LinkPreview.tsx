@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { EyeOff } from 'lucide-react';
 import { roomId as currentRoomId } from '../../engine/document/doc';
 import { setBoardMetadata } from '../../engine/document/mutations';
@@ -7,14 +7,9 @@ import { useRoomPermissions } from '../../hooks/useRoomPermissions';
 import { useStore } from '../../hooks/useStore';
 import { previewsHidden, requestCardFlush, SHARE_PREVIEW_KEY } from '../../engine/share/shareCard';
 import { shareCardImageUrl } from '../../utils/endpoints';
+import { SITE_NAME, unfurlCopy } from '../../engine/share/unfurl';
 import type { RoomRole } from '../../engine/model/permissions';
 import './linkPreview.css';
-
-const ACCESS: Record<RoomRole, string> = {
-  editor: 'Can edit',
-  commenter: 'Can comment',
-  viewer: 'View only',
-};
 
 /**
  * What the link will look like when it is pasted into a chat.
@@ -26,11 +21,16 @@ const ACCESS: Record<RoomRole, string> = {
  * the link goes anywhere, and offers the one decision that belongs to it:
  * whether the name and picture travel with the link at all.
  *
+ * The words are the unfurl's own: `unfurlCopy` (`engine/share/unfurl.ts`) is
+ * what the edge function that answers the unfurlers calls too, so the title,
+ * the description, the cut-off of a long name and the two labelled facts here
+ * are the ones the chat will show — not a paraphrase of them.
+ *
  * Laid out as chat apps lay a rich link out — the picture first, then the
  * site, the title and the description beneath it on one card — so it is
  * recognisable as "the preview" at a glance without imitating any one app's
- * chrome. The facts underneath are this dialog's addition: what is on the
- * board, and what the link lets people do.
+ * chrome. The facts underneath are the pair Slack sets under a card
+ * (`twitter:label1/2`): what is on the board, and what the link lets people do.
  */
 export const LinkPreview: React.FC<{ role: RoomRole }> = ({ role }) => {
   const { metadata } = useRoomState();
@@ -68,19 +68,8 @@ export const LinkPreview: React.FC<{ role: RoomRole }> = ({ role }) => {
   }, [hidden]);
   useEffect(() => setLoaded(false), [image]);
 
-  const contents = total === 0 ? 'An empty board' : `${total.toLocaleString()} object${total === 1 ? '' : 's'} on the board`;
-  const title = hidden ? 'A board on Vega Studio' : `${name} | Vega Studio`;
-  const description = hidden
-    ? 'Open the link to see the board and work on it together, live.'
-    : `${contents}. Open it to ${role === 'viewer' ? 'look around' : 'draw, write and comment together'}, live, on Vega Studio.`;
-
-  const facts = useMemo(
-    () => [
-      ...(hidden ? [] : [{ label: 'On the board', value: contents }]),
-      { label: 'This link', value: ACCESS[role] },
-    ],
-    [hidden, contents, role]
-  );
+  const copy = unfurlCopy({ facts: hidden ? null : { name, total }, access: role });
+  const { title, description, facts } = copy;
 
   const toggle = () => {
     if (!canEdit) return;
@@ -128,7 +117,7 @@ export const LinkPreview: React.FC<{ role: RoomRole }> = ({ role }) => {
         <figcaption className="lp-card__body">
           <span className="lp-card__site">
             <img src="/favicon.svg" alt="" width={14} height={14} />
-            Vega Studio
+            {SITE_NAME}
           </span>
           <span className="lp-card__title">{title}</span>
           <span className="lp-card__desc">{description}</span>

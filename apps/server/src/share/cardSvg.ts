@@ -1,4 +1,4 @@
-import { BRAND_AMBER, BRAND_INK, markSvg } from './brand';
+import { BRAND_AMBER, BRAND_INK, markSvg, STUDIO_WIDTH, studioSvg, wordmarkSvg, wordmarkWidth } from './brand';
 import { describeContents, type BoardCard, type CardItem, type CardPreview } from './cardData';
 import { measure, textPath, wrap, type TextStyle } from './text';
 
@@ -24,45 +24,54 @@ import { measure, textPath, wrap, type TextStyle } from './text';
 export const CARD_W = 1200;
 export const CARD_H = 630;
 
-const GROUND = '#F6F5F2';
-const DOTS = '#D8D5CD';
-const SHEET_DOTS = '#E9E7E1';
+/** Warm paper: the ground every card in the family is drawn on. */
+export const CARD_PAPER = '#FAF7F2';
+const GROUND = CARD_PAPER;
+const DOTS = '#E2DDD2';
+const SHEET_DOTS = '#EEEBE4';
 const INK = BRAND_INK;
 const SECONDARY = '#55555C';
 const TERTIARY = '#8A8A92';
 
-const LEFT = 72;
-const COLUMN = 432;
-const SHEET = { x: 560, y: 56, w: 584, h: 518, r: 22 };
+const LEFT = 80;
+const COLUMN = 468;
+const SHEET = { x: 616, y: 64, w: 520, h: 502, r: 16 };
 
 function round(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
 // ------------------------------------------------------------------ frame
+//
+// The family's shared language — warm paper, the canvas dot grid, one soft
+// elevation, the mark and wordmark top left — so the site's card and every
+// board's card read as one set in a chat thread. `heroCard.ts` draws with
+// these too.
 
-function defs(): string {
+/** The `<defs>` every card uses: the grid, the calm behind the words, the one shadow. */
+export function cardDefs(): string {
   return (
     '<defs>' +
-    `<pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="12" cy="12" r="1.5" fill="${DOTS}"/></pattern>` +
-    `<pattern id="sheetDots" x="${SHEET.x}" y="${SHEET.y}" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="11" cy="11" r="1.3" fill="${SHEET_DOTS}"/></pattern>` +
-    // The ground fades toward the left, so the words sit on quiet paper and
-    // the grid gathers behind the sheet, where the board is.
+    `<pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="12" cy="12" r="1.4" fill="${DOTS}"/></pattern>` +
+    `<pattern id="sheetDots" x="${SHEET.x}" y="${SHEET.y}" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="11" cy="11" r="1.2" fill="${SHEET_DOTS}"/></pattern>` +
+    // The grid falls away behind the words, so they sit on quiet paper and
+    // the dots gather on the right, where the board is.
     '<linearGradient id="calm" x1="0" y1="0" x2="1" y2="0">' +
     `<stop offset="0" stop-color="${GROUND}" stop-opacity="1"/>` +
-    `<stop offset="0.42" stop-color="${GROUND}" stop-opacity="0.92"/>` +
-    `<stop offset="0.7" stop-color="${GROUND}" stop-opacity="0"/>` +
+    `<stop offset="0.4" stop-color="${GROUND}" stop-opacity="0.94"/>` +
+    `<stop offset="0.56" stop-color="${GROUND}" stop-opacity="0"/>` +
     '</linearGradient>' +
-    '<filter id="lift" x="-10%" y="-10%" width="120%" height="130%">' +
-    '<feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#161616" flood-opacity="0.06"/>' +
-    '<feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#161616" flood-opacity="0.11"/>' +
+    // One elevation for everything that sits on the board.
+    '<filter id="lift" x="-20%" y="-20%" width="140%" height="160%">' +
+    '<feDropShadow dx="0" dy="1" stdDeviation="1" flood-color="#2A1F0A" flood-opacity="0.07"/>' +
+    '<feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#2A1F0A" flood-opacity="0.10"/>' +
     '</filter>' +
     `<clipPath id="sheetClip"><rect x="${SHEET.x}" y="${SHEET.y}" width="${SHEET.w}" height="${SHEET.h}" rx="${SHEET.r}"/></clipPath>` +
     '</defs>'
   );
 }
 
-function ground(): string {
+export function cardGround(): string {
   return (
     `<rect width="${CARD_W}" height="${CARD_H}" fill="${GROUND}"/>` +
     `<rect width="${CARD_W}" height="${CARD_H}" fill="url(#dots)"/>` +
@@ -74,39 +83,64 @@ function sheet(inner: string): string {
   return (
     `<rect x="${SHEET.x}" y="${SHEET.y}" width="${SHEET.w}" height="${SHEET.h}" rx="${SHEET.r}" fill="#FFFFFF" filter="url(#lift)"/>` +
     `<g clip-path="url(#sheetClip)"><rect x="${SHEET.x}" y="${SHEET.y}" width="${SHEET.w}" height="${SHEET.h}" fill="url(#sheetDots)"/>${inner}</g>` +
-    `<rect x="${SHEET.x + 0.5}" y="${SHEET.y + 0.5}" width="${SHEET.w - 1}" height="${SHEET.h - 1}" rx="${SHEET.r}" fill="none" stroke="#161616" stroke-opacity="0.08"/>`
+    `<rect x="${SHEET.x + 0.5}" y="${SHEET.y + 0.5}" width="${SHEET.w - 1}" height="${SHEET.h - 1}" rx="${SHEET.r - 0.5}" fill="none" stroke="#161616" stroke-opacity="0.10"/>`
   );
 }
 
-function lockup(): string {
+/**
+ * STUDIO's ink: the brand amber darkened until it reads on paper, 5.8:1
+ * against `CARD_PAPER`, where the logo's own amber is 2:1 and vanishes at
+ * share size.
+ */
+const STUDIO_INK = '#9A4C06';
+
+const lockupCap = (mark: number) => Math.round(mark * 0.42);
+
+/** The lockup's width at a mark size, for centring it. */
+export const lockupWidth = (mark: number) => mark + Math.round(mark * 0.3) + wordmarkWidth(lockupCap(mark));
+
+/**
+ * The mark beside the VEGA / STUDIO wordmark, its top left at `x, y`.
+ *
+ * The brand lockup's proportions — STUDIO tracked out across 60% of VEGA's
+ * width — with STUDIO's cap and stroke raised from the print lockup's hairline,
+ * which disappears once a card is shrunk into a chat thread.
+ */
+export function cardLockup(x: number, y: number, mark = 56): string {
+  const cap = lockupCap(mark);
+  const studioCap = Math.round(cap * 0.36 * 10) / 10;
+  const wordW = wordmarkWidth(cap);
+  const gap = Math.round(cap * 0.3);
+  const stack = cap + gap + studioCap;
+  const top = y + (mark - stack) / 2;
+  const left = x + mark + Math.round(mark * 0.3);
   return (
-    markSvg({ size: 48, x: LEFT, y: 68, radius: 10 }) +
-    textPath('Vega Studio', LEFT + 64, 101, { size: 25, weight: 700, fill: INK, tracking: -0.01 })
+    markSvg({ size: mark, x, y, radius: 12 }) +
+    wordmarkSvg(left, top, cap, INK) +
+    studioSvg(left, top + cap + gap, studioCap, wordW * STUDIO_WIDTH, STUDIO_INK, 0.15)
   );
 }
 
 function eyebrow(label: string, y: number): string {
-  return (
-    `<rect x="${LEFT}" y="${y - 11}" width="10" height="10" rx="2.5" fill="${BRAND_AMBER}"/>` +
-    textPath(label.toUpperCase(), LEFT + 20, y, { size: 15, weight: 600, fill: TERTIARY, tracking: 0.14 })
-  );
+  return textPath(label.toUpperCase(), LEFT, y, { size: 15, weight: 600, fill: TERTIARY, tracking: 0.14 });
 }
 
 /**
  * A title set as large as it can be and still fit.
  *
- * Three sizes, tried largest first: a short name fills the column at 64px, a
- * long one steps down rather than being cut, and only a name that will not fit
- * in three lines at the smallest size is ellipsised.
+ * Three sizes, tried largest first: a short name fills the column at 72px —
+ * the site card's headline size — a long one steps down rather than being
+ * cut, and only a name that will not fit in three lines at the smallest size
+ * is ellipsised.
  */
 function title(text: string, top: number): { svg: string; bottom: number } {
-  for (const size of [64, 54, 46]) {
-    const style: TextStyle = { size, weight: 700, tracking: -0.022 };
+  for (const size of [72, 60, 50]) {
+    const style: TextStyle = { size, weight: 700, tracking: -0.03 };
     const full = wrap(text, COLUMN, style, 99);
-    if (full.length <= 3 || size === 46) {
+    if (full.length <= 3 || size === 50) {
       const lines = full.length <= 3 ? full : wrap(text, COLUMN, style, 3);
       const lineH = size * 1.08;
-      const svg = lines.map((line, i) => textPath(line, LEFT, top + size * 0.92 + i * lineH, { ...style, fill: INK })).join('');
+      const svg = lines.map((line, i) => textPath(line, LEFT - size * 0.04, top + size * 0.92 + i * lineH, { ...style, fill: INK })).join('');
       return { svg, bottom: top + size * 0.92 + (lines.length - 1) * lineH };
     }
   }
@@ -120,14 +154,11 @@ function paragraph(text: string, top: number, style: TextStyle & { fill: string 
 }
 
 function footnote(text: string): string {
-  return (
-    `<rect x="${LEFT}" y="${CARD_H - 104}" width="36" height="4" rx="2" fill="${BRAND_AMBER}"/>` +
-    textPath(text, LEFT, CARD_H - 68, { size: 20, weight: 400, fill: TERTIARY })
-  );
+  return textPath(text, LEFT, CARD_H - 72, { size: 20, weight: 400, fill: TERTIARY });
 }
 
 function svgDocument(body: string): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${CARD_H}" viewBox="0 0 ${CARD_W} ${CARD_H}">${defs()}${body}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${CARD_H}" viewBox="0 0 ${CARD_W} ${CARD_H}">${cardDefs()}${body}</svg>`;
 }
 
 // ---------------------------------------------------------------- preview
@@ -261,7 +292,7 @@ export function sampleBoard(options: { cursors?: boolean; muted?: boolean } = {}
   const oy = SHEET.y;
   const m = options.muted;
   const tone = (color: string, grey: string) => (m ? grey : color);
-  const g = (s: string) => `<g transform="translate(${ox} ${oy})"${m ? ' opacity="0.55"' : ''}>${s}</g>`;
+  const g = (s: string) => `<g transform="translate(${ox} ${oy}) scale(${round(SHEET.w / 584)})"${m ? ' opacity="0.55"' : ''}>${s}</g>`;
 
   const frame =
     (m ? '' : textPath('Launch plan', 34, 42, { size: 13, weight: 600, fill: TERTIARY })) +
@@ -354,8 +385,8 @@ export function boardCardSvg(card: BoardCard): string {
   }
 
   return svgDocument(
-    ground() +
-      lockup() +
+    cardGround() +
+      cardLockup(LEFT, 72) +
       eyebrow('Board', 170) +
       heading.svg +
       meta +
@@ -370,12 +401,13 @@ export function boardCardSvg(card: BoardCard): string {
  * as much as is true — this is a Vega board — and nothing about which one.
  */
 export function privateCardSvg(): string {
+  const privateTitle = title('A board on Vega Studio', 196);
   return svgDocument(
-    ground() +
-      lockup() +
+    cardGround() +
+      cardLockup(LEFT, 72) +
       eyebrow('Board', 170) +
-      title('A board on Vega Studio', 196).svg +
-      paragraph('Open the link to see it, and to work on it together.', 404, { size: 23, weight: 400, fill: SECONDARY }, 2, 32) +
+      privateTitle.svg +
+      paragraph('Open the link to see it, and to work on it together.', privateTitle.bottom + 56, { size: 23, weight: 400, fill: SECONDARY }, 2, 32) +
       footnote('Shared from Vega Studio.') +
       sheet(sampleBoard({ muted: true }))
   );
@@ -385,8 +417,8 @@ export function privateCardSvg(): string {
 export function siteCardSvg(options: { domain?: string } = {}): string {
   const heading = title('Think it through together, on one infinite board.', 150);
   return svgDocument(
-    ground() +
-      lockup() +
+    cardGround() +
+      cardLockup(LEFT, 72) +
       heading.svg +
       paragraph(
         'Diagrams, stickies, code and charts in one real-time whiteboard that keeps working offline.',

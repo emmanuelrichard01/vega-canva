@@ -248,7 +248,7 @@ export const GridRail: SingleRail<GridNode> = ({ node, conditional, tail, tailCo
       id: 'cells',
       controls: 1,
       node: (
-        <RailButton label="Edit cells" hint="Pick, merge and split modules (Enter)" onClick={() => gridEditMode.enter(node.id)}>
+        <RailButton label="Edit cells" hint="Resize tracks, merge and split modules (Enter)" onClick={() => gridEditMode.enter(node.id)}>
           <Grid3x3 size={16} />
         </RailButton>
       ),

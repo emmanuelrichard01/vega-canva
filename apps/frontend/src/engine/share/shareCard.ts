@@ -22,19 +22,50 @@ export function previewsHidden(metadata: Record<string, string> | undefined): bo
   return metadata?.[SHARE_PREVIEW_KEY] === 'off';
 }
 
+/** A frame's label, for the unfurl of a `?frame=` link to it. */
+export interface CardFrame {
+  id: string;
+  name: string;
+  icon?: string;
+}
+
 export interface CardPayload {
   name: string;
   hidden: boolean;
-  preview: BoardPreview | null;
+  preview: (BoardPreview & { frames?: CardFrame[] }) | null;
+}
+
+/** The server keeps at most this many; the rest are left out here, not there. */
+export const MAX_CARD_FRAMES = 64;
+
+/**
+ * The board's named frames, in reading order, for frame links to name.
+ *
+ * Only frames someone titled: an untitled frame has nothing to say in an
+ * unfurl that the board's own name does not already say.
+ */
+export function cardFrames(nodes: Iterable<{ id: string; type: string; hidden?: boolean; title?: unknown; icon?: unknown; y?: number; x?: number }>): CardFrame[] {
+  const out: Array<CardFrame & { x: number; y: number }> = [];
+  for (const n of nodes) {
+    if (n.type !== 'frame' || n.hidden) continue;
+    const name = typeof n.title === 'string' ? n.title.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+    if (!name) continue;
+    const icon = typeof n.icon === 'string' && n.icon.trim() ? n.icon.trim() : undefined;
+    out.push({ id: n.id, name, ...(icon ? { icon } : {}), x: n.x ?? 0, y: n.y ?? 0 });
+  }
+  out.sort((a, b) => a.y - b.y || a.x - b.x);
+  return out.slice(0, MAX_CARD_FRAMES).map(({ x: _x, y: _y, ...f }) => f);
 }
 
 /** Everything the server keeps, and nothing it does not. */
-export function cardPayload(name: string, preview: BoardPreview | null, hidden: boolean): CardPayload {
+export function cardPayload(name: string, preview: BoardPreview | null, hidden: boolean, frames: CardFrame[] = []): CardPayload {
   if (hidden) return { name: '', hidden: true, preview: null };
   return {
     name: name.trim().slice(0, 120),
     hidden: false,
-    preview: preview ? { ratio: preview.ratio, total: preview.total, items: preview.items } : null,
+    preview: preview
+      ? { ratio: preview.ratio, total: preview.total, items: preview.items, ...(frames.length ? { frames } : {}) }
+      : null,
   };
 }
 

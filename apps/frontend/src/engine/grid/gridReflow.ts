@@ -1,4 +1,12 @@
-import { isOpenShape, type AnyNode, type GridNode, type ImageNode, type TextNode } from '../model/schema';
+import {
+  isOpenShape,
+  type AnyNode,
+  type GridNode,
+  type ImageNode,
+  type TextAlign,
+  type TextNode,
+  type VerticalAlign,
+} from '../model/schema';
 import { coverCrop, parkedCell, slotBox, type GridSlot } from './gridSlot';
 import { gridCellsOf } from './gridNode';
 import { paddingOf, type CellAlign, type CellAlignAxis } from './gridLayout';
@@ -72,6 +80,40 @@ interface Box {
 }
 
 const STRETCH: CellAlign = { x: 'stretch', y: 'stretch' };
+
+/**
+ * How text in a module is set, from the grid's Item placement.
+ *
+ * ## One model for text in a cell
+ *
+ * Text in a grid cell is always a real text object adopted into that module
+ * (`gridSlot`). There is no second kind of "cell text" stored on the grid.
+ * Typing into an empty module (double-click it) creates exactly that object,
+ * and dropping a text object on a module adopts it, through the same
+ * `placementPatch`, so the two are indistinguishable in the document: same
+ * box (the module), same `resize: 'fixed'`, same alignment. Both are
+ * selected, styled, moved between modules (drag; dropping on a taken module
+ * of the same grid swaps) and deleted like any text object.
+ *
+ * The box always fills the module, so where the words sit is the text's own
+ * alignment, and the grid decides it the way it decides every other item's
+ * placement: a stretched axis centres (a caption in a box is not a
+ * paragraph), `start`/`end` set it flush. Changing Item placement re-sets
+ * every text in the grid. Aligning one text by hand afterwards is an
+ * override that lasts until it is adopted again or the placement changes.
+ *
+ * Before this, typed text was centred both ways and dropped text kept
+ * whatever alignment it arrived with (usually top-left), and neither listened
+ * to Item placement -- two objects in neighbouring cells of one grid, made by
+ * the two gestures, sat differently for no reason anyone could see.
+ */
+export function textAlignIn(align: CellAlign | undefined): { align: TextAlign; verticalAlign: VerticalAlign } {
+  const a = align ?? STRETCH;
+  return {
+    align: a.x === 'start' ? 'left' : a.x === 'end' ? 'right' : 'center',
+    verticalAlign: a.y === 'start' ? 'top' : a.y === 'end' ? 'bottom' : 'middle',
+  };
+}
 
 /** One axis of a fit: where content of size `own` sits in a run of `extent`. */
 function fitAxis(extent: number, own: number, align: CellAlignAxis): { at: number; size: number } {

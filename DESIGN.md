@@ -849,6 +849,33 @@ then shows a picture that appears nowhere except on the card.
   a bottom toolbar; tablets get overlay panels behind a scrim. The focus ring
   stays neutral on every device.
 
+### Grids: tracks and text in cells
+
+- **Track borders work like a spreadsheet's.** In Edit cells, every border
+  between two tracks can be dragged along its whole length, over the grid as
+  well as in the header strip. The hit band is at least 10px on screen, or the
+  whole gutter when that is wider. Hovering a border shows a resize cursor and
+  lights the border and the two headers it divides. While you drag, the grid
+  re-lays live and the HUD shows both sizes (`C1 170 · C2 75`). Nothing is
+  written until you let go, so a drag is one undo step. A plain drag trades
+  space between the two neighbours. Shift sets the track and splits the rest
+  evenly. Alt grows the grid instead, keeping its top-left corner pinned. Sizes
+  snap to an equal size first, then to multiples of 10. Ctrl or ⌘ turns
+  snapping off, and Escape cancels. Double-click a border to fit the track
+  before it to its content. No track goes below 12px, and a border drag never
+  moves the grid. All edit chrome uses neutral ink, never the accent.
+- **Text in a cell is a text object.** There is one model. Text in a module is
+  an ordinary text object adopted into that slot. Double-clicking an empty
+  module creates one, and dropping a text object on a module adopts it. Both go
+  through the same placement, so they come out identical: the module's box,
+  fixed size, and alignment taken from the grid's Item placement (a stretched
+  axis centres, start and end set the text flush). Changing Item placement
+  re-sets all the text in the grid. Double-clicking a gutter or a filled module
+  opens Edit cells. A selected object in a cell gets a dashed outline around
+  its module, which reads as "this object, in this cell". A picked module in
+  Edit cells is a tinted block with its headers lit, which reads as "this
+  cell".
+
 ## Do's and Don'ts
 
 ### Do:

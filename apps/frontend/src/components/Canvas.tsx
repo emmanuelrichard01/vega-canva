@@ -269,9 +269,16 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     if (!editingPathId) return;
     const onKey = (e: KeyboardEvent) => {
       if (keyBelongsToFocus(e.key)) return;
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' || e.key === 'Enter') {
+        // Finished, as in Figma: the path stays selected and the arrow comes
+        // back. Leaving the direct-select tool armed would reopen the path on
+        // the next render, so the tool goes back with the mode.
         e.stopPropagation();
+        e.preventDefault();
         pathEdit.exit();
+        if (activeTool === 'direct-select') {
+          window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'select' }));
+        }
       } else if ((e.key === 'Backspace' || e.key === 'Delete') && deletePickedAnchor()) {
         e.stopPropagation();
         e.preventDefault();
@@ -298,7 +305,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [editingPathId]);
+  }, [editingPathId, activeTool]);
 
   // When activeTool is direct-select and an eligible object is selected, open it for anchor editing.
   // When leaving direct-select, exit path editing so the transformer returns.

@@ -2,9 +2,9 @@ import type { Express, RequestHandler } from 'express';
 import type { Pool } from 'pg';
 import { verifyShareToken } from '../shareToken';
 import { checkRoomId } from '../rooms';
-import { normalizeCard, normalizePreview, type BoardCard } from './cardData';
+import { findFrame, normalizeCard, normalizePreview, type BoardCard } from './cardData';
 import { boardCardSvg, privateCardSvg } from './cardSvg';
-import { svgToPng } from './raster';
+import { rasterBusy, svgToPng } from './raster';
 import { requireRole, type AccessPolicy } from '../access';
 import { captureError } from '../observability';
 
@@ -12,7 +12,7 @@ import { captureError } from '../observability';
  * Share cards: what a board link looks like when it is pasted somewhere.
  *
  *   PUT  /rooms/:roomId/card                 a board describes itself
- *   GET  /cards/room/:roomId                 what an unfurl should say (JSON)
+ *   GET  /cards/room/:roomId[?frame=<id>]    what an unfurl should say (JSON)
  *   GET  /cards/room/:roomId/image.png       and show (1200×630)
  *   GET  /cards/invite/:token[/image.png]    the same, for a role-limited invite
  *
@@ -139,9 +139,13 @@ export function registerShareRoutes(app: Express, deps: Deps) {
         const stored = await readCard(pool, target.roomId);
         const facts = describe(stored?.card ?? null);
         if (!stored || !facts) return res.json({ found: false });
+        // A frame link names its frame. Looked up only on a card that is
+        // showing its name, so a hidden board's frames say nothing either.
+        const frame = findFrame(stored.card.preview, req.query.frame);
         res.json({
           found: true,
           ...facts,
+          ...(frame ? { frame: { name: frame.name, ...(frame.icon ? { icon: frame.icon } : {}) } } : {}),
           ...(target.role ? { role: target.role } : {}),
           updatedAt: new Date(stored.version).toISOString(),
           image: `${deps.apiBase(req)}${imagePath(req)}?v=${stored.version.toString(36)}`,
@@ -170,6 +174,17 @@ export function registerShareRoutes(app: Express, deps: Deps) {
         }
         const key = `${roomId}:${stored.version}`;
         let png = pngCache.get(key);
+        if (!png && rasterBusy()) {
+          // Too much drawing already queued: the generic card now, briefly
+          // cached, and the real one on the next fetch.
+          res.setHeader('Cache-Control', 'public, max-age=30');
+          res.setHeader('Retry-After', '5');
+          privatePng ??= svgToPng(privateCardSvg()).catch((err) => {
+            privatePng = null;
+            throw err;
+          });
+          return res.send(await privatePng);
+        }
         if (!png) {
           png = await svgToPng(boardCardSvg(stored.card));
           remember(key, png);

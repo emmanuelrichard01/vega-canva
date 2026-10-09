@@ -52,9 +52,14 @@ function countingStorage(written: string[]) {
   };
 }
 
-async function start(overrides: Partial<Config> = {}, mediaRows: string[] = []): Promise<Harness> {
+async function start(
+  overrides: Partial<Config> = {},
+  mediaRows: string[] = [],
+  extra: Array<[RegExp, (params: unknown[]) => any]> = []
+): Promise<Harness> {
   const config = testConfig(overrides);
   const pool = fakePool([
+    ...extra,
     [/SUM\(size_bytes\)/, () => ({ rows: [{ total: '0' }] })],
     [/SELECT 1 FROM media_refs/, (p) => ({ rows: mediaRows.includes(String(p[1])) ? [{}] : [] })],
     [/FROM room_updates/, () => ({ rows: [] })],
@@ -185,6 +190,40 @@ describe('media proxy', () => {
     expect(res.headers.get('set-cookie')).toBeNull();
   });
 
+  it('answers a byte range with 206, which Safari needs before it will play audio', async () => {
+    const h = await start({}, [`${ROOM}/note.webm`]);
+    h.s3.send.mockResolvedValueOnce({
+      Body: Readable.from([Buffer.from('OP')]),
+      ContentLength: 2,
+      ContentRange: 'bytes 0-1/4472',
+    });
+    const res = await fetch(`${h.base}/rooms/${ROOM}/media/note.webm`, { headers: { Range: 'bytes=0-1' } });
+    expect(res.status).toBe(206);
+    expect(await res.text()).toBe('OP');
+    expect(res.headers.get('content-range')).toBe('bytes 0-1/4472');
+    expect(res.headers.get('accept-ranges')).toBe('bytes');
+    expect(res.headers.get('content-type')).toBe('audio/webm');
+    const command = h.s3.send.mock.calls[0][0] as { input: { Range?: string } };
+    expect(command.input.Range).toBe('bytes=0-1');
+  });
+
+  it('advertises ranges on a whole-file answer and drops a malformed Range header', async () => {
+    const h = await start({}, [`${ROOM}/note.mp4`]);
+    h.s3.send.mockResolvedValueOnce({ Body: Readable.from([Buffer.from('AAC')]), ContentLength: 3 });
+    const res = await fetch(`${h.base}/rooms/${ROOM}/media/note.mp4`, { headers: { Range: 'bytes=0-1,4-5' } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('accept-ranges')).toBe('bytes');
+    const command = h.s3.send.mock.calls[0][0] as { input: { Range?: string } };
+    expect(command.input.Range).toBeUndefined();
+  });
+
+  it('answers 416 when storage refuses the range', async () => {
+    const h = await start({}, [`${ROOM}/note.webm`]);
+    h.s3.send.mockRejectedValueOnce(Object.assign(new Error('bad range'), { name: 'InvalidRange' }));
+    const res = await fetch(`${h.base}/rooms/${ROOM}/media/note.webm`, { headers: { Range: 'bytes=9999-' } });
+    expect(res.status).toBe(416);
+  });
+
   it('survives an object store stream that fails mid-download', async () => {
     const h = await start({}, [`${ROOM}/pic.png`]);
     const failing = new Readable({
@@ -219,6 +258,51 @@ describe('history and cards under enforced invites', () => {
     });
     expect(put.status).toBe(403);
   });
+});
+
+describe('share cards', () => {
+  const updated = new Date('2026-10-01T12:00:00Z');
+  const version = updated.getTime().toString(36);
+  const row = (card: { name: string; hidden: boolean; preview: unknown }) =>
+    [/FROM room_cards/, () => ({ rows: [{ ...card, updated_at: updated }] })] as [RegExp, () => any];
+  const preview = {
+    ratio: 1.5,
+    total: 12,
+    items: [{ x: 0, y: 0, w: 0.4, h: 0.4, c: '#FFE9A8' }],
+    frames: [{ id: 'frameA1', name: 'Sprint goals', icon: '🎯' }],
+  };
+
+  it('describes a board, and names the frame a frame link points at', async () => {
+    const h = await start({}, [], [row({ name: 'Q3 retro', hidden: false, preview })]);
+    const res = await fetch(`${h.base}/cards/room/${ROOM}?frame=frameA1`);
+    expect(res.headers.get('cache-control')).toBe('public, max-age=60, s-maxage=300');
+    const body = await res.json();
+    expect(body).toMatchObject({ found: true, name: 'Q3 retro', total: 12, frame: { name: 'Sprint goals', icon: '🎯' } });
+    expect(body.image).toContain(`/cards/room/${ROOM}/image.png?v=${version}`);
+
+    const plain = await (await fetch(`${h.base}/cards/room/${ROOM}?frame=nope`)).json();
+    expect(plain.frame).toBeUndefined();
+  });
+
+  it('says nothing about a board that hid its preview, frames included', async () => {
+    const h = await start({}, [], [row({ name: '', hidden: true, preview })]);
+    const res = await fetch(`${h.base}/cards/room/${ROOM}?frame=frameA1`);
+    expect(await res.json()).toEqual({ found: false });
+  });
+
+  it('serves the picture as an immutable PNG at its versioned URL', async () => {
+    const h = await start({}, [], [row({ name: 'Q3 retro', hidden: false, preview })]);
+    const current = await fetch(`${h.base}/cards/room/${ROOM}/image.png?v=${version}`);
+    expect(current.status).toBe(200);
+    expect(current.headers.get('content-type')).toBe('image/png');
+    expect(current.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+    expect(current.headers.get('x-content-type-options')).toBe('nosniff');
+    const png = new Uint8Array(await current.arrayBuffer());
+    expect([...png.slice(1, 4)].map((c) => String.fromCharCode(c)).join('')).toBe('PNG');
+
+    const stale = await fetch(`${h.base}/cards/room/${ROOM}/image.png?v=old`);
+    expect(stale.headers.get('cache-control')).toBe('public, max-age=300');
+  }, 30_000);
 });
 
 describe('admin and health', () => {

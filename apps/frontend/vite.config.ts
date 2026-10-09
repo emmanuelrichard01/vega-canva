@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import { pageHtml, PUBLIC_PAGES, sitemapXml } from './src/engine/share/sitePages.ts';
 
 /**
  * Where the site lives, for every absolute URL a crawler reads.
@@ -39,14 +40,34 @@ function siteMeta(siteUrl: string): Plugin {
       this.emitFile({
         type: 'asset',
         fileName: 'sitemap.xml',
-        // One public page. Boards are private by address, and the dashboard's
-        // two views are the same URL.
-        source:
-          '<?xml version="1.0" encoding="UTF-8"?>\n' +
-          '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
-          `  <url><loc>${site}/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>\n` +
-          '</urlset>\n',
+        // The public pages only. Boards are private by address.
+        source: sitemapXml(site),
       });
+    },
+  };
+}
+
+/**
+ * Each public page as its own copy of the built `index.html`, with its own
+ * title, description, canonical and card (`src/engine/share/sitePages.ts`).
+ * After the HTML plugin, so the copy carries the real script and style tags.
+ */
+function publicPages(siteUrl: string): Plugin {
+  const site = siteUrl.replace(/\/+$/, '');
+  return {
+    name: 'vega-public-pages',
+    apply: 'build',
+    enforce: 'post',
+    generateBundle(_options, bundle) {
+      const index = bundle['index.html'];
+      if (!index || index.type !== 'asset') {
+        this.warn('index.html was not in the bundle; public pages not written');
+        return;
+      }
+      const html = String(index.source);
+      for (const page of PUBLIC_PAGES) {
+        this.emitFile({ type: 'asset', fileName: `${page.path.slice(1)}.html`, source: pageHtml(html, site, page) });
+      }
     },
   };
 }
@@ -89,7 +110,11 @@ const inSource = (pattern: RegExp) => (id: string) => pattern.test(posixId(id));
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), siteMeta(loadEnv(mode, process.cwd(), 'VITE_').VITE_SITE_URL || DEFAULT_SITE_URL)],
+  plugins: [
+    react(),
+    siteMeta(loadEnv(mode, process.cwd(), 'VITE_').VITE_SITE_URL || DEFAULT_SITE_URL),
+    publicPages(loadEnv(mode, process.cwd(), 'VITE_').VITE_SITE_URL || DEFAULT_SITE_URL),
+  ],
   // The loopback IP rather than `localhost`: Spotify accepts only 127.0.0.1 as a
   // local redirect, and sign-in must start on the origin it returns to.
   // `npm run dev -- --host` still serves the LAN.

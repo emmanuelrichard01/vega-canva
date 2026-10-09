@@ -28,16 +28,29 @@ export type Weight = 400 | 600 | 700;
 const SUBSETS = ['latin', 'latin-ext', 'cyrillic'] as const;
 const FONT_DIR = path.join(__dirname, '..', '..', 'assets', 'fonts');
 
-const loaded = new Map<Weight, fontkit.Font[]>();
+const loaded = new Map<string, fontkit.Font[]>();
 
-function fontsAt(weight: Weight): fontkit.Font[] {
-  let fonts = loaded.get(weight);
+/**
+ * `hand` is Caveat, the face the app's sketch mode letters in, for the site's
+ * own illustrated card. Latin only, which is all that card ever says; a board's
+ * name is always set in Inter.
+ */
+export type Family = 'inter' | 'hand';
+
+function open(file: string): fontkit.Font {
+  const opened = fontkit.create(fs.readFileSync(path.join(FONT_DIR, file)));
+  return ('fonts' in opened ? opened.fonts[0] : opened) as fontkit.Font;
+}
+
+function fontsAt(weight: Weight, family: Family = 'inter'): fontkit.Font[] {
+  const key = `${family}:${weight}`;
+  let fonts = loaded.get(key);
   if (!fonts) {
-    fonts = SUBSETS.map((subset) => {
-      const opened = fontkit.create(fs.readFileSync(path.join(FONT_DIR, `Inter-${weight}-${subset}.woff`)));
-      return ('fonts' in opened ? opened.fonts[0] : opened) as fontkit.Font;
-    });
-    loaded.set(weight, fonts);
+    fonts =
+      family === 'hand'
+        ? [open(`caveat-latin-${weight}-normal.woff`)]
+        : SUBSETS.map((subset) => open(`Inter-${weight}-${subset}.woff`));
+    loaded.set(key, fonts);
   }
   return fonts;
 }
@@ -45,6 +58,7 @@ function fontsAt(weight: Weight): fontkit.Font[] {
 export interface TextStyle {
   size: number;
   weight?: Weight;
+  family?: Family;
   /** In em, like CSS `letter-spacing: 0.02em`. */
   tracking?: number;
 }
@@ -64,7 +78,7 @@ interface Placed {
  * diacritic in a Latin word) that losing one kerning pair there is invisible.
  */
 function layout(text: string, style: TextStyle): { placed: Placed[]; width: number } {
-  const fonts = fontsAt(style.weight ?? 400);
+  const fonts = fontsAt(style.weight ?? 400, style.family);
   const tracking = (style.tracking ?? 0) * style.size;
   const runs: Array<{ font: fontkit.Font; text: string }> = [];
   for (const ch of text) {

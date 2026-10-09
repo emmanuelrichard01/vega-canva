@@ -1044,7 +1044,11 @@ function normalizePathGeometry(raw: any): PathGeometry {
     // A compound path with one contour is a plain path wearing a costume, and
     // one with none is nothing at all. Collapsing here means the rest of the
     // app never has to ask whether a `compound` is really compound.
-    if (contours.length > 1) return { kind: 'compound', subpaths: contours };
+    if (contours.length > 1) {
+      return raw?.geometry?.fillRule === 'nonzero'
+        ? { kind: 'compound', subpaths: contours, fillRule: 'nonzero' }
+        : { kind: 'compound', subpaths: contours };
+    }
     if (contours.length === 1) return contours[0];
   }
 

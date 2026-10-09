@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { cleanName, describeContents, normalizeCard, normalizePreview, MAX_CARD_ITEMS, MAX_NAME } from './cardData';
+import { cleanName, describeContents, findFrame, normalizeCard, normalizePreview, MAX_CARD_ITEMS, MAX_NAME } from './cardData';
 import { boardCardSvg, polygonPoints, previewArt, privateCardSvg, siteCardSvg } from './cardSvg';
 import { measure, wrap } from './text';
 import { MARK_SPARKLE, MARK_V, markSvg } from './brand';
+import { heroCardSvg } from './heroCard';
 
 describe('normalizeCard', () => {
   it('rebuilds a card field by field and drops anything unknown', () => {
@@ -75,6 +76,52 @@ describe('normalizeCard', () => {
     expect(describeContents(null)).toBe('An empty board, ready to draw on');
     expect(describeContents({ ratio: 1, total: 1, items: [] })).toBe('1 object on the board');
     expect(describeContents({ ratio: 1, total: 1280, items: [] })).toBe('1,280 objects on the board');
+  });
+});
+
+describe('card frames', () => {
+  const base = { ratio: 1, total: 1, items: [] };
+
+  it('keeps frame ids, names and emoji, and drops anything else', () => {
+    const p = normalizePreview({
+      ...base,
+      frames: [
+        { id: 'f1', name: '  Sprint‮ goals ', icon: '🎯', extra: 'x' },
+        { id: 'bad id!', name: 'nope' },
+        { id: 'f2', name: '' },
+        { id: 'f3', name: 'Words', icon: '<b>' },
+        { id: 'f4', name: 'Family', icon: '👩‍👩‍👧' },
+        { id: 'f1', name: 'duplicate' },
+      ],
+    });
+    expect(p?.frames).toEqual([
+      { id: 'f1', name: 'Sprint goals', icon: '🎯' },
+      { id: 'f3', name: 'Words' },
+      { id: 'f4', name: 'Family', icon: '👩‍👩‍👧' },
+    ]);
+    expect(findFrame(p, 'f3')?.name).toBe('Words');
+    expect(findFrame(p, 'missing')).toBeNull();
+    expect(findFrame(p, 42)).toBeNull();
+  });
+
+  it('caps frame names and counts', () => {
+    const many = Array.from({ length: 100 }, (_, i) => ({ id: `f${i}`, name: 'x'.repeat(200) }));
+    const p = normalizePreview({ ...base, frames: many });
+    expect(p?.frames).toHaveLength(64);
+    expect(p?.frames?.[0].name).toHaveLength(80);
+  });
+
+  it('drops frames with the rest of a hidden card', () => {
+    expect(normalizeCard({ name: 'x', hidden: true, preview: { ...base, frames: [{ id: 'f1', name: 'a' }] } })?.preview).toBeNull();
+  });
+});
+
+describe('hero card', () => {
+  it('is deterministic, outlined and the card size', () => {
+    const svg = heroCardSvg();
+    expect(heroCardSvg()).toBe(svg);
+    expect(svg).toContain('width="1200" height="630"');
+    expect(svg).not.toContain('<text');
   });
 });
 

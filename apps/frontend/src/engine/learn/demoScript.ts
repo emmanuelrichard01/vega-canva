@@ -119,6 +119,8 @@ export interface DemoScript {
   duration: number;
   /** The tool whose badge the ghost pointer wears. */
   tool?: string;
+  /** False for a scene with no single pointer (fingers, remote people). */
+  ghost?: false;
   cursor: readonly CursorKey[];
   keys: readonly KeyBeat[];
   /** Exactly three: what the reduced-motion storyboard shows. */
@@ -253,7 +255,21 @@ export type ScriptedId =
   | 'chain'
   | 'present'
   | 'select'
-  | 'cursorchat';
+  | 'cursorchat'
+  | 'slides'
+  | 'gridedit'
+  | 'anchors'
+  | 'sketch'
+  | 'shadow'
+  | 'touch'
+  | 'voice'
+  | 'cursors'
+  | 'follow'
+  | 'spotlight'
+  | 'ping'
+  | 'reactions'
+  | 'thread'
+  | 'share';
 
 /** Times other parts of the scene need to agree with the script on. */
 export const TIMES = {
@@ -267,6 +283,18 @@ export const TIMES = {
   present: { startAt: 800, nextAt: 2500, exitAt: 3700, fitAt: 5500 },
   select: { clickAt: [900, 1900], measureAt: 4000, similarAt: 6300 },
   cursorchat: { openAt: 700, typeAt: 1500, typeEnd: 3200 },
+  slides: { gridEnd: 2700, pickAt: 1700, pushAt: 3300, pushEnd: 4200, laserAt: 5000 },
+  gridedit: { dragAt: 900, dragEnd: 2100, altAt: 3500, altEnd: 4700, dblAt: 5800 },
+  anchors: { marqueeAt: 900, marqueeEnd: 2000, scaleAt: 3700, scaleEnd: 5000 },
+  sketch: { onAt: 1900, offAt: 4600 },
+  shadow: { onAt: 1400, blurAt: 2800, blurEnd: 4200, innerAt: 5200 },
+  voice: { placeAt: 1300, pauseAt: 3400, keepAt: 4700 },
+  follow: { clickAt: 1500, escAt: 5900 },
+  spotlight: { goAt: 3300 },
+  ping: { pingAt: 2000 },
+  reactions: { taps: [1300, 2900, 4400] },
+  thread: { pinAt: 1500, sendAt: 3500, resolveAt: 5800 },
+  share: { roleAt: 1900, copyAt: 4300 },
 } as const;
 
 const SNAP_T = TIMES.snap;
@@ -279,6 +307,50 @@ const CN_T = TIMES.chain;
 const PR_T = TIMES.present;
 const SE_T = TIMES.select;
 const CC_T = TIMES.cursorchat;
+
+const SL_T = TIMES.slides;
+const GE_T = TIMES.gridedit;
+const AN_T = TIMES.anchors;
+const SK_T = TIMES.sketch;
+const SH_T = TIMES.shadow;
+const VO_T = TIMES.voice;
+const FO_T = TIMES.follow;
+const SP_T = TIMES.spotlight;
+const PI_T = TIMES.ping;
+const RE_T = TIMES.reactions;
+const TH_T = TIMES.thread;
+const SA_T = TIMES.share;
+
+/**
+ * Where the new scenes put things the pointer has to find, shared with the
+ * drawing so the hand lands on what it is meant to touch.
+ */
+export const GE = { edges: [20, 70, 120, 170], rows: [18, 62, 108], drag1: 98, drag2: 152 } as const;
+export const AN = {
+  /** The five anchors of the path, in order. */
+  points: [[60, 92], [84, 34], [128, 24], [160, 56], [142, 100]] as readonly Pt[],
+  /** Which of them the marquee picks. */
+  picked: [1, 2, 3] as readonly number[],
+  /** Marquee: x0, y0, x1, y1. */
+  marquee: [74, 14, 174, 70] as const,
+  /** The point box's bottom-right handle, then how far the drag takes it. */
+  corner: [168, 64] as Pt,
+  box: { x: 76, y: 16, w: 92, h: 48 },
+  drag: [22, 14] as Pt,
+} as const;
+export const SH = {
+  toggle: [182, 34] as Pt,
+  /** The blur slider: start x, y, end x. */
+  slider: [160, 62, 200] as const,
+  inner: [196, 90] as Pt,
+} as const;
+export const VO = { spot: [96, 60] as Pt } as const;
+export const FO = { face: [188, 16] as Pt } as const;
+export const SP = { go: [178, 26] as Pt } as const;
+export const PI = { spot: [96, 62] as Pt } as const;
+export const RE = { btn: (i: number): Pt => [62 + i * 20, 112] } as const;
+export const TH = { pin: [96, 40] as Pt, send: [198, 88] as Pt, resolve: [198, 32] as Pt } as const;
+export const SA = { role: [112, 65] as Pt, copy: [158, 90] as Pt } as const;
 
 const snapStart = snapPoint(0);
 const snapEnd = snapPoint(1);
@@ -543,6 +615,290 @@ export const SCRIPTS: Record<ScriptedId, DemoScript> = {
       { at: 800, caption: `Press ${chord('cursorChat')} with the pointer over the board` },
       { at: 2400, caption: 'Type where your pointer is' },
       { at: 3600, caption: 'Everyone sees it live, then it fades' },
+    ],
+  },
+  slides: {
+    duration: 7600,
+    cursor: [
+      at([196, 110], { at: 0 }),
+      at([150, 46], { at: 900, ease: 'settle' }),
+      at([150, 46], { at: SL_T.pickAt, down: true }),
+      at([150, 46], { at: SL_T.pickAt + 160 }),
+      at([128, 78], { at: 3000, ease: 'settle' }),
+      at([128, 78], { at: 4600 }),
+      at([66, 62], { at: 4900, ease: 'settle' }),
+      at([66, 62], { at: SL_T.laserAt }),
+      at([150, 48], { at: 6000, ease: 'standard' }),
+      at([166, 88], { at: 6800, ease: 'standard' }),
+      at([166, 88], { at: 7600 }),
+    ],
+    keys: [
+      { at: 250, until: 1800, caps: [...caps('slideView')] },
+      { at: 4700, until: 7100, caps: [...caps('laser')] },
+    ],
+    frames: [
+      { at: 1500, caption: `Press ${chord('slideView')} to see every frame as a slide` },
+      { at: 3700, caption: 'Each slide has its own transition: push, dissolve, zoom or glide' },
+      { at: 6200, caption: `Press ${chord('laser')} to point with a laser while presenting` },
+    ],
+  },
+
+  gridedit: {
+    duration: 7600,
+    tool: 'grid',
+    cursor: [
+      at([196, 108], { at: 0 }),
+      at([GE.edges[1], 66], { at: 600, ease: 'settle' }),
+      at([GE.edges[1], 66], { at: GE_T.dragAt, down: true, ease: 'standard' }),
+      at([GE.drag1, 66], { at: GE_T.dragEnd, down: true }),
+      at([GE.drag1, 66], { at: 2900 }),
+      at([GE.edges[2], 66], { at: 3300, ease: 'settle' }),
+      at([GE.edges[2], 66], { at: GE_T.altAt, down: true, ease: 'standard' }),
+      at([GE.drag2, 66], { at: GE_T.altEnd, down: true }),
+      at([GE.drag2, 66], { at: 5000 }),
+      at([46, 88], { at: 5500, ease: 'settle' }),
+      at([46, 88], { at: GE_T.dblAt }),
+      at([46, 88], { at: 7600 }),
+    ],
+    keys: [{ at: 3200, until: 5000, caps: ['Alt'] }],
+    frames: [
+      { at: 2300, caption: 'Drag a border: the two tracks trade space' },
+      { at: 4800, caption: 'Hold Alt: only that track changes and the grid grows' },
+      { at: 6900, caption: 'Double-click a cell to type in it' },
+    ],
+  },
+
+  anchors: {
+    duration: 7200,
+    tool: 'direct-select',
+    cursor: [
+      at([196, 108], { at: 0 }),
+      at([AN.marquee[0], AN.marquee[1]], { at: 700, ease: 'settle' }),
+      at([AN.marquee[0], AN.marquee[1]], { at: AN_T.marqueeAt, down: true, ease: 'standard' }),
+      at([AN.marquee[2], AN.marquee[3]], { at: AN_T.marqueeEnd, down: true }),
+      at([AN.marquee[2], AN.marquee[3]], { at: 2600 }),
+      at([AN.corner[0], AN.corner[1]], { at: 3300, ease: 'settle' }),
+      at([AN.corner[0], AN.corner[1]], { at: AN_T.scaleAt, down: true, ease: 'standard' }),
+      at([AN.corner[0] + 22, AN.corner[1] + 14], { at: AN_T.scaleEnd, down: true }),
+      at([AN.corner[0] + 22, AN.corner[1] + 14], { at: 6200 }),
+      at([AN.corner[0] + 22, AN.corner[1] + 14], { at: 7200 }),
+    ],
+    keys: [],
+    frames: [
+      { at: 1500, caption: 'Drag across points to pick several' },
+      { at: 3000, caption: 'The picked points get a box of their own' },
+      { at: 5500, caption: 'Drag the box to scale or turn them together' },
+    ],
+  },
+
+  sketch: {
+    duration: 6400,
+    ghost: false,
+    cursor: [at([112, 108], { at: 0 }), at([112, 108], { at: 6400 })],
+    keys: [
+      { at: SK_T.onAt - 300, until: SK_T.onAt + 1300, caps: [...caps('sketchBoard')] },
+      { at: SK_T.offAt - 300, until: SK_T.offAt + 1300, caps: [...caps('sketchBoard')] },
+    ],
+    frames: [
+      { at: 700, caption: 'A board of clean lines' },
+      { at: 2800, caption: `Press ${chord('sketchBoard')} and it is all drawn by hand` },
+      { at: 5800, caption: 'Press it again for clean lines' },
+    ],
+  },
+
+  shadow: {
+    duration: 7200,
+    cursor: [
+      at([196, 112], { at: 0 }),
+      at([SH.toggle[0], SH.toggle[1]], { at: 700, ease: 'settle' }),
+      at([SH.toggle[0], SH.toggle[1]], { at: SH_T.onAt, down: true }),
+      at([SH.toggle[0], SH.toggle[1]], { at: SH_T.onAt + 160 }),
+      at([SH.slider[0], SH.slider[1]], { at: 2400, ease: 'settle' }),
+      at([SH.slider[0], SH.slider[1]], { at: SH_T.blurAt, down: true, ease: 'standard' }),
+      at([SH.slider[2], SH.slider[1]], { at: SH_T.blurEnd, down: true }),
+      at([SH.slider[2], SH.slider[1]], { at: 4500 }),
+      at([SH.inner[0], SH.inner[1]], { at: 4900, ease: 'settle' }),
+      at([SH.inner[0], SH.inner[1]], { at: SH_T.innerAt, down: true }),
+      at([SH.inner[0], SH.inner[1]], { at: SH_T.innerAt + 160 }),
+      at([SH.inner[0], SH.inner[1]], { at: 7200 }),
+    ],
+    keys: [],
+    frames: [
+      { at: 800, caption: 'A flat card' },
+      { at: 4300, caption: 'Switch on a drop shadow and set how soft it is' },
+      { at: 6500, caption: 'Choose inner for a shadow that sits inside' },
+    ],
+  },
+
+  touch: {
+    duration: 8000,
+    ghost: false,
+    cursor: [at([112, 64], { at: 0 }), at([112, 64], { at: 8000 })],
+    keys: [],
+    frames: [
+      { at: 1900, caption: 'Pinch with two fingers to zoom and pan' },
+      { at: 4200, caption: 'Press and hold for the context menu' },
+      { at: 7000, caption: 'Tap with two fingers to undo, three to redo' },
+    ],
+  },
+
+  voice: {
+    duration: 7200,
+    tool: 'audio',
+    cursor: [
+      at([196, 108], { at: 0 }),
+      at([VO.spot[0], VO.spot[1]], { at: 600, ease: 'settle' }),
+      at([VO.spot[0], VO.spot[1]], { at: VO_T.placeAt, down: true }),
+      at([VO.spot[0], VO.spot[1]], { at: VO_T.placeAt + 160 }),
+      at([VO.spot[0], VO.spot[1]], { at: 7200 }),
+    ],
+    keys: [
+      { at: VO_T.pauseAt - 200, until: VO_T.pauseAt + 1100, caps: [...caps('voicePause')] },
+      { at: VO_T.keepAt - 200, until: VO_T.keepAt + 1400, caps: [...caps('voiceKeep')] },
+    ],
+    frames: [
+      { at: 1900, caption: 'Click where it should sit, then talk' },
+      { at: 3700, caption: 'Space pauses. Enter keeps it. Esc throws it away' },
+      { at: 6300, caption: 'It lands as a note with a waveform you can play' },
+    ],
+  },
+
+  cursors: {
+    duration: 7200,
+    cursor: [
+      at([40, 100], { at: 0 }),
+      at([60, 80], { at: 800, ease: 'settle' }),
+      at([100, 100], { at: 3000, ease: 'standard' }),
+      at([84, 70], { at: 5400, ease: 'standard' }),
+      at([84, 70], { at: 7200 }),
+    ],
+    keys: [],
+    frames: [
+      { at: 1300, caption: 'Everyone’s pointer is live on the board' },
+      { at: 3400, caption: 'A name tag says whose it is' },
+      { at: 5600, caption: 'What someone selects or drags shows in their colour' },
+    ],
+  },
+
+  follow: {
+    duration: 7600,
+    cursor: [
+      at([196, 108], { at: 0 }),
+      at([FO.face[0], FO.face[1]], { at: 700, ease: 'settle' }),
+      at([FO.face[0], FO.face[1]], { at: FO_T.clickAt, down: true }),
+      at([FO.face[0], FO.face[1]], { at: FO_T.clickAt + 160 }),
+      at([120, 76], { at: 2900, ease: 'settle' }),
+      at([120, 76], { at: 6000 }),
+      at([150, 84], { at: 6300, ease: 'settle' }),
+      at([150, 84], { at: 7600 }),
+    ],
+    keys: [{ at: FO_T.escAt - 100, until: FO_T.escAt + 1300, caps: ['Esc'] }],
+    frames: [
+      { at: 1300, caption: 'Click someone’s face to follow their view' },
+      { at: 3900, caption: 'Your board moves with them, inside their colour' },
+      { at: 7000, caption: 'Move, click it again or press Esc to stop' },
+    ],
+  },
+
+  spotlight: {
+    duration: 7600,
+    cursor: [
+      at([196, 108], { at: 0 }),
+      at([SP.go[0], SP.go[1]], { at: 2700, ease: 'settle' }),
+      at([SP.go[0], SP.go[1]], { at: SP_T.goAt, down: true }),
+      at([SP.go[0], SP.go[1]], { at: SP_T.goAt + 160 }),
+      at([120, 100], { at: 4500, ease: 'settle' }),
+      at([120, 100], { at: 7600 }),
+    ],
+    keys: [],
+    frames: [
+      { at: 800, caption: 'Someone presents to everyone' },
+      { at: 2400, caption: 'You are asked, never dragged along' },
+      { at: 5600, caption: 'Follow, and you are looking where they are' },
+    ],
+  },
+
+  ping: {
+    duration: 6400,
+    cursor: [
+      at([196, 108], { at: 0 }),
+      at([PI.spot[0], PI.spot[1]], { at: 600, ease: 'settle' }),
+      at([PI.spot[0], PI.spot[1]], { at: PI_T.pingAt, down: true }),
+      at([PI.spot[0], PI.spot[1]], { at: PI_T.pingAt + 180 }),
+      at([PI.spot[0], PI.spot[1]], { at: 6400 }),
+    ],
+    keys: [{ at: PI_T.pingAt - 700, until: PI_T.pingAt + 1700, caps: [...caps('pingMods')] }],
+    frames: [
+      { at: 800, caption: `Hold ${chord('pingMods')}` },
+      { at: 1900, caption: 'Click, and a ripple draws every eye to the spot' },
+      { at: 4600, caption: 'Everyone sees who pinged, then it fades' },
+    ],
+  },
+
+  reactions: {
+    duration: 6800,
+    cursor: [
+      at([196, 108], { at: 0 }),
+      at(RE.btn(0), { at: 700, ease: 'settle' }),
+      at(RE.btn(0), { at: RE_T.taps[0], down: true }),
+      at(RE.btn(0), { at: RE_T.taps[0] + 140 }),
+      at(RE.btn(2), { at: 2500, ease: 'settle' }),
+      at(RE.btn(2), { at: RE_T.taps[1], down: true }),
+      at(RE.btn(2), { at: RE_T.taps[1] + 140 }),
+      at(RE.btn(4), { at: 4000, ease: 'settle' }),
+      at(RE.btn(4), { at: RE_T.taps[2], down: true }),
+      at(RE.btn(4), { at: RE_T.taps[2] + 140 }),
+      at(RE.btn(4), { at: 6800 }),
+    ],
+    keys: [],
+    frames: [
+      { at: 1500, caption: 'While a show runs, viewers send a reaction' },
+      { at: 3000, caption: 'It floats up on the presenter’s screen' },
+      { at: 5000, caption: 'Several at once make a small crowd' },
+    ],
+  },
+
+  thread: {
+    duration: 7600,
+    tool: 'comment',
+    cursor: [
+      at([196, 108], { at: 0 }),
+      at(TH.pin, { at: 700, ease: 'settle' }),
+      at(TH.pin, { at: TH_T.pinAt, down: true }),
+      at(TH.pin, { at: TH_T.pinAt + 160 }),
+      at(TH.send, { at: 3000, ease: 'settle' }),
+      at(TH.send, { at: TH_T.sendAt, down: true }),
+      at(TH.send, { at: TH_T.sendAt + 160 }),
+      at(TH.resolve, { at: 5400, ease: 'settle' }),
+      at(TH.resolve, { at: TH_T.resolveAt, down: true }),
+      at(TH.resolve, { at: TH_T.resolveAt + 160 }),
+      at(TH.resolve, { at: 7600 }),
+    ],
+    keys: [],
+    frames: [
+      { at: 1500, caption: 'Click a spot and a pin opens a thread' },
+      { at: 4300, caption: 'Replies stack up beside the work' },
+      { at: 6900, caption: 'Resolve it and the pin goes quiet' },
+    ],
+  },
+
+  share: {
+    duration: 7600,
+    cursor: [
+      at([196, 108], { at: 0 }),
+      at(SA.role, { at: 800, ease: 'settle' }),
+      at(SA.role, { at: SA_T.roleAt, down: true }),
+      at(SA.role, { at: SA_T.roleAt + 160 }),
+      at(SA.copy, { at: 3200, ease: 'settle' }),
+      at(SA.copy, { at: SA_T.copyAt, down: true }),
+      at(SA.copy, { at: SA_T.copyAt + 160 }),
+      at(SA.copy, { at: 7600 }),
+    ],
+    keys: [],
+    frames: [
+      { at: 800, caption: 'Open Share and choose what the link allows' },
+      { at: 3400, caption: 'Edit, comment or view: the server holds the limit' },
+      { at: 6200, caption: 'Copy the link. People arrive as live cursors' },
     ],
   },
 };

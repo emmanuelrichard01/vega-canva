@@ -104,15 +104,46 @@ export const registerLocalMedia = (uploadId: string, blob: Blob): string => {
   return url;
 };
 
+/**
+ * Object URLs a player is still reading from, counted per URL.
+ *
+ * A voice note plays from its blob while it uploads. When the upload lands the
+ * node's `src` changes to the stored URL, but the `<audio>` element holding
+ * the blob may be mid-sentence. Revoking the URL under it made Chrome fire a
+ * load error, and the player then showed "Couldn't load this recording" for a
+ * note that had just uploaded perfectly. A release while a URL is held only
+ * retires it; the revoke waits for the last holder to let go.
+ */
+const holds = new Map<string, number>();
+const retired = new Set<string>();
+
+/** Keep an object URL alive while something reads from it. Returns the release. */
+export const holdObjectUrl = (url: string): (() => void) => {
+  if (!url.startsWith('blob:')) return () => {};
+  holds.set(url, (holds.get(url) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const left = (holds.get(url) ?? 1) - 1;
+    if (left > 0) {
+      holds.set(url, left);
+      return;
+    }
+    holds.delete(url);
+    if (retired.delete(url)) URL.revokeObjectURL(url);
+  };
+};
+
 /** Called once the real URL is in the document and the local copy is dead weight. */
 export const releaseLocalMedia = (uploadId: string): void => {
   const held = objectUrls.get(uploadId);
   if (!held) return;
-  URL.revokeObjectURL(held.url);
+  if (holds.has(held.url)) retired.add(held.url);
+  else URL.revokeObjectURL(held.url);
   objectUrls.delete(uploadId);
   announce();
 };
-
 /**
  * The URL to actually draw, or `null` when this device does not have the bytes.
  *
@@ -159,6 +190,8 @@ export const useResolvedSrc = (src: string): { src: string; pendingUpload: boole
 export const __resetPendingMedia = () => {
   objectUrls.forEach((held) => URL.revokeObjectURL(held.url));
   objectUrls.clear();
+  holds.clear();
+  retired.clear();
   version = 0;
   listeners.clear();
 };

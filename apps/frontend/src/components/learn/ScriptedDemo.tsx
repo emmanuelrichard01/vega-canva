@@ -124,7 +124,7 @@ const Frame: React.FC<{ id: ScriptedId; t: number; uid: string; envelope?: boole
       <g opacity={o}>
         <Scene t={t} cur={cur} uid={uid} />
       </g>
-      <Ghost cur={cur} tool={script.tool} o={o} />
+      {script.ghost !== false && <Ghost cur={cur} tool={script.tool} o={o} />}
     </svg>
   );
 };

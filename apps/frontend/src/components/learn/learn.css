@@ -224,6 +224,19 @@
 
 .sd-pill { fill: var(--text-primary); }
 
+.sd-pill-text--s { font-size: 6.4px; }
+
+.sd-tag-text {
+  fill: #fff;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 6.2px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.sd-ink { fill: var(--text-primary); }
+.sd-soft { fill: var(--text-tertiary); }
+
 .sd-pill-text {
   fill: var(--surface-primary);
   font-family: var(--font-sans, system-ui, sans-serif);
@@ -471,4 +484,11 @@
 
 @media (max-width: 720px) {
   .coach .demo-stage--live { display: none; }
+}
+
+/* A card that had to sit under its seat (no room above) points up instead. */
+.coach[data-side='below']::after {
+  top: -5px;
+  bottom: auto;
+  rotate: 225deg;
 }

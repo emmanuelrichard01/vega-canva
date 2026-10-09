@@ -14,7 +14,8 @@
  * as one action.
  */
 
-import { createNode, deleteNode, updateNode } from './mutations';
+import { nanoid } from 'nanoid';
+import { applyGroupPlan, createNode, deleteNode, updateNode } from './mutations';
 import { doc } from './doc';
 import { useStore } from '../../hooks/useStore';
 import { compareStacking } from '../model/stacking';
@@ -23,6 +24,7 @@ import { mapPath, reframePath, type ContourGeometry } from '../model/pathGeometr
 import { shapeToPath } from '../model/shapeToPath';
 import { outlineText } from '../text/textOutline';
 import { outlineStroke } from '../model/strokeOutline';
+import { reboxedPosition } from '../model/rebox';
 import type { AnyNode, Appearance, CompoundGeometry, Point } from '../model/schema';
 
 /**
@@ -230,25 +232,51 @@ export function flattenToPath(id: string): string | null {
   const node = useStore.getState().objects[id];
   if (!node || node.type !== 'shape' || node.locked) return null;
 
+  // `shapeToPath` honours each corner's own radius, so a rounded rectangle
+  // comes back as four lines and four quarter-arcs rather than a sharp box.
   const geometry = shapeToPath(node);
-  const newId = createNode({
-    type: 'path',
-    x: node.x,
-    y: node.y,
-    width: node.width,
-    height: node.height,
-    geometry,
-    appearance: { ...node.appearance },
-    opacity: node.opacity ?? 1,
-    // Rotation and scale survive because they are node transforms, applied to
-    // whatever the node draws — unlike the boolean above, nothing here needs
-    // the geometry to be in a shared space with anything else.
-    rotation: node.rotation ?? 0,
-    scaleX: node.scaleX ?? 1,
-    scaleY: node.scaleY ?? 1,
+  let newId = '';
+  // One transaction, one undo: the path appears and the shape goes together.
+  doc.transact(() => {
+    newId = createNode({
+      ...inheritedPlace(node),
+      type: 'path',
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+      geometry,
+      appearance: { ...node.appearance },
+      opacity: node.opacity ?? 1,
+      // Rotation and scale survive because they are node transforms, applied to
+      // whatever the node draws — unlike the boolean above, nothing here needs
+      // the geometry to be in a shared space with anything else.
+      rotation: node.rotation ?? 0,
+      scaleX: node.scaleX ?? 1,
+      scaleY: node.scaleY ?? 1,
+    });
+    keepStacking(newId, node);
+    deleteNode(id);
   });
-  deleteNode(id);
-  return newId;
+  return newId || null;
+}
+
+/**
+ * Where a replacement node lives: the replaced node's group and frame.
+ *
+ * A converted object that jumped out of its group, or to the top of the
+ * stack, would be a conversion with a side effect nobody asked for.
+ */
+function inheritedPlace(node: AnyNode): { parentId?: string; frameId?: string } {
+  const out: { parentId?: string; frameId?: string } = {};
+  if (node.parentId) out.parentId = node.parentId;
+  if (node.frameId) out.frameId = node.frameId;
+  return out;
+}
+
+/** Put a replacement at the replaced node's depth rather than on top of everything. */
+function keepStacking(newId: string, node: AnyNode): void {
+  if (newId && typeof node.zIndex === 'number') updateNode(newId, { zIndex: node.zIndex });
 }
 
 /**
@@ -265,8 +293,9 @@ export function flattenToPath(id: string): string | null {
  *
  * ## What the result is
  *
- * One path node carrying every glyph as a compound geometry, filled even-odd so
- * the counter of an `o` is a hole rather than a disc sitting on a ring. The
+ * A compound path per line, filled `nonzero` (the rule fonts are drawn with)
+ * so the counter of an `o` is a hole and a variable font's overlapping
+ * contours stay solid. A paragraph's lines are grouped. The
  * text's colour becomes the path's fill, because that is the paint that was
  * describing the letters. The box is re-measured from the outline: a
  * paragraph's box includes its leading and its descender space, and the glyphs
@@ -283,7 +312,7 @@ export function flattenToPath(id: string): string | null {
  */
 export async function textToPath(
   id: string
-): Promise<{ id: string; dropped: string[] } | null> {
+): Promise<{ id: string; ids: string[]; dropped: string[] } | null> {
   const node = useStore.getState().objects[id];
   if (!node || node.type !== 'text' || node.locked) return null;
 
@@ -294,24 +323,59 @@ export async function textToPath(
   // deleted the text, or a peer edited it. Re-read rather than trusting the
   // snapshot the outline was built from.
   const current = useStore.getState().objects[id];
-  if (!current || current.type !== 'text') return null;
+  if (!current || current.type !== 'text' || current.locked) return null;
 
-  const framed = reframePath(outlined.geometry);
-  const newId = createNode({
-    type: 'path',
-    // `framed.dx/dy` is where the glyphs sat inside the text's box, which is
-    // what keeps the outline exactly where the words were.
-    x: current.x + framed.dx,
-    y: current.y + framed.dy,
-    width: framed.width,
-    height: framed.height,
-    geometry: framed.geometry,
-    appearance: { fill: [{ type: 'solid', color: current.typography.color }] },
-    opacity: current.opacity ?? 1,
-    rotation: current.rotation ?? 0,
+  /**
+   * One path per line, grouped, for a paragraph; one path for a single line.
+   *
+   * A line is the unit people re-set: nudge the second line, recolour the
+   * heading. One compound path for a whole paragraph makes every one of those
+   * a direct-selection exercise across hundreds of anchors. Per-glyph paths
+   * (Illustrator's raw result) go too far the other way: thirty objects for a
+   * sentence, and a counter that is no longer part of its letter when moved.
+   */
+  const pieces = outlined.lines.length > 1 ? outlined.lines : [outlined.geometry];
+  const appearance: Appearance = { fill: [{ type: 'solid', color: current.typography.color }] };
+
+  const ids: string[] = [];
+  doc.transact(() => {
+    for (const geometry of pieces) {
+      const framed = reframePath(geometry);
+      // Where the glyphs sat inside the text's box, carried through the box's
+      // own rotation and scale so the outline lands exactly on the words.
+      const at = reboxedPosition(current, framed);
+      const newId = createNode({
+        ...inheritedPlace(current),
+        type: 'path',
+        x: at.x,
+        y: at.y,
+        width: framed.width,
+        height: framed.height,
+        geometry: framed.geometry,
+        appearance,
+        opacity: current.opacity ?? 1,
+        rotation: current.rotation ?? 0,
+        scaleX: current.scaleX ?? 1,
+        scaleY: current.scaleY ?? 1,
+      });
+      if (!newId) continue;
+      keepStacking(newId, current);
+      ids.push(newId);
+    }
+    if (ids.length > 1) {
+      const groupId = nanoid();
+      const firstLine = current.text.split('\n').find((l) => l.trim())?.trim() ?? 'Text';
+      applyGroupPlan({
+        create: { id: groupId, parentId: current.parentId, name: firstLine.slice(0, 40) },
+        nodes: ids.map((nid) => ({ id: nid, parentId: groupId })),
+        groups: [],
+        remove: [],
+      });
+    }
+    if (ids.length > 0) deleteNode(id);
   });
-  deleteNode(id);
-  return { id: newId, dropped: outlined.dropped };
+  if (ids.length === 0) return null;
+  return { id: ids[0], ids, dropped: outlined.dropped };
 }
 
 /**
@@ -331,7 +395,7 @@ export async function textToPath(
  */
 export function outlineStrokeOf(id: string): string | null {
   const node = useStore.getState().objects[id];
-  if (!node || node.locked || node.rotation) return null;
+  if (!node || node.locked) return null;
 
   const appearance = ('appearance' in node ? node.appearance : undefined) as Appearance | undefined;
   const stroke = appearance?.stroke;
@@ -344,26 +408,38 @@ export function outlineStrokeOf(id: string): string | null {
   if (!region) return null;
 
   const framed = reframePath(region);
-  const outlineId = createNode({
-    type: 'path',
-    x: node.x + framed.dx,
-    y: node.y + framed.dy,
-    width: framed.width,
-    height: framed.height,
-    geometry: framed.geometry,
-    // The stroke's colour becomes the new shape's fill, which is the whole
-    // conversion: the paint that was describing a line is now describing a
-    // region. Carried as a solid rather than the stroke's own field, because
-    // a fill is a `Paint` list and a stroke colour is a string.
-    appearance: { fill: [{ type: 'solid', color: stroke.color }] },
-    opacity: node.opacity ?? 1,
-  });
+  // The region is in the node's own space, so it takes the node's rotation
+  // and scale too, positioned so it lands exactly over the stroke it replaces.
+  const at = reboxedPosition(node, framed);
+  let outlineId = '';
+  // One transaction, one undo step.
+  doc.transact(() => {
+    outlineId = createNode({
+      ...inheritedPlace(node),
+      type: 'path',
+      x: at.x,
+      y: at.y,
+      width: framed.width,
+      height: framed.height,
+      geometry: framed.geometry,
+      // The stroke's colour becomes the new shape's fill, which is the whole
+      // conversion: the paint that was describing a line is now describing a
+      // region. Carried as a solid rather than the stroke's own field, because
+      // a fill is a `Paint` list and a stroke colour is a string.
+      appearance: { fill: [{ type: 'solid', color: stroke.color }] },
+      opacity: node.opacity ?? 1,
+      rotation: node.rotation ?? 0,
+      scaleX: node.scaleX ?? 1,
+      scaleY: node.scaleY ?? 1,
+    });
 
-  const hasFill = Boolean(appearance?.fill?.length);
-  if (hasFill) {
-    updateNode(id, { appearance: { ...appearance, stroke: undefined } });
-  } else {
-    deleteNode(id);
-  }
-  return outlineId;
+    const hasFill = Boolean(appearance?.fill?.length);
+    if (hasFill) {
+      updateNode(id, { appearance: { ...appearance, stroke: undefined } });
+    } else {
+      keepStacking(outlineId, node);
+      deleteNode(id);
+    }
+  });
+  return outlineId || null;
 }

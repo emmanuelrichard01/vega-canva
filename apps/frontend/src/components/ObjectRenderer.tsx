@@ -919,7 +919,9 @@ export const ObjectRenderer = React.memo(
       // And the inside of a path is its anchors. A freehand blob has none —
       // its "path" is the outline of a stroke, not a run of control points —
       // so double-clicking one has nothing to open.
-      if (node.type === 'path' && node.geometry.kind === 'bezier') {
+      // Compound paths too: a boolean result or outlined text is edited point by
+      // point exactly like a single contour.
+      if (node.type === 'path' && node.geometry.kind !== 'freehand') {
         pathEdit.enter(objId);
       }
       /**

@@ -7,6 +7,7 @@ import type { GridRecipe } from './gridBuild';
 import type { GridSpec, GridTrack } from './gridLayout';
 import { mergeSpans, spansFromModules, splitSpan, MAX_TRACKS } from './gridTracks';
 import type { CellBlock } from './gridEditMode';
+import { MIN_TRACK, recipeWithTrackSizes, resolveBorderDrag, trackRuns } from './gridTrackDrag';
 
 /**
  * Editing a grid's modules and tracks directly.
@@ -31,24 +32,15 @@ function trackCount(spec: GridSpec, axis: Axis): number {
 }
 
 /**
- * The current track sizes on one axis, read off the laid-out modules.
+ * The current track sizes on one axis.
  *
- * A module that spans several tracks says nothing about any one of them, so
- * only single-track modules are read; a track no single module covers keeps
- * an even share.
+ * Read from the layout's own track arithmetic (`trackRuns`), not off modules:
+ * a merged module spans several tracks and says nothing about any one of them,
+ * and reading modules gave a track covered only by merged modules a made-up
+ * average size, which then moved the border handles to the wrong place.
  */
 export function currentTrackSizes(node: GridNode, axis: Axis): number[] {
-  const spec = node.grid.spec;
-  const n = trackCount(spec, axis);
-  const sizes: (number | null)[] = new Array(n).fill(null);
-  for (const cell of gridCellsOf(node)) {
-    const span = spec.spans?.[`${cell.row}:${cell.col}`];
-    if (axis === 'cols' && (span?.cols ?? 1) === 1) sizes[cell.col] ??= cell.width;
-    if (axis === 'rows' && (span?.rows ?? 1) === 1) sizes[cell.row] ??= cell.height;
-  }
-  const known = sizes.filter((s): s is number => s !== null);
-  const fallback = known.length > 0 ? known.reduce((a, b) => a + b, 0) / known.length : 1;
-  return sizes.map((s) => s ?? fallback);
+  return trackRuns(node, axis).map((t) => t.size);
 }
 
 /**
@@ -71,25 +63,16 @@ export function withTrack(node: GridNode, axis: Axis, index: number, track: Grid
  * Two neighbouring tracks after dragging the border between them by `delta`.
  *
  * The pair keeps its combined size, so nothing else moves: the border slides
- * and the tracks either side trade space. Both become shares sized to the
- * result, which is what keeps the run fitting the box. Each side keeps a
- * minimum of `min`.
+ * and the tracks either side trade space. Each side keeps a minimum of `min`.
+ * The maths, and the Shift and Alt variants, live in `gridTrackDrag.ts`.
  */
-export function withBorderMoved(node: GridNode, axis: Axis, index: number, delta: number, min = 8): GridRecipe {
-  const spec = node.grid.spec;
-  const n = trackCount(spec, axis);
+export function withBorderMoved(node: GridNode, axis: Axis, index: number, delta: number, min = MIN_TRACK): GridRecipe {
+  const n = trackCount(node.grid.spec, axis);
   if (index < 0 || index + 1 >= n) return node.grid;
   // A non-finite delta (a pointer that left the window) moves nothing.
   if (!Number.isFinite(delta)) return node.grid;
-  const sizes = currentTrackSizes(node, axis);
-  const pair = sizes[index] + sizes[index + 1];
-  // A pair too small to give each side `min` splits evenly instead of inverting.
-  const floor = Math.min(min, pair / 2);
-  const left = Math.min(pair - floor, Math.max(floor, sizes[index] + delta));
-  const tracks: GridTrack[] = sizes.map((s) => ({ fr: Math.max(1, Math.round(s)) }));
-  tracks[index] = { fr: Math.max(1, Math.round(left)) };
-  tracks[index + 1] = { fr: Math.max(1, Math.round(pair - left)) };
-  return { ...node.grid, spec: { ...spec, tracks: { ...(spec.tracks ?? {}), [axis]: tracks } } };
+  const { sizes } = resolveBorderDrag({ sizes: currentTrackSizes(node, axis), index, delta, min });
+  return recipeWithTrackSizes(node.grid, axis, sizes);
 }
 
 /** Back to even tracks on one axis. */
@@ -157,10 +140,16 @@ function contentIn(objects: Record<string, AnyNode>, gridId: string): { id: stri
  * Write a new recipe and renumber the content so everything stays in the
  * module it was in. One transaction, so one undo step.
  */
-function commitRecipe(node: GridNode, recipe: GridRecipe): void {
+function commitRecipe(
+  node: GridNode,
+  recipe: GridRecipe,
+  box?: { x: number; y: number; width: number; height: number }
+): void {
   const objects = useStore.getState().objects;
   const before = gridCellsOf(node).map((c) => ({ index: c.index, row: c.row, col: c.col }));
-  const nextNode: GridNode = { ...node, grid: recipe };
+  const width = box?.width ?? node.width;
+  const height = box?.height ?? node.height;
+  const nextNode: GridNode = { ...node, width, height, grid: recipe };
   const after = gridCellsOf(nextNode).map((c) => ({ index: c.index, row: c.row, col: c.col }));
   const moves = remapSlots(before, after, contentIn(objects, node.id)).map((m) => {
     const current = objects[m.id] as AnyNode & { gridSlot?: { gridId: string; cell: number } };
@@ -168,7 +157,8 @@ function commitRecipe(node: GridNode, recipe: GridRecipe): void {
   });
   doc.transact(() => {
     updateNode(node.id, {
-      grid: { ...recipe, spec: { ...recipe.spec, x: 0, y: 0, width: node.width, height: node.height } },
+      ...(box ? { x: box.x, y: box.y, width, height } : null),
+      grid: { ...recipe, spec: { ...recipe.spec, x: 0, y: 0, width, height } },
     });
     if (moves.length > 0) applyNodePatches(moves);
   });
@@ -191,14 +181,22 @@ function editable(gridId: string): GridNode | null {
 
 /** Merge a block of modules into one. */
 export function mergeCells(gridId: string, block: CellBlock): void {
-  const node = editable(gridId);
-  if (!node || (block.rows <= 1 && block.cols <= 1)) return;
-  const spans = mergeSpans(node.grid.spec.spans, block);
-  commitRecipe(node, { ...node.grid, spec: { ...node.grid.spec, spans } });
+  if (block.rows <= 1 && block.cols <= 1) return;
+  // Pinning a bento grid and the edit are one transaction, so one undo step.
+  doc.transact(() => {
+    const node = editable(gridId);
+    if (!node) return;
+    const spans = mergeSpans(node.grid.spec.spans, block);
+    commitRecipe(node, { ...node.grid, spec: { ...node.grid.spec, spans } });
+  });
 }
 
 /** Split whatever module is anchored at the block's corner back into single modules. */
 export function splitCells(gridId: string, block: CellBlock): void {
+  doc.transact(() => splitIn(gridId, block));
+}
+
+function splitIn(gridId: string, block: CellBlock): void {
   const node = editable(gridId);
   if (!node) return;
   let spans = node.grid.spec.spans;
@@ -214,14 +212,61 @@ export function splitCells(gridId: string, block: CellBlock): void {
 
 /** Set one track's sizing. */
 export function setTrack(gridId: string, axis: Axis, index: number, track: GridTrack): void {
-  const node = editable(gridId);
-  if (node) commitRecipe(node, withTrack(node, axis, index, track));
+  doc.transact(() => {
+    const node = editable(gridId);
+    if (node) commitRecipe(node, withTrack(node, axis, index, track));
+  });
 }
 
 /** Slide the border between track `index` and `index + 1`. */
 export function moveTrackBorder(gridId: string, axis: Axis, index: number, delta: number): void {
-  const node = editable(gridId);
-  if (node) commitRecipe(node, withBorderMoved(node, axis, index, delta));
+  doc.transact(() => {
+    const node = editable(gridId);
+    if (node) commitRecipe(node, withBorderMoved(node, axis, index, delta));
+  });
+}
+
+/**
+ * Write one axis's track sizes, as a border drag resolved them. One
+ * transaction (bento pinning included), so the whole drag is one undo step.
+ *
+ * `growth` is how much the grid grows along the axis (an Alt drag). The grid
+ * grows from its leading edge outward: the corner before the axis stays where
+ * it is on the board, turned or not, so the grid never appears to move.
+ */
+export function commitTrackSizes(gridId: string, axis: Axis, sizes: readonly number[], growth = 0): void {
+  doc.transact(() => {
+    const node = editable(gridId);
+    if (!node) return;
+    const recipe = recipeWithTrackSizes(node.grid, axis, sizes);
+    const box = Number.isFinite(growth) && Math.abs(growth) > 0.01 ? grownBox(node, axis, growth) : undefined;
+    commitRecipe(node, recipe, box);
+  });
+}
+
+/** The grid's box after growing `growth` along one axis, top-left corner pinned on the board. */
+export function grownBox(
+  node: Pick<GridNode, 'x' | 'y' | 'width' | 'height' | 'rotation'>,
+  axis: Axis,
+  growth: number
+): { x: number; y: number; width: number; height: number } {
+  const width = Math.max(1, node.width + (axis === 'cols' ? growth : 0));
+  const height = Math.max(1, node.height + (axis === 'rows' ? growth : 0));
+  const r = ((node.rotation ?? 0) * Math.PI) / 180;
+  const cos = Math.cos(r);
+  const sin = Math.sin(r);
+  // Rotation is about the centre. The board position of the top-left corner:
+  const cx = node.x + node.width / 2;
+  const cy = node.y + node.height / 2;
+  const hx = -node.width / 2;
+  const hy = -node.height / 2;
+  const corner = { x: cx + hx * cos - hy * sin, y: cy + hx * sin + hy * cos };
+  // The new centre puts the new top-left corner on the same point.
+  const nx = width / 2;
+  const ny = height / 2;
+  const ncx = corner.x + nx * cos - ny * sin;
+  const ncy = corner.y + nx * sin + ny * cos;
+  return { x: ncx - width / 2, y: ncy - height / 2, width, height };
 }
 
 /** Make every track on an axis even again. */

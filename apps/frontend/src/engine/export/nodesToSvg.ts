@@ -545,7 +545,9 @@ function pathMarkup(node: PathNode, ctx: Ctx): string {
   const parts: string[] = [];
   if (node.geometry.kind !== 'freehand') {
     // Several contours need even-odd to read the inner ones as holes.
-    const rule = node.geometry.kind === 'compound' ? ' fill-rule="evenodd"' : '';
+    // Outlined text says `nonzero`, the rule its font was drawn with.
+    const rule =
+      node.geometry.kind === 'compound' ? ` fill-rule="${node.geometry.fillRule === 'nonzero' ? 'nonzero' : 'evenodd'}"` : '';
     const join = node.appearance.stroke?.join ? joinAttrs(node.appearance.stroke) : ' stroke-linejoin="round"';
     parts.push(
       `<path d="${contourData(translatePath(node.geometry, node.x, node.y))}" fill="${attr(fill && fill !== 'transparent' ? fill : 'none')}"${rule} stroke="${attr(stroke ?? 'none')}" stroke-width="${num(sw)}"${strokeEnds(node.appearance.stroke, 'round')}${join} />`

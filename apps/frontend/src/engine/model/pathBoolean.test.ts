@@ -98,7 +98,7 @@ describe('booleanPaths', () => {
     expect(totalArea(result!.subpaths)).toBeLessThan(remainder * 1.02);
   });
 
-  it('returns straight segments — the curves do not survive, and that is documented', () => {
+  it('hands back curves: a union of a disc and a box is a few smooth anchors, not hundreds of facets', () => {
     const disc = shapeToPath({
       geometry: { kind: 'ellipse' },
       width: 100,
@@ -106,6 +106,69 @@ describe('booleanPaths', () => {
       appearance: {},
     } as Pick<ShapeNode, 'geometry' | 'width' | 'height' | 'appearance'>);
     const result = booleanPaths('union', [disc, box(40, 40, 100, 100)]);
-    expect(result!.subpaths[0].segments.every((s) => s.cp1x === undefined)).toBe(true);
+    const ring = result!.subpaths[0];
+    expect(result!.subpaths).toHaveLength(1);
+    expect(ring.segments.length).toBeLessThan(24);
+    expect(ring.segments.some((s) => s.cp1x !== undefined)).toBe(true);
+    // The box's straight edges stay straight: at least three plain segments.
+    expect(ring.segments.filter((s) => s.cp1x === undefined).length).toBeGreaterThanOrEqual(3);
+    // Disc ∪ box: both areas less their overlap, within 2%.
+    const union = 10000 + Math.PI * 2500 - overlapArea();
+    expect(Math.abs(totalArea(result!.subpaths) - union) / union).toBeLessThan(0.02);
+  });
+
+  it('keeps every contour of a compound operand: disjoint letters are not holes', () => {
+    const letters = {
+      kind: 'compound' as const,
+      subpaths: [box(0, 0, 10, 10), box(20, 0, 10, 10)],
+    };
+    const result = booleanPaths('union', [letters, box(100, 100, 5, 5)]);
+    expect(result!.subpaths).toHaveLength(3);
+    expect(totalArea(result!.subpaths)).toBeCloseTo(225, 3);
+  });
+
+  it('reads an even-odd compound as such: a ring with its counter stays a ring', () => {
+    const ring = { kind: 'compound' as const, subpaths: [box(0, 0, 30, 30), box(10, 10, 10, 10)] };
+    const result = booleanPaths('union', [ring, box(100, 0, 5, 5)]);
+    // The outer ring and its hole both survive as contours.
+    const outer = result!.subpaths.map(area).sort((a, b) => b - a);
+    expect(outer[0]).toBeCloseTo(900, 3);
+    expect(outer[1]).toBeCloseTo(100, 3);
+  });
+
+  it('reads a nonzero compound by winding: overlapping parts of one glyph fill solid', () => {
+    // Two overlapping outers wound the same way (a variable font's crossbar
+    // over a stem) and a counter wound the other way.
+    const reversed = (g: BezierGeometry): BezierGeometry => ({ ...g, segments: [...g.segments].reverse() });
+    const glyph = {
+      kind: 'compound' as const,
+      fillRule: 'nonzero' as const,
+      subpaths: [box(0, 0, 40, 40), box(20, 0, 40, 40), reversed(box(5, 5, 5, 5))],
+    };
+    const result = booleanPaths('union', [glyph, box(200, 0, 1, 1)]);
+    // 40×60 solid, less the 5×5 counter, plus the 1×1 box. Even-odd would have
+    // punched out the 20×40 overlap instead.
+    const sizes = result!.subpaths.map(area).sort((a, b) => b - a);
+    expect(sizes[0]).toBeCloseTo(2400, 3);
+    expect(sizes).toContainEqual(expect.closeTo(25, 3));
+  });
+
+  it('drops degenerate slivers where two edges nearly coincide', () => {
+    const result = booleanPaths('subtract', [box(0, 0, 100, 100), box(0, 0, 100, 99.999)]);
+    expect(result).toBeNull();
   });
 });
+
+/** Area of the disc centred (50, 50), radius 50, inside the box [40, 140]². */
+function overlapArea(): number {
+  // Numerical integration over x of the disc's chord clipped to y ≥ 40.
+  let sum = 0;
+  const steps = 20000;
+  for (let i = 0; i < steps; i++) {
+    const x = 40 + ((i + 0.5) / steps) * 60;
+    const h = Math.sqrt(Math.max(0, 2500 - (x - 50) ** 2));
+    const top = 50 + h;
+    sum += Math.max(0, top - Math.max(40, 50 - h)) * (60 / steps);
+  }
+  return sum;
+}

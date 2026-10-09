@@ -179,7 +179,8 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
 
   const dash = strokeDashProps(node.appearance);
   const contour = contourData(node.geometry);
-  const evenOdd = node.geometry.kind === 'compound';
+  // Outlined text is the exception and says so: fonts are drawn nonzero.
+  const evenOdd = node.geometry.kind === 'compound' && node.geometry.fillRule !== 'nonzero';
 
   const body = (
     <Path

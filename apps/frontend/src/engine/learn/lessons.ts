@@ -347,6 +347,10 @@ export const LESSONS: readonly Lesson[] = [
     demo: 'field',
     steps: [
       {
+        act: `Press ${chord('physicsPlay')}`,
+        gives: 'Physics starts with the last force you used. Pick another from the bar that opens',
+      },
+      {
         act: 'Press Play, then hold a force over the board',
         gives: 'Objects move under the field for as long as you hold it',
       },
@@ -434,13 +438,12 @@ export const LESSONS: readonly Lesson[] = [
     trigger: { on: 'tool', tools: ['direct-select'] },
     title: 'Inside a shape, not around it',
     gist: 'The arrow moves an object. This one edits what the object is made of.',
+    demo: 'anchors',
     steps: [
-      { act: 'Click a path', gives: 'Its anchors, each one draggable on its own' },
-      { act: 'Drag an anchor handle', gives: 'The curve either side of it, reshaped' },
-      {
-        act: 'Click anything else',
-        gives: 'Ordinary selection, so the tool is never inert on half the board',
-      },
+      { act: 'Click a path, or double-click it with the arrow', gives: 'Its points, each one pickable on its own' },
+      { act: 'Drag across points', gives: 'All of them picked, in a box you can drag, scale or turn' },
+      { act: 'Drag a handle', gives: 'The curve either side of its point, reshaped' },
+      { act: 'Press Enter or Esc', gives: 'Done: the path stays selected and the arrow comes back' },
     ],
   },
   {
@@ -520,6 +523,7 @@ export const LESSONS: readonly Lesson[] = [
     trigger: { on: 'tool', tools: ['comment'] },
     title: 'Comments are pinned to the work',
     gist: 'A comment belongs to a place on the board rather than to a list beside it, so the conversation stays next to the thing it is about.',
+    demo: 'thread',
     steps: [
       { act: 'Click anywhere, or on an object', gives: 'A pin, and a thread under it' },
       {
@@ -535,9 +539,13 @@ export const LESSONS: readonly Lesson[] = [
     trigger: { on: 'tool', tools: ['audio'] },
     title: 'Say it instead of typing it',
     gist: 'Some feedback is a sentence and some is a tone of voice. A voice note is an object on the board like any other.',
+    demo: 'voice',
     steps: [
-      { act: 'Click where it should sit, and talk', gives: 'A note with a real waveform, not a placeholder' },
-      { act: 'Click it', gives: 'Playback, for anyone on the board' },
+      { act: 'Click where it should sit, and talk', gives: 'A recording with a live waveform and a timer' },
+      { act: `Press ${chord('voicePause')}`, gives: 'Pauses and resumes the recording' },
+      { act: `Press ${chord('voiceKeep')}`, gives: 'Keeps it as a note with a real waveform, not a placeholder' },
+      { act: `Press ${chord('voiceDiscard')}`, gives: 'Throws the recording away' },
+      { act: 'Click a note', gives: 'Playback, for anyone on the board. Only one plays at a time' },
     ],
   },
 
@@ -678,6 +686,227 @@ export const LESSONS: readonly Lesson[] = [
 
   /* ---------------------------------------------------------------- recipes */
 
+  {
+    id: 'slides-deck',
+    trigger: { on: 'library' },
+    title: 'Build a deck, then present it',
+    gist: 'Frames are slides. Slide view lays the deck out, each slide arrives with its own transition, and the show has a laser, a presenter view and a PDF at the end.',
+    demo: 'slides',
+    steps: [
+      {
+        act: `Press ${chord('slideView')}`,
+        gives: 'Every frame as a slide in one grid. Arrow keys move between them and Alt with an arrow reorders them',
+      },
+      {
+        act: 'Choose a slide and set its transition',
+        gives: 'Glide, Dissolve, Smart move, Push, Slide or Zoom, or none. Smart move carries objects with the same layer name from one slide to the next',
+      },
+      {
+        act: `Press ${chord('present')}`,
+        gives: 'The show starts from the selected slide. Type a slide number and Enter to jump, B or W to blank the screen, Esc to leave',
+      },
+      {
+        act: `Press ${chord('laser')} while presenting`,
+        gives: 'Your pointer becomes a laser. Press it again to put the pointer back',
+      },
+      {
+        act: 'Open Presenter view in the show controls',
+        gives: 'Your notes, a timer and the next slide, on your screen or in a window of their own',
+      },
+      {
+        act: 'Export the board as a PDF',
+        gives: 'One page for each slide, in the order of the show',
+      },
+    ],
+  },
+  {
+    id: 'grid-edit-cells',
+    trigger: { on: 'library' },
+    title: 'Edit a grid cell by cell',
+    gist: 'Edit cells turns a grid inside out: every border can be dragged, every cell typed into, and the content follows.',
+    demo: 'gridedit',
+    steps: [
+      { act: 'Drag a border between two tracks', gives: 'The two tracks trade space and the grid keeps its size' },
+      {
+        act: 'Hold Shift as you drag',
+        gives: 'The track before the border takes the new size and every other track shares what is left equally',
+      },
+      {
+        act: 'Hold Alt as you drag',
+        gives: 'Only the track before the border changes, and the grid grows or shrinks to match',
+      },
+      {
+        act: `Hold ${chord('noSnap')}`,
+        gives: 'Snapping is off, so the size lands exactly where you let go. Esc cancels the drag',
+      },
+      { act: 'Double-click a border', gives: 'The track before it fits what it holds' },
+      {
+        act: 'Double-click a cell',
+        gives: 'Type straight into it. In the panel, Item placement sets where the content sits in its module',
+      },
+    ],
+  },
+  {
+    id: 'sketch-board',
+    trigger: { on: 'library' },
+    title: 'Sketch the whole board',
+    gist: 'One key redraws every shape in a hand-drawn style, and the same key brings the clean lines back. Nothing about the shapes changes, only how they are drawn.',
+    demo: 'sketch',
+    steps: [
+      {
+        act: `Press ${chord('sketchBoard')}`,
+        gives: 'The whole board is drawn by hand. Only people who can edit the board can switch it',
+      },
+      { act: 'Press it again', gives: 'Clean lines, exactly as they were' },
+      {
+        act: 'Choose the sketch style on a single shape',
+        gives: 'Just that shape is rough while the rest stay clean',
+      },
+      { act: 'Export as SVG or PNG', gives: 'The hand-drawn strokes come with it' },
+    ],
+  },
+  {
+    id: 'shadows-effects',
+    trigger: { on: 'library' },
+    title: 'Depth with shadows',
+    gist: 'A drop shadow lifts an object off the board and an inner shadow presses it in. Both live in Effects, in the properties panel.',
+    demo: 'shadow',
+    steps: [
+      { act: 'Select an object and open Effects', gives: 'The shadow switch, with its blur, spread, offset and colour' },
+      { act: 'Switch on a shadow and drag the blur', gives: 'The shadow softens as you drag, live on the board' },
+      { act: 'Choose Inner', gives: 'The shadow moves inside the shape, as if it were pressed into the board' },
+      { act: 'Export', gives: 'Shadows are drawn into SVG and PNG files, not dropped' },
+    ],
+  },
+  {
+    id: 'touch-gestures',
+    trigger: { on: 'library' },
+    title: 'Touch, and drawing with a Pencil',
+    gist: 'On a tablet or a phone the board answers to the fingers you already use. One finger belongs to the tool, two or more move the board.',
+    demo: 'touch',
+    steps: [
+      { act: 'Pinch with two fingers', gives: 'Zoom and pan together around the middle of your fingers' },
+      { act: 'Press and hold', gives: 'The context menu for that spot' },
+      { act: 'Tap with two fingers', gives: 'Undo' },
+      { act: 'Tap with three fingers', gives: 'Redo' },
+      {
+        act: 'Draw with an Apple Pencil or a stylus',
+        gives: 'It draws and selects. A resting palm is ignored, and once you have used a stylus a single finger pans',
+      },
+    ],
+  },
+  {
+    id: 'export-files',
+    trigger: { on: 'library' },
+    title: 'Get it out in any shape',
+    gist: 'Export takes the selection, a frame or the whole board, in the format and scale you choose.',
+    steps: [
+      {
+        act: `Press ${chord('exportBoard')}`,
+        gives: 'Export for the selection, or the board if nothing is selected: PNG, JPEG, WebP, SVG or PDF',
+      },
+      {
+        act: 'Add several sizes in the Export section of the panel',
+        gives: 'One file for each size and format, and more than one goes out together as a ZIP',
+      },
+      { act: 'Right-click and choose Copy as PNG or SVG', gives: 'Straight to the clipboard, ready to paste into a document' },
+      { act: 'Right-click a frame and choose Copy link to frame', gives: 'A link that opens the board on exactly that frame' },
+    ],
+  },
+  {
+    id: 'template-gallery',
+    trigger: { on: 'library' },
+    title: 'Start from a template',
+    gist: 'A template is a finished board you can take apart: real objects, real tables and live charts, not a picture of one.',
+    steps: [
+      {
+        act: 'Browse templates from the home screen',
+        gives: 'Boards sorted into Systems and architecture, Product and teams, Diagrams, Web and UI, Data and dashboards, Science, Physics, Slides and Illustration',
+      },
+      { act: 'Open one', gives: 'A board you can change freely, with every object ready to edit' },
+    ],
+  },
+  {
+    id: 'version-history',
+    trigger: { on: 'library' },
+    title: 'Go back in time',
+    gist: 'The board remembers how it was made. Scrub through its history, then restore a moment or leave it as it is.',
+    steps: [
+      { act: 'Search for Version history in the command palette', gives: 'A timeline of the board, with the live board kept as it is' },
+      { act: 'Step with the arrow keys, or press K or Space to play', gives: 'The board replays edit by edit. Home and End jump to the start and the end' },
+      { act: 'Restore a version', gives: 'The board returns to that moment' },
+    ],
+  },
+  {
+    id: 'collab-cursors',
+    trigger: { on: 'library' },
+    title: 'Everyone is on the board',
+    gist: 'Each person has a coloured pointer with their name on it, and what they select or drag is outlined in the same colour.',
+    demo: 'cursors',
+    steps: [
+      { act: 'Open the same board as someone else', gives: 'Their pointer appears, moving as they move, with a name tag' },
+      { act: 'Watch someone pick up an object', gives: 'It is outlined in their colour, so two people rarely reach for the same thing' },
+      { act: 'Look to the edge of the board', gives: 'A marker points toward people who are working off screen' },
+    ],
+  },
+  {
+    id: 'collab-follow',
+    trigger: { on: 'library' },
+    title: 'Follow someone’s view',
+    gist: 'Click a face and your board moves with theirs, inside a frame in their colour, so you always know whose view you are in.',
+    demo: 'follow',
+    steps: [
+      { act: 'Click a person’s face in the avatar row', gives: 'Your view tracks theirs, pans and zooms included' },
+      { act: 'Move the board, click the face again or press Esc', gives: 'You are back in charge of your own view' },
+      { act: 'Look at the person you followed', gives: 'They are told how many people are following them' },
+    ],
+  },
+  {
+    id: 'collab-spotlight',
+    trigger: { on: 'library' },
+    title: 'Present to the whole room',
+    gist: 'While you present, you can invite everyone to follow. It is an invitation, never a pull: nobody’s view moves until they say so.',
+    demo: 'spotlight',
+    steps: [
+      { act: `Press ${chord('present')}, then choose Invite everyone to follow`, gives: 'People on the board are asked to come along' },
+      { act: 'On the other side, choose Follow', gives: 'Your view glides to theirs, inside a frame in their colour' },
+      { act: 'Choose Dismiss instead', gives: 'You stay exactly where you are' },
+    ],
+  },
+  {
+    id: 'collab-ping',
+    trigger: { on: 'library' },
+    title: 'Point at something',
+    gist: 'A ping is a ripple on the board that everyone sees at once, with your name on it. It leaves nothing behind.',
+    demo: 'ping',
+    steps: [
+      { act: `Hold ${chord('pingMods')} and click`, gives: 'A ripple at that spot, in your colour, seen by everyone on the board' },
+      { act: 'Wait a moment', gives: 'It fades by itself. Nothing is added to the board' },
+    ],
+  },
+  {
+    id: 'collab-reactions',
+    trigger: { on: 'library' },
+    title: 'Cheer a presentation',
+    gist: 'People watching a show can send a reaction, and it floats up on the presenter’s screen without interrupting them.',
+    demo: 'reactions',
+    steps: [
+      { act: 'While someone presents, tap a reaction', gives: 'It rises on the presenter’s screen and fades' },
+      { act: 'Send several', gives: 'They gather into a small crowd' },
+    ],
+  },
+  {
+    id: 'collab-share',
+    trigger: { on: 'library' },
+    title: 'Share with the right role',
+    gist: 'A link carries a role. Edit, comment and view links are signed by the server, so nobody can turn one into another.',
+    demo: 'share',
+    steps: [
+      { act: 'Open Share and choose a role', gives: 'Edit, Comment or View. The server enforces it, so a view link really cannot edit' },
+      { act: 'Copy the link', gives: 'Anyone who opens it arrives as a live pointer on the board' },
+      { act: 'Set an expiry on a comment or view link', gives: 'The link stops working when it runs out' },
+    ],
+  },
   {
     id: 'recipe-flowchart',
     trigger: { on: 'library' },

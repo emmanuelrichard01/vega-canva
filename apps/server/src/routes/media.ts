@@ -28,6 +28,9 @@ import { captureError, logger } from '../observability';
 
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
+/** A single byte range, the only form passed on to storage. */
+const MEDIA_RANGE = /^bytes=\d*-\d*$/;
+
 export interface MediaDeps {
   config: Config;
   pool: Pick<Pool, 'query'>;
@@ -218,6 +221,12 @@ export function registerMediaRoutes(app: Express, deps: MediaDeps): void {
    * Not gated by `ENFORCE_SHARE_TOKENS`: an `<img>` cannot send the invite
    * header. Media ids are unguessable and only reachable through a board.
    */
+  /**
+   * Byte ranges pass through to storage. Safari and iOS will not play an
+   * `<audio>` source that answers its opening `Range: bytes=0-1` probe with a
+   * whole-file 200, so without this every voice note failed to load there, and
+   * Chrome could not seek inside a note it had not fully buffered.
+   */
   app.get('/rooms/:roomId/media/:mediaKey', deps.requireRoom, async (req: any, res: any) => {
     const roomId = sanitizeRoomId(req.params.roomId);
     const mediaKey = path.basename(String(req.params.mediaKey || ''));
@@ -235,14 +244,21 @@ export function registerMediaRoutes(app: Express, deps: MediaDeps): void {
       );
       if (known.rows.length === 0) return res.status(404).json({ error: 'Media not found' });
 
-      const s3Res: any = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: s3Key }));
+      const rangeHeader = req.headers.range;
+      const range = typeof rangeHeader === 'string' && MEDIA_RANGE.test(rangeHeader) ? rangeHeader : undefined;
+      const s3Res: any = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: s3Key, Range: range }));
 
       const { type, render } = serveAs(mediaKey);
       res.setHeader('Content-Type', type);
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
       if (!render) res.setHeader('Content-Disposition', `attachment; filename="${mediaKey}"`);
-      if (s3Res.ContentLength) res.setHeader('Content-Length', s3Res.ContentLength);
+      res.setHeader('Accept-Ranges', 'bytes');
+      if (s3Res.ContentLength != null) res.setHeader('Content-Length', String(s3Res.ContentLength));
+      if (s3Res.ContentRange) {
+        res.status(206);
+        res.setHeader('Content-Range', s3Res.ContentRange);
+      }
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
 
       const body = s3Res.Body;
@@ -266,6 +282,9 @@ export function registerMediaRoutes(app: Express, deps: MediaDeps): void {
     } catch (err: any) {
       if (err?.name === 'NoSuchKey' || err?.Code === 'NoSuchKey') {
         return res.status(404).json({ error: 'Media not found' });
+      }
+      if (err?.name === 'InvalidRange' || err?.Code === 'InvalidRange' || err?.$metadata?.httpStatusCode === 416) {
+        return res.status(416).json({ error: 'Range not satisfiable' });
       }
       captureError('Error streaming media from object storage', err, { key: s3Key });
       if (!res.headersSent) res.status(500).json({ error: 'Failed to fetch media stream' });

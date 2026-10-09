@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { TOOL_SHORTCUTS } from '../../engine/tools/shortcuts';
 import { LESSONS } from '../../engine/learn/lessons';
+import { CHORDS } from '../../engine/learn/chords';
+import { COLLAB_ORDER, RELEASE_NOTES } from './helpContent';
 import { SHORTCUTS, combosInSpec } from '../menu/shortcuts';
 import {
   HELP_PAGES,
@@ -112,5 +114,68 @@ describe('the help pages', () => {
     const whole = searchGroups(groups, 'sticky notes');
     expect(whole.find((g) => g.id === 'stickies')?.rows.length).toBe(groups.find((g) => g.id === 'stickies')!.rows.length);
     expect(searchGroups(groups, 'zzzz')).toEqual([]);
+  });
+});
+
+describe("the shortcut rows against the real maps", () => {
+  const rows = groups.flatMap((g) => g.rows);
+  const spoken = new Set(rows.flatMap((r) => combosInSpec(r.keys)));
+
+  it("has a row for every menu shortcut that is not obvious", () => {
+    for (const id of ["present", "slideView", "arrangeGrid", "frameSelection", "fitFrame", "organiseColour", "organiseAuthor", "export", "selectSameType"] as const) {
+      const combos = combosInSpec(SHORTCUTS[id]);
+      expect(combos.every((c) => spoken.has(c)), id).toBe(true);
+    }
+  });
+
+  it("has a row for every tool key, with the key the tool is bound to", () => {
+    const toolRows = groups.find((g) => g.id === "tools")!.rows;
+    for (const key of Object.values(TOOL_SHORTCUTS)) expect(toolRows.some((r) => r.keys === key), key).toBe(true);
+  });
+
+  it("has a row for the keys the room binds by hand", () => {
+    for (const key of ["Shift + P", "Shift + S", "Q", "/", "?", "Mod + \\", "Alt + Shift + V", "Shift + I", "Shift + Alt + click"]) {
+      expect(rows.some((r) => combosInSpec(r.keys).some((c) => combosInSpec(key).includes(c))), key).toBe(true);
+    }
+  });
+
+  it("writes the presenting keys the way the presenter reads them", () => {
+    const presenting = groups.find((g) => g.id === "presenting")!;
+    const text = presenting.rows.map((r) => r.keys).join(" ");
+    for (const key of ["L", "B / W", "Home / End", "Esc"]) expect(text).toContain(key);
+  });
+
+  it("agrees with the chord table the lessons use", () => {
+    for (const id of ["slideView", "present", "arrangeInGrid", "fitFrame", "sketchBoard", "physicsPlay", "exportBoard"] as const) {
+      const spec = CHORDS[id].split("+").join(" + ");
+      const wanted = combosInSpec(spec);
+      expect(wanted.some((c) => spoken.has(c)), id).toBe(true);
+    }
+  });
+
+  it("keeps the em-dash out of what people read", () => {
+    for (const r of rows) expect(r.what, r.keys).not.toContain("—");
+    for (const n of RELEASE_NOTES) expect(`${n.title} ${n.body}`, n.title).not.toContain("—");
+  });
+});
+
+describe("the Collaboration page", () => {
+  it("has a lesson, with a scene, for every part of working together", () => {
+    for (const id of ["collab-cursors", "collab-follow", "collab-spotlight", "collab-ping", "collab-reactions", "collab-share", "comment-thread", "cursor-chat"]) {
+      const lesson = LESSONS.find((l) => l.id === id);
+      expect(lesson, id).toBeDefined();
+      expect(pageForLesson(lesson!), id).toBe("collab");
+      expect(lesson!.demo, id).toBeDefined();
+    }
+  });
+
+  it("orders only lessons that exist", () => {
+    for (const id of COLLAB_ORDER) expect(LESSONS.some((l) => l.id === id), id).toBe(true);
+  });
+
+  it("covers the newer features with a lesson of their own", () => {
+    for (const id of ["slides-deck", "grid-edit-cells", "direct-select", "sketch-board", "shadows-effects", "touch-gestures", "export-files", "version-history", "template-gallery"]) {
+      expect(LESSONS.some((l) => l.id === id), id).toBe(true);
+    }
   });
 });

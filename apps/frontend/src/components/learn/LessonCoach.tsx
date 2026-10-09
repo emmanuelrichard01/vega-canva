@@ -3,7 +3,9 @@ import { X } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import { learnState } from '../../engine/learn/learnState';
 import { keyFor, lessonForTool, type Lesson } from '../../engine/learn/lessons';
-import { coachPlacement } from '../../engine/learn/coachAnchor';
+import { coachPlacement2D } from '../../engine/learn/coachAnchor';
+import { boardInsets } from '../workspace/boardLayout';
+import { DEFAULT_HEADER_H, EDGE_MARGIN, readFrameTokens } from '../toolbar/rail/railBounds';
 import { LessonDemo } from './LessonDemo';
 
 /**
@@ -105,7 +107,16 @@ export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
   const shownId = useRef<string | null>(null);
   const card = useRef<HTMLElement>(null);
   /** Where the card sits so that its tail reaches the armed seat. */
-  const [place, setPlace] = useState<{ left: number; tail: number | null } | null>(null);
+  const [place, setPlace] = useState<{
+    left: number;
+    top: number;
+    tail: number | null;
+    side: 'above' | 'below' | null;
+    maxWidth: number;
+    maxHeight: number;
+    /** Taller than the strip: scrolls, and gives up its tail (overflow would clip it). */
+    scroll: boolean;
+  } | null>(null);
 
   /**
    * `learnState` is read during render rather than through the snapshot,
@@ -180,9 +191,17 @@ export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
   }, [shown]);
 
   /**
-   * Measured against the real seat and the real parent, because the card is
-   * positioned inside the board's container and the seat is measured in the
-   * window: the same two-spaces mistake `walkAnchor` exists to prevent.
+   * Measured against the real seat, the real chrome and the real parent.
+   *
+   * The card is positioned inside the board's container while the seat and
+   * the panels are measured in the window: the same two-spaces mistake
+   * `walkAnchor` exists to prevent, so both axes are converted at the end.
+   *
+   * It is placed in the free strip (under the header, above the dock, between
+   * the panels) by `coachPlacement2D`, so it is never off screen or under a
+   * panel: a tool armed from a flyout, a menu or a shortcut (direct select is
+   * all three) has no seat in the dock row, and the card then sits centred at
+   * the bottom of the strip rather than wherever a hidden seat measured.
    */
   useLayoutEffect(() => {
     const el = card.current;
@@ -191,24 +210,61 @@ export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
       return;
     }
     const measure = () => {
-      const seat = document.querySelector<HTMLElement>('[data-tour="dock"] .dock-btn.active');
-      const seatBox = seat?.getBoundingClientRect();
-      const origin = (el.offsetParent as HTMLElement | null)?.getBoundingClientRect().left ?? 0;
-      const p = coachPlacement(
-        seatBox ? { left: seatBox.left, width: seatBox.width } : null,
-        { width: el.offsetWidth },
-        { width: window.innerWidth }
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const seat = [...document.querySelectorAll<HTMLElement>('[data-tour="dock"] .dock-btn.active')]
+        .map((b) => b.getBoundingClientRect())
+        .find((r) => r.width > 0 && r.height > 0 && r.right > 0 && r.left < vw && r.bottom > 0 && r.top < vh);
+      const dock = document.querySelector<HTMLElement>('[data-tour="dock"]')?.getBoundingClientRect();
+      const insets = boardInsets();
+      const tokens = readFrameTokens();
+      const header = tokens.insetTop ?? tokens.headerH ?? DEFAULT_HEADER_H;
+      const dockTop = dock && dock.height > 0 && dock.top < vh ? dock.top : vh;
+      const free = {
+        left: insets.left + EDGE_MARGIN,
+        right: vw - insets.right - EDGE_MARGIN,
+        top: header + EDGE_MARGIN,
+        bottom: dockTop - EDGE_MARGIN,
+      };
+      // The card's natural size: measured with its limits lifted, so a card
+      // squeezed by a previous placement does not keep its squeezed height.
+      const prevMaxW = el.style.maxWidth;
+      const prevMaxH = el.style.maxHeight;
+      el.style.maxWidth = '';
+      el.style.maxHeight = '';
+      const size = { width: el.offsetWidth, height: el.offsetHeight };
+      el.style.maxWidth = prevMaxW;
+      el.style.maxHeight = prevMaxH;
+
+      const p = coachPlacement2D(
+        seat ? { left: seat.left, top: seat.top, width: seat.width, height: seat.height } : null,
+        size,
+        free,
+        { width: vw, height: vh }
       );
-      setPlace(p.tail === null ? null : { left: p.centre - origin, tail: p.tail });
+      const origin = (el.offsetParent as HTMLElement | null)?.getBoundingClientRect();
+      setPlace({
+        left: p.left - (origin?.left ?? 0),
+        top: p.top - (origin?.top ?? 0),
+        tail: p.tail,
+        side: p.side,
+        maxWidth: p.maxWidth,
+        maxHeight: p.maxHeight,
+        scroll: size.height > p.maxHeight + 0.5,
+      });
     };
     measure();
     // The seat that is armed changes with the tool: measure again then, and
     // once more a frame later in case the dock marks its seat after this card.
     const frame = requestAnimationFrame(measure);
     window.addEventListener('resize', measure);
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => measure()) : null;
+    const dockEl = document.querySelector('[data-tour="dock"]');
+    if (dockEl) observer?.observe(dockEl);
     return () => {
       cancelAnimationFrame(frame);
       window.removeEventListener('resize', measure);
+      observer?.disconnect();
     };
   }, [shown, visible, activeTool]);
 
@@ -222,8 +278,23 @@ export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
       className="coach"
       role="note"
       aria-label={shown.title}
-      data-anchored={place ? '' : undefined}
-      style={place ? ({ left: place.left, '--coach-tail': `${place.tail}px` } as React.CSSProperties) : undefined}
+      data-anchored={place?.tail != null && !place.scroll ? '' : undefined}
+      data-side={place?.tail != null && !place.scroll ? place.side ?? undefined : undefined}
+      style={
+        place
+          ? ({
+              left: place.left,
+              top: place.top,
+              bottom: 'auto',
+              translate: 'none',
+              maxWidth: place.maxWidth,
+              maxHeight: place.maxHeight,
+              overflowY: place.scroll ? 'auto' : undefined,
+              '--coach-tail': place.tail != null ? `${place.tail}px` : undefined,
+            } as React.CSSProperties)
+          : // Unmeasured: kept out of sight for the one frame before it is placed.
+            { visibility: 'hidden' }
+      }
     >
       {shown.demo && <LessonDemo demo={shown.demo} maxLoops={3} />}
 

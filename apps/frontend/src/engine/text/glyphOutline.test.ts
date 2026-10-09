@@ -123,9 +123,9 @@ describe('glyphContours', () => {
 });
 
 describe('outlineToGeometry', () => {
-  it('fills every contour as one object, so holes stay holes', () => {
+  it('fills every contour as one object, nonzero as fonts are drawn, so holes stay holes', () => {
     const contours = glyphContours(square, place);
-    expect(outlineToGeometry(contours)).toEqual({ kind: 'compound', subpaths: contours });
+    expect(outlineToGeometry(contours)).toEqual({ kind: 'compound', subpaths: contours, fillRule: 'nonzero' });
   });
 
   it('is null when there was nothing to draw', () => {

@@ -1,15 +1,444 @@
 /* ---------------------------------------------------------------------------
-   VOICE NOTE TRANSCRIPT — components/canvas/renderers/AudioRenderer.tsx
+   VOICE NOTE — components/canvas/renderers/AudioRenderer.tsx
 
-   The player card is `.vn` (index.css). The transcript opens beneath it, at
-   the card's width, as part of the same object: same surface, no second
-   elevation, and selectable text so a sentence can be copied out.
+   One card, one elevation (the float shadow, whose 1px ring is the edge).
+   Left: the play button, ink on surface, the one primary action. Right: the
+   waveform as the scrubber with the clock beside it, and beneath them who said
+   it, when, and the quiet controls. The played portion is a clipped second
+   copy of the waveform in ink, so the edge moves continuously.
+
+   The card is `pointer-events: none` so its body drags the node; every control
+   opts back in.
    --------------------------------------------------------------------------- */
 
-.vn-transcript-toggle[aria-expanded='true'] {
+.vn {
+  --vn-play: 40px;
+  --vn-wave-h: 24px;
+  --vn-bar-rest: color-mix(in srgb, var(--text-primary) 22%, transparent);
+  --vn-bar-hover: color-mix(in srgb, var(--text-primary) 34%, transparent);
+  --vn-bar-played: var(--text-primary);
+
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 10px 10px;
+  box-sizing: border-box;
+  border-radius: var(--radius-2xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  pointer-events: none;
+}
+
+.vn[data-size='lg'] {
+  --vn-play: 48px;
+  --vn-wave-h: 34px;
+  gap: 14px;
+  padding: 14px 16px 14px 14px;
+}
+
+.vn[data-size='sm'] {
+  --vn-play: 34px;
+  gap: 8px;
+  padding: 8px 10px 8px 8px;
+}
+
+.vn button {
+  font-family: inherit;
+  pointer-events: auto;
+}
+
+.vn button:focus-visible,
+.vn-wave:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+/* ---- Play ---------------------------------------------------------------- */
+
+.vn-play-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--vn-play);
+  height: var(--vn-play);
+}
+
+.vn-play {
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  cursor: pointer;
+  transition: transform var(--motion-hover), background var(--motion-hover);
+}
+
+.vn-play:hover:not(:disabled) {
+  transform: scale(1.04);
+}
+
+.vn-play:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.vn-play:disabled {
+  background: var(--surface-active);
+  color: var(--text-secondary);
+  cursor: default;
+}
+
+.vn[data-state='load-failed'] .vn-play:disabled {
+  color: var(--status-danger);
+}
+
+/* Lucide's triangle sits a unit left of its optical centre. */
+.vn-play-glyph {
+  translate: 1px 0;
+}
+
+.vn-spin {
+  animation: vn-spin 900ms linear infinite;
+}
+
+@keyframes vn-spin {
+  to {
+    rotate: 360deg;
+  }
+}
+
+/* Upload progress, drawn around the button rather than over the content: the
+   note is already playable while this runs. */
+.vn-ring {
+  position: absolute;
+  inset: -3px;
+  width: calc(100% + 6px);
+  height: calc(100% + 6px);
+  rotate: -90deg;
+  pointer-events: none;
+}
+
+.vn-ring circle {
+  fill: none;
+  stroke-width: 2;
+}
+
+.vn-ring__track {
+  stroke: var(--surface-active);
+}
+
+.vn-ring__fill {
+  stroke: var(--text-secondary);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ---- Body ---------------------------------------------------------------- */
+
+.vn-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.vn[data-size='lg'] .vn-body {
+  gap: 8px;
+}
+
+.vn-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: var(--vn-wave-h);
+}
+
+/* ---- Waveform ------------------------------------------------------------ */
+
+.vn-wave {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  cursor: pointer;
+  touch-action: none;
+  border-radius: var(--radius-sm);
+  pointer-events: auto;
+}
+
+.vn-wave[aria-disabled='true'] {
+  cursor: default;
+}
+
+.vn-wave[data-scrubbing] {
+  cursor: grabbing;
+}
+
+.vn-layer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.vn-bar {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 4px;
+  border-radius: 999px;
+  background: var(--vn-bar-rest);
+  transition: background var(--motion-hover);
+}
+
+.vn-played .vn-bar {
+  background: var(--vn-bar-played);
+}
+
+.vn-wave:hover .vn-layer:not(.vn-played) .vn-bar {
+  background: var(--vn-bar-hover);
+}
+
+/* Waiting for another device's upload: the shape is known, the sound is not. */
+.vn[data-state='waiting'] .vn-layer .vn-bar {
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+
+.vn-head {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--vn-bar-played);
+  box-shadow: 0 0 0 1px var(--surface-elevated);
+  pointer-events: none;
+}
+
+/* The time a click or drag lands on, before and while it happens. */
+.vn-bubble {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  translate: -50% 0;
+  padding: 3px 7px;
+  border-radius: var(--radius-md);
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.16);
+}
+
+.vn-clock {
+  flex: 0 0 auto;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.vn[data-playing] .vn-clock {
+  color: var(--text-primary);
+}
+
+/* ---- Failure ------------------------------------------------------------- */
+
+.vn-fail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.vn-fail__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--status-danger);
+}
+
+.vn-text-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.vn-text-btn:hover {
+  background: var(--surface-active);
+}
+
+.vn-text-btn--inline {
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 6px;
+}
+
+/* ---- Meta row ------------------------------------------------------------ */
+
+.vn-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 22px;
+  font-size: var(--text-2xs);
+  line-height: 1;
+}
+
+.vn-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.vn-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.vn-when {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.vn-status {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+/* Waiting is not failing: amber says "on its way", never red. */
+.vn-status[data-tone='syncing'] {
+  color: var(--status-syncing);
+}
+
+.vn-status[data-tone='danger'] {
+  color: var(--status-danger);
+}
+
+.vn-actions {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.vn-chip {
+  min-width: 32px;
+  height: 22px;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.vn-chip:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* Anything but 1× is a state the player was left in; it shows without reading. */
+.vn-chip[data-raised] {
+  background: var(--text-primary);
+  color: var(--surface-primary);
+}
+
+.vn-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.vn-icon-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.vn-icon-btn[aria-expanded='true'] {
   background: var(--surface-active);
   color: var(--text-primary);
 }
+
+.vn-chip:disabled,
+.vn-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.vn[data-size='sm'] .vn-when,
+.vn[data-size='sm'] .vn-icon-btn[aria-expanded] {
+  display: none;
+}
+
+/* Zoomed far out the meta row is noise at a few pixels tall: the card keeps
+   its play button and the shape of the recording, centred. */
+.vn[data-far] .vn-meta,
+.vn[data-far] .vn-clock {
+  display: none;
+}
+
+/* ---- Transcript ---------------------------------------------------------- */
 
 .vn-transcript {
   box-sizing: border-box;
@@ -17,7 +446,7 @@
   padding: 10px 12px;
   border-radius: var(--radius-xl, 12px);
   background: var(--surface-elevated);
-  border: 1px solid var(--border-divider);
+  box-shadow: var(--shadow-float);
   pointer-events: auto;
   user-select: text;
   font-family: var(--font-sans);
@@ -41,8 +470,29 @@
   color: var(--text-tertiary);
 }
 
-@media (prefers-contrast: more) {
-  .vn-transcript {
-    border-color: var(--border-strong);
+/* ---- Modes --------------------------------------------------------------- */
+
+[data-contrast='more'] .vn {
+  --vn-bar-rest: color-mix(in srgb, var(--text-primary) 40%, transparent);
+  --vn-bar-hover: color-mix(in srgb, var(--text-primary) 55%, transparent);
+  outline: 1px solid var(--border-strong);
+}
+
+[data-contrast='more'] .vn-transcript {
+  outline: 1px solid var(--border-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vn-play:hover:not(:disabled),
+  .vn-play:active:not(:disabled) {
+    transform: none;
+  }
+
+  .vn-spin {
+    animation: none;
+  }
+
+  .vn-ring__fill {
+    transition: none;
   }
 }

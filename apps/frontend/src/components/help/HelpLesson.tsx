@@ -18,14 +18,14 @@ import { capsFor } from '../menu/shortcuts';
  * never hides anything: a reference that withheld what you know would be a
  * reference you could not check.
  */
-export const HelpLesson: React.FC<{ lesson: Lesson; onWalk: (id: string) => void }> = ({ lesson, onWalk }) => {
+export const HelpLesson: React.FC<{ lesson: Lesson; onWalk: (id: string) => void; index?: number }> = ({ lesson, onWalk, index }) => {
   const { done } = useSyncExternalStore(walkthroughState.subscribe, walkthroughState.getSnapshot, walkthroughState.getSnapshot);
   const key = keyFor(lesson);
   const walkable = isWalkable(lesson.id);
   const performed = walkable && done.includes(lesson.id);
 
   return (
-    <article className="hc-lesson">
+    <article className="hc-lesson" style={index === undefined ? undefined : ({ '--i': index } as React.CSSProperties)}>
       {lesson.demo && <LessonDemo demo={lesson.demo} />}
       <div className="hc-lesson__body">
         <h4 className="hc-lesson__title">

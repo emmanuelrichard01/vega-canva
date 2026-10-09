@@ -139,9 +139,13 @@ export function glyphContours(
  *
  * `compound` and not a group of separate paths: the counter of an `o` is a
  * *hole*, and a hole is only a hole when it is filled together with the ring
- * round it under the even-odd rule. Two objects would give a solid ring and a
- * solid disc sitting on top of it, which is the same picture until you change
- * the colour of one.
+ * round it. Two objects would give a solid ring and a solid disc sitting on
+ * top of it, which is the same picture until you change the colour of one.
+ *
+ * Filled `nonzero`, the rule fonts are designed for. TrueType and CFF wind a
+ * counter against its outer, so nonzero makes it a hole; and unlike even-odd
+ * it keeps a letter solid where two of its own contours overlap, which
+ * variable fonts do routinely (the bar of a `t` laid over its stem).
  *
  * Returns null when there was nothing to draw — a string of spaces, or a run
  * the font has no glyphs for. The caller then leaves the text alone rather than
@@ -149,5 +153,5 @@ export function glyphContours(
  */
 export function outlineToGeometry(contours: readonly BezierGeometry[]): CompoundGeometry | null {
   if (contours.length === 0) return null;
-  return { kind: 'compound', subpaths: [...contours] };
+  return { kind: 'compound', subpaths: [...contours], fillRule: 'nonzero' };
 }

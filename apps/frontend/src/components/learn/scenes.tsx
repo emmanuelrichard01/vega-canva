@@ -40,52 +40,10 @@ import {
  * The stage is 224 by 128 units and every scene is authored in those units.
  */
 
-export interface SceneProps {
-  t: number;
-  cur: CursorSample;
-  /** Unique to this instance, for the ids a scene defines (several demos share a page). */
-  uid: string;
-}
-
-const f = (n: number) => Math.round(n * 100) / 100;
-const poly = (points: readonly Pt[]) => points.map((p) => `${f(p[0])},${f(p[1])}`).join(' ');
-
-/** Scale about a point, then place. Keeps every "grow in" in one spelling. */
-const grow = (cx: number, cy: number, k: number) => `translate(${cx} ${cy}) scale(${f(k)}) translate(${-cx} ${-cy})`;
-
-/** The selection outline: ink, never the accent. */
-const Sel: React.FC<{ x: number; y: number; w: number; h: number; o?: number; r?: number; dashed?: boolean }> = ({
-  x,
-  y,
-  w,
-  h,
-  o = 1,
-  r = 4,
-  dashed,
-}) =>
-  o > 0.01 ? (
-    <rect
-      className="sd-sel"
-      x={x - 3}
-      y={y - 3}
-      width={w + 6}
-      height={h + 6}
-      rx={r}
-      opacity={o}
-      strokeDasharray={dashed ? '3 3' : undefined}
-    />
-  ) : null;
-
-/** A line of "text": a rounded bar, so nothing needs translating. */
-const Bar: React.FC<{ x: number; y: number; w: number; h?: number; fill?: string; o?: number }> = ({
-  x,
-  y,
-  w,
-  h = 4,
-  fill = 'var(--text-tertiary)',
-  o = 1,
-}) => (w > 0.5 ? <rect x={x} y={y} width={w} height={h} rx={h / 2} fill={fill} opacity={o} /> : null);
-
+import { Bar, f, grow, poly, Sel, type SceneProps } from './sceneKit';
+import { MORE_SCENES } from './scenesMore';
+import { COLLAB_SCENES } from './scenesCollab';
+export type { SceneProps } from './sceneKit';
 /** A small glyph for a shape tile, centred on 0,0 and about 12 units across. */
 const GLYPHS: readonly React.ReactNode[] = [
   <rect key="sq" x={-6} y={-6} width={12} height={12} />,
@@ -906,4 +864,6 @@ export const SCENES: Record<ScriptedId, React.FC<SceneProps>> = {
   present: PresentScene,
   select: SelectScene,
   cursorchat: CursorChatScene,
-};
+  ...MORE_SCENES,
+  ...COLLAB_SCENES,
+} as Record<ScriptedId, React.FC<SceneProps>>;

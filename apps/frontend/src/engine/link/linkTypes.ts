@@ -42,6 +42,8 @@ export interface LinkMeta {
   author?: string;
   /** What the page says it is: `article`, `video.other`, `profile`. */
   type?: string;
+  /** Why a picture the link points at could not be kept (`too-large`, `svg`, `small`, ...). Transient: never stored on the board. */
+  imageIssue?: string;
   /**
    * The words arrived; the picture has not yet.
    *

@@ -9,6 +9,7 @@
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#18181B" />
     <meta name="color-scheme" content="light dark" />
     <meta name="format-detection" content="telephone=no" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
     <link rel="canonical" href="%SITE_URL%/" />
 
     <!-- Icons, all drawn from the vector mark by
@@ -40,46 +41,75 @@
     <meta property="og:title" content="Vega Studio | The real-time whiteboard for thinking together" />
     <meta property="og:description" content="Diagrams, sticky notes, code, charts and voice notes on one infinite board, live with your team. Works offline. No account needed." />
     <meta property="og:image" content="%SITE_URL%/og-image.png" />
+    <meta property="og:image:secure_url" content="%SITE_URL%/og-image.png" />
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Vega Studio: a board with a flowchart, sticky notes, a code block and a chart, with two collaborators' cursors on it." />
+    <meta property="og:image:alt" content="Vega Studio: think it through together, on one infinite board. A board with a flowchart in a frame, a sticky note, a table feeding a chart and two collaborators." />
+    <!-- The same card composed for a square, for unfurlers that crop to one (WhatsApp, iMessage). -->
+    <meta property="og:image" content="%SITE_URL%/og-square.png" />
+    <meta property="og:image:secure_url" content="%SITE_URL%/og-square.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="1200" />
+    <meta property="og:image:alt" content="Vega Studio: think it through together, on one infinite board. A board with a flowchart in a frame, a sticky note, a table feeding a chart and two collaborators." />
     <meta property="og:locale" content="en_US" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Vega Studio | The real-time whiteboard for thinking together" />
     <meta name="twitter:description" content="Diagrams, sticky notes, code, charts and voice notes on one infinite board, live with your team. Works offline." />
     <meta name="twitter:image" content="%SITE_URL%/og-image.png" />
-    <meta name="twitter:image:alt" content="Vega Studio: a board with a flowchart, sticky notes, a code block and a chart." />
+    <meta name="twitter:image:alt" content="Vega Studio: think it through together, on one infinite board. A board with a flowchart in a frame, a sticky note, a table feeding a chart and two collaborators." />
 
     <!-- What search engines can read without running the app.
 
          Only facts: the product is a web app, it is free to use, it runs in a
-         browser, and these are its features. No ratings, no review counts and no
-         organisation details, because there are none to cite — structured data
+         browser, these are its features, and it is published under its own
+         name with its own mark. No ratings, no review counts, no addresses and
+         no social profiles, because there are none to cite — structured data
          that invents them is the fastest way to lose rich results altogether. -->
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
         "@graph": [
           {
+            "@type": "Organization",
+            "@id": "%SITE_URL%/#organization",
+            "name": "Vega Studio",
+            "url": "%SITE_URL%/",
+            "logo": {
+              "@type": "ImageObject",
+              "url": "%SITE_URL%/icons/icon-512.png",
+              "width": 512,
+              "height": 512
+            }
+          },
+          {
             "@type": "WebSite",
             "@id": "%SITE_URL%/#website",
             "url": "%SITE_URL%/",
             "name": "Vega Studio",
             "alternateName": "Vega",
-            "inLanguage": "en"
+            "inLanguage": "en",
+            "publisher": { "@id": "%SITE_URL%/#organization" }
           },
           {
             "@type": "WebApplication",
             "@id": "%SITE_URL%/#app",
             "name": "Vega Studio",
             "url": "%SITE_URL%/",
-            "image": "%SITE_URL%/og-image.png",
+            "image": {
+              "@type": "ImageObject",
+              "url": "%SITE_URL%/og-image.png",
+              "width": 1200,
+              "height": 630
+            },
             "applicationCategory": "DesignApplication",
             "applicationSubCategory": "Collaborative whiteboard",
             "operatingSystem": "Any (web browser)",
             "browserRequirements": "Requires JavaScript and a modern browser.",
             "isAccessibleForFree": true,
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+            "publisher": { "@id": "%SITE_URL%/#organization" },
             "description": "A real-time collaborative whiteboard: an infinite canvas for sticky notes, flowcharts, code blocks, charts, tables and voice notes, with live cursors, comments, time travel and offline editing.",
             "featureList": [
               "Real-time collaboration with live cursors and presence",

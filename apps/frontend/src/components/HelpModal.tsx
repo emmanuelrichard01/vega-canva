@@ -13,6 +13,7 @@ import { useRoomPermissions } from '../hooks/useRoomPermissions';
 import { useStore } from '../hooks/useStore';
 import {
   HELP_PAGES,
+  COLLAB_ORDER,
   RELEASE_NOTES,
   buildKeyMap,
   buildShortcutGroups,
@@ -26,6 +27,7 @@ import {
 } from './help/helpContent';
 import { DRAWN_KEYS, HelpKeyboard } from './help/HelpKeyboard';
 import { HelpLesson } from './help/HelpLesson';
+import { useReducedMotion } from './learn/ScriptedDemo';
 import './help/help.css';
 
 interface Props {
@@ -176,6 +178,29 @@ const HelpCentre: React.FC<{ initialPage: HelpPageId }> = ({ initialPage }) => {
 
   const q = query.trim().toLowerCase();
   const searching = q.length > 0;
+
+  /**
+   * Pages cross-fade: the page you leave fades out (80ms), then the next fades
+   * in (100ms), so a change is never longer than 180ms and never a hard cut.
+   * Under reduced motion the swap is immediate.
+   */
+  const view: string = searching ? 'search' : page;
+  const reducedMotion = useReducedMotion();
+  const [shown, setShown] = useState<string>(view);
+  const [leaving, setLeaving] = useState(false);
+  useEffect(() => {
+    if (view === shown) return;
+    if (reducedMotion) {
+      setShown(view);
+      return;
+    }
+    setLeaving(true);
+    const id = window.setTimeout(() => {
+      setShown(view);
+      setLeaving(false);
+    }, 80);
+    return () => window.clearTimeout(id);
+  }, [view, shown, reducedMotion]);
   const matchedGroups = useMemo(() => searchGroups(groups, q), [groups, q]);
   const matchedLessons = useMemo(() => (q ? LESSONS.filter((l) => lessonMatches(l, q)) : LESSONS), [q]);
   const matchedNotes = useMemo(
@@ -264,6 +289,15 @@ const HelpCentre: React.FC<{ initialPage: HelpPageId }> = ({ initialPage }) => {
   const current = HELP_PAGES.find((p) => p.id === page)!;
   const focusKey = found ? keyAndLayer(found.combo, DRAWN_KEYS) : null;
   const lessonsOn = (id: HelpPageId) => LESSONS.filter((l) => pageForLesson(l) === id);
+  /** The Collaboration page tells its story in a deliberate order, not the list's. */
+  const collabLessons = useMemo(() => {
+    const on = LESSONS.filter((l) => pageForLesson(l) === 'collab');
+    const rank = (id: string) => {
+      const at = COLLAB_ORDER.indexOf(id);
+      return at < 0 ? COLLAB_ORDER.length : at;
+    };
+    return [...on].sort((x, y) => rank(x.id) - rank(y.id));
+  }, []);
   const groupsOn = (id: HelpPageId) => groups.filter((g) => g.page === id);
 
   return (
@@ -384,7 +418,7 @@ const HelpCentre: React.FC<{ initialPage: HelpPageId }> = ({ initialPage }) => {
           </button>
         </header>
 
-        <div className="hc__scroll" ref={mainRef} key={searching ? 'search' : page}>
+        <div className="hc__scroll" ref={mainRef} key={shown} data-leaving={leaving || undefined}>
           {found && !searching && (
             <div className="hc-finder" role="status" data-hit={found.hits.length > 0 || undefined}>
               <Keys written={comboToSpec(found.combo)} />
@@ -405,7 +439,7 @@ const HelpCentre: React.FC<{ initialPage: HelpPageId }> = ({ initialPage }) => {
             </div>
           )}
 
-          {searching ? (
+          {shown === 'search' ? (
             <SearchResults
               groups={matchedGroups}
               lessons={matchedLessons}
@@ -413,7 +447,7 @@ const HelpCentre: React.FC<{ initialPage: HelpPageId }> = ({ initialPage }) => {
               q={q}
               onWalk={startWalk}
             />
-          ) : page === 'start' ? (
+          ) : shown === 'start' ? (
             <>
               <LayoutSketch />
               <p className="hc-prose">
@@ -441,9 +475,9 @@ const HelpCentre: React.FC<{ initialPage: HelpPageId }> = ({ initialPage }) => {
                 ))}
               </Columns>
             </>
-          ) : page === 'recipes' ? (
+          ) : shown === 'recipes' ? (
             <Lessons lessons={lessonsOn('recipes')} onWalk={startWalk} title="Recipes" hideTitle />
-          ) : page === 'tools' ? (
+          ) : shown === 'tools' ? (
             <>
               <ToolGrid group={groups.find((g) => g.id === 'tools')!} />
               <Lessons lessons={lessonsOn('tools')} onWalk={startWalk} title="Gestures worth knowing" />
@@ -455,7 +489,7 @@ const HelpCentre: React.FC<{ initialPage: HelpPageId }> = ({ initialPage }) => {
                   ))}
               </Columns>
             </>
-          ) : page === 'shortcuts' ? (
+          ) : shown === 'shortcuts' ? (
             <>
               <HelpKeyboard keymap={keymap} focus={focusKey} />
               <p className="hc-note">
@@ -469,7 +503,7 @@ const HelpCentre: React.FC<{ initialPage: HelpPageId }> = ({ initialPage }) => {
                 ))}
               </Columns>
             </>
-          ) : page === 'collab' ? (
+          ) : shown === 'collab' ? (
             <>
               <dl className="hc-roles">
                 <div>
@@ -490,14 +524,15 @@ const HelpCentre: React.FC<{ initialPage: HelpPageId }> = ({ initialPage }) => {
                 nobody can turn one into an edit link, and they can expire. Open Share from the right column to
                 make one.
               </p>
+              <Lessons lessons={collabLessons} onWalk={startWalk} title="Live on the board" gallery />
               <Columns>
                 {groupsOn('collab').map((g) => (
                   <ShortcutList key={g.id} group={g} q="" flash={flash} />
                 ))}
               </Columns>
-              <Lessons lessons={lessonsOn('collab')} onWalk={startWalk} title="Worth knowing" />
+              
             </>
-          ) : page === 'data' ? (
+          ) : shown === 'data' ? (
             <>
               <p className="hc-prose">
                 A table holds the numbers, a chart reads them from the table and redraws as they change, and a
@@ -566,14 +601,16 @@ const Lessons: React.FC<{
   title: string;
   /** The page title already says it. */
   hideTitle?: boolean;
-}> = ({ lessons, onWalk, title, hideTitle }) =>
+  /** Columns of lessons that rise in one after another. */
+  gallery?: boolean;
+}> = ({ lessons, onWalk, title, hideTitle, gallery }) =>
   lessons.length === 0 ? null : (
-    <section className="hc-lessons" aria-label={title}>
+    <section className={gallery ? 'hc-lessons hc-lessons--gallery' : 'hc-lessons'} aria-label={title}>
       {!hideTitle && <h4 className="hc-group__title">{title}</h4>}
       {/* The LESSONS builder's demos, drawn once and shared with the coach mark. */}
       <div className="hc-lessons__list">
-        {lessons.map((lesson) => (
-          <HelpLesson key={lesson.id} lesson={lesson} onWalk={onWalk} />
+        {lessons.map((lesson, i) => (
+          <HelpLesson key={lesson.id} lesson={lesson} onWalk={onWalk} index={gallery ? i : undefined} />
         ))}
       </div>
     </section>

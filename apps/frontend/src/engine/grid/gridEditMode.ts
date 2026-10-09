@@ -62,3 +62,68 @@ export function blockBetween(
   const right = Math.max(a.col + (a.cols ?? 1), b.col + (b.cols ?? 1));
   return { row: top, col: left, rows: bottom - top, cols: right - left };
 }
+
+/**
+ * A border drag in flight: the grid as it will be when the pointer lets go.
+ *
+ * The drag never writes the document until release (so the whole drag is one
+ * undo step and collaborators see one change), but the person dragging needs
+ * to see the modules move under the pointer, not a hairline guessing where
+ * they will end up. The grid renderer draws from this while it is set.
+ * Transient and per client, like the rest of this file.
+ */
+export interface TrackPreview {
+  gridId: string;
+  grid: import('./gridBuild').GridRecipe;
+  width: number;
+  height: number;
+}
+
+let preview: TrackPreview | null = null;
+const previewListeners = new Set<() => void>();
+
+export const trackPreview = {
+  get: (): TrackPreview | null => preview,
+  set(next: TrackPreview | null): void {
+    if (next === preview) return;
+    preview = next;
+    previewListeners.forEach((fn) => fn());
+  },
+  subscribe(fn: () => void): () => void {
+    previewListeners.add(fn);
+    return () => previewListeners.delete(fn);
+  },
+};
+
+/** The in-flight preview for one grid, or null. */
+export function useTrackPreview(gridId: string): TrackPreview | null {
+  const p = useSyncExternalStore(trackPreview.subscribe, trackPreview.get, trackPreview.get);
+  return p && p.gridId === gridId ? p : null;
+}
+
+/**
+ * The board's current selection, mirrored for the grid renderer.
+ *
+ * Selection lives in Room's React state; the grid only needs to know whether
+ * something sitting in one of its modules is selected, to outline that module
+ * ("this text lives in this cell"). Room writes it, nothing else does.
+ */
+let selection: readonly string[] = [];
+const selectionListeners = new Set<() => void>();
+
+export const selectionMirror = {
+  get: (): readonly string[] => selection,
+  set(ids: readonly string[]): void {
+    if (ids === selection) return;
+    selection = ids;
+    selectionListeners.forEach((fn) => fn());
+  },
+  subscribe(fn: () => void): () => void {
+    selectionListeners.add(fn);
+    return () => selectionListeners.delete(fn);
+  },
+};
+
+export function useSelectionMirror(): readonly string[] {
+  return useSyncExternalStore(selectionMirror.subscribe, selectionMirror.get, selectionMirror.get);
+}

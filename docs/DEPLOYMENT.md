@@ -277,8 +277,30 @@ Boards are kept out of search with `X-Robots-Tag: noindex` on `/room/` and
 its content, and X and LinkedIn honour `robots.txt` for previews, which would
 take the picture off every shared link.
 
+A **frame link** (`/room/:id?frame=<id>`) names its frame: the board uploads
+its titled frames with its card, `GET /cards/room/:id?frame=` returns the one
+asked for, and the unfurl reads "🎯 Sprint goals · Q3 retro". A hidden card
+returns nothing, frames included. The words of every unfurl come from
+`src/engine/share/unfurl.ts`, which the Share dialog's preview also renders,
+so the dialog shows the card the chat will show.
+
+The crawler list lives in `apps/frontend/api/_lib/crawlers.ts`;
+`crawlers.test.ts` fails if the regex in `vercel.json` drifts from it. Card
+renders queue on one worker thread and are bounded: past six waiting, a new
+board's picture is answered with the generic card (`max-age=30`) instead of
+joining the queue.
+
+**Public pages.** `/` and `/templates` are the only indexable URLs and the only
+ones in `sitemap.xml`. The build writes `templates.html` — `index.html` with its
+own title, description, canonical and card (`src/engine/share/sitePages.ts`) —
+and `vercel.json` serves it at `/templates`, so search and unfurlers both see
+the gallery as its own page.
+
 `apps/server/scripts/brand-assets.ts` draws every icon and both static share
-images from one vector mark. Rerun it after changing the mark or the card.
+images from one vector mark. `og-image.png` is the "Vega Studio hero" template
+drawn to SVG (`src/share/heroCard.ts`, hand-lettering in Caveat from
+`assets/fonts`); `og-board.png` is the generic private card. Rerun it after
+changing the mark or either card.
 
 ---
 

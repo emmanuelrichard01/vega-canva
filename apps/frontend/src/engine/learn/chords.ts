@@ -51,6 +51,24 @@ export const CHORDS = {
   /** With a shape or note selected: grow the diagram, or step back along it. */
   quickNext: 'Tab',
   quickBack: 'Shift+Tab',
+  /** Slide view: every frame as a slide, in one grid. */
+  slideView: 'Mod+Alt+S',
+  /** Laser pointer, while presenting. */
+  laser: 'L',
+  /** Draw the whole board by hand, or back to clean lines. */
+  sketchBoard: 'Shift+S',
+  /** Physics, with the last force used. */
+  physicsPlay: 'Shift+P',
+  /** Hold both and click to ping. */
+  pingMods: 'Shift+Alt',
+  /** Voice note, while recording. */
+  voicePause: 'Space',
+  voiceKeep: 'Enter',
+  voiceDiscard: 'Escape',
+  /** Hold while dragging a grid border to switch snapping off. */
+  noSnap: 'Mod',
+  /** Export the selection or the board. */
+  exportBoard: 'Mod+Shift+E',
   /** Open cursor chat. */
   cursorChat: '/',
   /** Merge or split the selected grid cells. */

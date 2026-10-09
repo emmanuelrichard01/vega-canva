@@ -261,3 +261,41 @@ describe('waveform downsampling', () => {
     expect(resample([0.1, 0.9, 0.2, 0.3, 0.8, 0.1], 3)).toEqual([0.9, 0.3, 0.8]);
   });
 });
+
+describe('playback recovery', () => {
+  it('does not call a pause during buffering a broken recording', async () => {
+    const { isFatalPlayRejection } = await import('./audioPlayback');
+    expect(isFatalPlayRejection(new DOMException('interrupted by pause()', 'AbortError'))).toBe(false);
+    expect(isFatalPlayRejection(new DOMException('autoplay', 'NotAllowedError'))).toBe(false);
+    expect(isFatalPlayRejection(new DOMException('no source', 'NotSupportedError'))).toBe(true);
+  });
+
+  it('offers a retry for network failures only', async () => {
+    const { classifyMediaError } = await import('./audioPlayback');
+    expect(classifyMediaError(2)).toBe('network');
+    expect(classifyMediaError(1)).toBe('network');
+    expect(classifyMediaError(3)).toBe('decode');
+    expect(classifyMediaError(4)).toBe('unsupported');
+  });
+
+  it('keeps playing from the blob when the upload lands mid-sentence', async () => {
+    const { nextElementSrc } = await import('./audioPlayback');
+    expect(nextElementSrc('blob:a', 'https://x/n.m4a', true)).toBe('blob:a');
+    expect(nextElementSrc('blob:a', 'https://x/n.m4a', false)).toBe('https://x/n.m4a');
+    expect(nextElementSrc('', 'blob:a', false)).toBe('blob:a');
+    expect(nextElementSrc('https://x/a', 'https://x/b', true)).toBe('https://x/b');
+  });
+
+  it('shows the length at rest and the position once engaged', async () => {
+    const { playbackReadout } = await import('./audioPlayback');
+    expect(playbackReadout(0, 43_000, false)).toBe('0:43');
+    expect(playbackReadout(12, 43_000, true)).toBe('0:12');
+  });
+
+  it('sizes the card from the node', async () => {
+    const { audioCardSize } = await import('./audioPlayback');
+    expect(audioCardSize(280, 64)).toBe('md');
+    expect(audioCardSize(220, 64)).toBe('sm');
+    expect(audioCardSize(360, 96)).toBe('lg');
+  });
+});

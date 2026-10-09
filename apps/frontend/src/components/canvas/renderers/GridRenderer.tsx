@@ -1,7 +1,13 @@
 import React from 'react';
 import { GridDropHighlight, GridEditOverlay, useGridEditEntry } from './GridEditOverlay';
-import { useGridEditMode } from '../../../engine/grid/gridEditMode';
+import { useGridEditMode, useSelectionMirror, useTrackPreview } from '../../../engine/grid/gridEditMode';
+import { useStore } from '../../../hooks/useStore';
+import { ThemeService } from '../../../engine/ThemeService';
 import { Ellipse, Group, Line, Path, Rect, Text } from 'react-konva';
+import { useCameraZoom } from '../../../engine/useCameraZoom';
+import type Konva from 'konva';
+import { cellIndexAt } from '../../../engine/grid/gridSlot';
+import { isCellFree } from '../../../engine/grid/gridSlotApply';
 import type { GridNode } from '../../../engine/model/schema';
 import { gridCellsOf } from '../../../engine/grid/gridNode';
 import { roundPolygon } from '../../../engine/grid/gridLayout';
@@ -117,7 +123,12 @@ const Cell: React.FC<{ cell: StyledCell; style: GridStyle }> = ({ cell, style })
 };
 
 export const GridRenderer: React.FC<Props> = React.memo(({ node }) => {
-  const { width, height, grid } = node;
+  // A track border being dragged in Edit cells re-lays the grid live, from a
+  // preview that is never written until the pointer lets go.
+  const preview = useTrackPreview(node.id);
+  const width = preview?.width ?? node.width;
+  const height = preview?.height ?? node.height;
+  const grid = preview?.grid ?? node.grid;
 
   /**
    * Laid out once per change, not once per frame.
@@ -136,7 +147,25 @@ export const GridRenderer: React.FC<Props> = React.memo(({ node }) => {
 
   const { opacity } = grid.style;
   const editing = useGridEditMode().gridId === node.id;
-  const enterEdit = useGridEditEntry(node);
+  const enterEditMode = useGridEditEntry(node);
+  /**
+   * One double-click, one meaning per spot. On an empty module it types into
+   * that module: `ObjectRenderer` creates a text object adopted into the slot,
+   * exactly what dropping one there would make (see `addTextToCell`). Anywhere
+   * else on the grid (a gutter, the margin, a module that already holds
+   * something) it opens Edit cells. It used to do both at once on an empty
+   * module: open the cell editor and a caption, then close the editor again
+   * when the caption took the selection.
+   */
+  const enterEdit = React.useCallback(
+    (e?: Konva.KonvaEventObject<Event>) => {
+      const local = e?.target?.getRelativePointerPosition?.();
+      const cell = local ? cellIndexAt(cells, local) : null;
+      if (cell !== null && isCellFree(node.id, cell)) return;
+      enterEditMode();
+    },
+    [cells, node.id, enterEditMode]
+  );
 
   return (
     <>
@@ -200,9 +229,61 @@ export const GridRenderer: React.FC<Props> = React.memo(({ node }) => {
     </Group>
     {/* Chrome sits outside the opacity group so it reads at full strength. */}
     <GridDropHighlight node={node} cells={cells} />
+    {!editing && <SelectedSlotOutline gridId={node.id} cells={cells} />}
     {editing && <GridEditOverlay node={node} cells={cells} />}
     </>
   );
 });
 
 GridRenderer.displayName = 'GridRenderer';
+
+/**
+ * The module that holds a selected object, outlined.
+ *
+ * Text in a cell is a real text object adopted into that module, and its
+ * selection box is exactly the module's box, so on its own a selected caption
+ * and a picked module look the same. This draws the module as a quiet dashed
+ * frame *outside* the object's selection box, which reads as "this object,
+ * sitting in this cell" -- while a picked module in Edit cells is a tinted
+ * fill with headers lit, which reads as "this cell". Neutral ink, never the
+ * accent: it is context, not a second selection.
+ */
+const SelectedSlotOutline: React.FC<{ gridId: string; cells: readonly StyledCell[] }> = ({ gridId, cells }) => {
+  const selected = useSelectionMirror();
+  // A string, so the outline re-renders when the answer changes, not on every edit.
+  const key = useStore((st) =>
+    selected
+      .map((id) => (st.objects[id] as { gridSlot?: { gridId: string; cell: number } } | undefined)?.gridSlot)
+      .filter((slot) => slot?.gridId === gridId)
+      .map((slot) => slot!.cell)
+      .join(',')
+  );
+  useStore((st) => st.darkTheme);
+  const zoom = useCameraZoom();
+  if (key === '') return null;
+  const held = new Set(key.split(',').map(Number));
+  // Clear of the selection handles, so it reads as a second, outer frame.
+  const pad = 9 / zoom;
+  const ink = ThemeService.isDarkMode() ? 'rgba(250, 250, 250, 0.6)' : 'rgba(17, 24, 39, 0.5)';
+  return (
+    <>
+      {cells
+        .filter((c) => held.has(c.index))
+        .map((c) => (
+          <Rect
+            key={`slot-${c.index}`}
+            x={c.x - pad}
+            y={c.y - pad}
+            width={c.width + pad * 2}
+            height={c.height + pad * 2}
+            cornerRadius={c.radius + pad}
+            stroke={ink}
+            strokeWidth={1 / zoom}
+            dash={[4 / zoom, 3 / zoom]}
+            listening={false}
+            perfectDrawEnabled={false}
+          />
+        ))}
+    </>
+  );
+};

@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useStore } from './useStore';
 import { buildPreview, MAX_ITEMS_RICH } from '../engine/model/boardPreview';
 import { previewColorOf, previewPointsOf } from '../engine/model/previewPaint';
-import { cardPayload, cardSignature, onCardFlush, type CardPayload } from '../engine/share/shareCard';
+import { cardFrames, cardPayload, cardSignature, onCardFlush, type CardPayload } from '../engine/share/shareCard';
 import { shareCardUrl, roomRequestHeaders } from '../utils/endpoints';
 import { canEditObjects } from '../engine/model/permissions';
 import { storageGet, storageSet } from '../utils/safeStorage';
@@ -81,7 +81,7 @@ export function useShareCard({ roomId, name, hidden, synced, canEdit }: Options)
     const build = () => {
       const nodes = Object.values(objects);
       const preview = buildPreview(nodes, previewColorOf, (node) => previewPointsOf(node, objects), MAX_ITEMS_RICH);
-      return cardPayload(name, preview, hidden);
+      return cardPayload(name, preview, hidden, cardFrames(nodes));
     };
 
     const send = async (keepalive = false): Promise<void> => {

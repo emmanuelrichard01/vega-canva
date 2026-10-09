@@ -439,14 +439,36 @@ function axisTracks(
  * then spans. A module's identity is its anchor's row-major position, so
  * merging or splitting one module never renumbers another.
  */
-function regular(spec: GridSpec, nRows: number): Omit<GridCell, 'weight'>[] {
+/**
+ * The track runs of a regular grid (columns or modular), in the spec's own
+ * coordinates: where each column and row starts and how big it is.
+ *
+ * Exported because a track is not a module. A merged module spans several
+ * tracks and says nothing about any one of them, so anything that edits
+ * tracks (the Edit cells border drag) has to read them here, from the same
+ * arithmetic the modules are cut from, rather than infer them from modules.
+ */
+export function regularTrackRuns(spec: GridSpec): {
+  cols: { offset: number; size: number }[];
+  rows: { offset: number; size: number }[];
+  origin: { x: number; y: number };
+} {
   const box = inner(spec);
   const nCols = Math.max(1, Math.floor(spec.columns));
+  const nRows = spec.kind === 'columns' ? 1 : Math.max(1, Math.floor(spec.rows));
   // One generator for both axes, so a given seed gives a given grid -- two
   // would make the columns depend on how many rows there happened to be.
   const next = rng(spec.seed);
   const cols = axisTracks(box.width, nCols, spec.gutterX, spec.tracks?.cols, spec.variation, next);
   const rows = axisTracks(box.height, nRows, spec.gutterY, spec.tracks?.rows, spec.variation, next);
+  return { cols, rows, origin: { x: box.x, y: box.y } };
+}
+
+function regular(spec: GridSpec, nRows: number): Omit<GridCell, 'weight'>[] {
+  const box = inner(spec);
+  const nCols = Math.max(1, Math.floor(spec.columns));
+  // `nRows` is what `regularTrackRuns` derives from the kind, so the two agree.
+  const { cols, rows } = regularTrackRuns(spec);
 
   return applySpans(nRows, nCols, spec.spans).map(({ row, col, rows: rs, cols: cs }) => {
     const first = cols[col];

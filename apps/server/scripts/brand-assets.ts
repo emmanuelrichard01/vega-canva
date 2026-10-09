@@ -1,7 +1,7 @@
 /**
  * Draw every brand raster the web app ships, from the vector mark.
  *
- *   npx tsx scripts/brand-assets.ts [--site https://vscanva.vercel.app]
+ *   npx tsx scripts/brand-assets.ts
  *
  * Writes into `apps/frontend/public`:
  *
@@ -11,7 +11,10 @@
  *   apple-touch-icon.png  180 px, opaque — iOS rounds the corners itself
  *   icons/icon-*.png      the installed app icon, as drawn
  *   icons/maskable-*.png  the same, inside Android's safe zone, full bleed
- *   og-image.png          the site's own share card, 1200×630
+ *   og-image.png          the site's own share card, 1200×630: the
+ *                         "Vega Studio hero" template drawn to a picture
+ *   og-square.png         the same card composed for a square, 1200×1200,
+ *                         for unfurlers that crop to one (WhatsApp, iMessage)
  *   og-board.png          a board's card when the server cannot be asked
  *
  * These used to be exported by hand, and the install icons had quietly kept an
@@ -22,12 +25,11 @@
 import fs from 'fs';
 import path from 'path';
 import { BRAND_AMBER, BRAND_INK, BRAND_PAPER, MARK_SPARKLE, MARK_V, markSvg } from '../src/share/brand';
-import { privateCardSvg, siteCardSvg } from '../src/share/cardSvg';
+import { privateCardSvg } from '../src/share/cardSvg';
+import { heroCardSvg, heroSquareSvg } from '../src/share/heroCard';
 import { svgToPng } from '../src/share/raster';
 
 const PUBLIC = path.resolve(__dirname, '..', '..', 'frontend', 'public');
-const siteArg = process.argv.indexOf('--site');
-const site = siteArg > 0 ? process.argv[siteArg + 1] : 'https://vscanva.vercel.app';
 
 const square = (size: number, body: string) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${body}</svg>`;
@@ -102,7 +104,8 @@ async function main() {
     await write(`icons/maskable-${size}.png`, await svgToPng(maskableIcon(size)));
   }
 
-  await write('og-image.png', await svgToPng(siteCardSvg({ domain: new URL(site).host })));
+  await write('og-image.png', await svgToPng(heroCardSvg()));
+  await write('og-square.png', await svgToPng(heroSquareSvg()));
   await write('og-board.png', await svgToPng(privateCardSvg()));
 }
 

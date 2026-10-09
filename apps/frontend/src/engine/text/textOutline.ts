@@ -43,6 +43,12 @@ import type { BezierGeometry, CompoundGeometry, TextNode } from '../model/schema
 export interface OutlinedText {
   /** Every letterform, filled as one shape so counters stay holes. */
   geometry: CompoundGeometry;
+  /**
+   * The same letterforms, one geometry per laid-out line that drew anything,
+   * in reading order. What "convert to path" makes of a paragraph: a line is
+   * the unit people re-set, nudge and recolour.
+   */
+  lines: CompoundGeometry[];
   /** Decoration the font could not express, named so it can be reported. */
   dropped: string[];
 }
@@ -88,37 +94,73 @@ export async function outlineText(node: TextNode): Promise<OutlinedText | null> 
   const scale = t.fontSize / font.unitsPerEm;
 
   const contours: BezierGeometry[] = [];
+  const lines: CompoundGeometry[] = [];
 
   for (const line of layout.lines) {
     if (!line.text) continue;
+    const lineStart = contours.length;
 
-    // Where the glyphs actually sit: the line's left edge, already resolved
-    // from the alignment, and its baseline within its own box.
-    let pen = line.x;
     const baseline = line.y + line.baseline;
 
-    const run = font.layout(line.text);
-    for (let i = 0; i < run.glyphs.length; i++) {
-      const glyph = run.glyphs[i];
-      const commands = glyph.path.commands as GlyphCommand[];
-      // A space has an advance and no contours, which is not an error.
-      if (commands.length > 0) {
-        contours.push(...glyphContours(commands, { x: pen, y: baseline, scale }));
-      }
-      pen += run.positions[i].xAdvance * scale;
+    // A justified line is placed word by word, at the layout's own positions;
+    // anything else is one run from the line's start.
+    const runs: { text: string; x: number; width: number }[] =
+      line.words && line.words.length > 0
+        ? line.words.map((w) => ({ text: w.text, x: line.x + w.x, width: w.width }))
+        : [{ text: line.text, x: line.x, width: line.width }];
+
+    for (const piece of runs) {
+      const run = font.layout(piece.text);
       /**
-       * Tracking, added per glyph the way the layout added it per character.
+       * Alignment is re-applied with the shaped width.
        *
-       * `advance()` in `layout.ts` adds `letterSpacing` after every character
-       * including the last, which is what Konva does — so the outline has to
-       * match that or a tracked line would end up shorter than the box it came
-       * out of. A ligature is one glyph where the layout counted two
-       * characters, which makes the two disagree by one space's worth of
-       * tracking on a line containing `fi`. That is under a pixel at any normal
-       * tracking and is the price of using real shaping.
+       * The layout centred or right-aligned the line using the canvas'
+       * measurement, and the font's kerned advances sum to a slightly
+       * different width. Starting at the layout's `x` regardless would let
+       * that difference pile up at one end: a centred heading would come out a
+       * pixel or two off centre. So the shaped run keeps the layout's centre
+       * (or right edge) instead of its left edge.
        */
-      pen += t.letterSpacing;
+      let shaped = 0;
+      for (const pos of run.positions) shaped += pos.xAdvance * scale + t.letterSpacing;
+      const slack = piece.width - shaped;
+      const lone = runs.length === 1;
+      const shift = !lone ? 0 : t.align === 'center' ? slack / 2 : t.align === 'right' ? slack : 0;
+      let pen = piece.x + shift;
+
+      for (let i = 0; i < run.glyphs.length; i++) {
+        const glyph = run.glyphs[i];
+        const pos = run.positions[i];
+        const commands = glyph.path.commands as GlyphCommand[];
+        // A space has an advance and no contours, which is not an error.
+        if (commands.length > 0) {
+          // GPOS offsets: where a mark sits over its base, or a kerning pair
+          // expressed as a shift rather than an advance.
+          contours.push(
+            ...glyphContours(commands, {
+              x: pen + (pos.xOffset ?? 0) * scale,
+              y: baseline - (pos.yOffset ?? 0) * scale,
+              scale,
+            })
+          );
+        }
+        // The kerned advance: fontkit applies the font's `kern`/GPOS pairs.
+        pen += pos.xAdvance * scale;
+        /**
+         * Tracking, added per glyph the way the layout added it per character.
+         *
+         * `advance()` in `layout.ts` adds `letterSpacing` after every character
+         * including the last, which is what Konva does — so the outline has to
+         * match that or a tracked line would end up shorter than the box it
+         * came out of. A ligature is one glyph where the layout counted two
+         * characters; that is under a pixel at any normal tracking and is the
+         * price of using real shaping.
+         */
+        pen += t.letterSpacing;
+      }
     }
+    const drawn = outlineToGeometry(contours.slice(lineStart));
+    if (drawn) lines.push(drawn);
   }
 
   const geometry = outlineToGeometry(contours);
@@ -133,5 +175,5 @@ export async function outlineText(node: TextNode): Promise<OutlinedText | null> 
   if (t.glow) dropped.push('the glow');
   if (t.outline) dropped.push('the letterform stroke');
 
-  return { geometry, dropped };
+  return { geometry, lines, dropped };
 }

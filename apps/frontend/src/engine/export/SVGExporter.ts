@@ -51,7 +51,7 @@ async function outlinedText(nodes: readonly AnyNode[], signal?: AbortSignal): Pr
       const t = node.typography;
       const ink = t.highlight?.autoContrast ? contrastInk(t.highlight.color) : t.color;
       const d = contourData(translatePath(outlined.geometry, node.x, node.y));
-      markup.set(node.id, `<g${rotationTransform(node)}><path d="${d}" fill="${attr(ink)}" fill-rule="evenodd" /></g>`);
+      markup.set(node.id, `<g${rotationTransform(node)}><path d="${d}" fill="${attr(ink)}" fill-rule="nonzero" /></g>`);
     } catch {
       failed += 1;
     }

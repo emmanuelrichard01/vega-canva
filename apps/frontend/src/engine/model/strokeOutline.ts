@@ -21,15 +21,16 @@
  * a union is *for*, so every self-intersection resolves itself, and the parts
  * are simple enough to be obviously right.
  *
- * The cost is the same one `pathBoolean` pays and documents: the result is
- * polygonal. A quarter-pixel flattening tolerance means it looks identical and
- * reads as straight segments when opened in the editor.
+ * The union is polygonal, so the result is fitted back to cubics the way
+ * `pathBoolean`'s is: it opens in the editor as curves with corners where the
+ * joins and caps put them.
  */
 
 import * as clipping from 'polygon-clipping';
 import type { CompoundGeometry, LineCap, LineJoin, Point, Stroke } from './schema';
 import { DEFAULT_MITER_LIMIT } from './schema';
 import { flattenPath, subpathsOf, type ContourGeometry } from './pathGeometry';
+import { fitClosedRing, isSliver } from './curveFit';
 
 type Ring = [number, number][];
 
@@ -206,15 +207,14 @@ export function outlineStroke(
     return null;
   }
 
+  // Curves back, as `pathBoolean` does: an outlined circle is two smooth
+  // rings of a few anchors each rather than a few thousand facets.
   const subpaths = united
     .flat()
     .map((ring) => ring.slice(0, -1).map(([x, y]) => ({ x, y })))
-    .filter((p) => p.length >= 3)
-    .map((p) => ({
-      kind: 'bezier' as const,
-      segments: p.map((q) => ({ x: q.x, y: q.y })),
-      closed: true,
-    }));
+    .filter((p) => p.length >= 3 && !isSliver(p, 0.05, 0.02))
+    .map((p) => fitClosedRing(p))
+    .filter((g): g is NonNullable<typeof g> => g !== null);
 
   return subpaths.length > 0 ? { kind: 'compound', subpaths } : null;
 }

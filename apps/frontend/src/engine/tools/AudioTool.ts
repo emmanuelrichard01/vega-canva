@@ -4,9 +4,9 @@ import { localAuthor, roomId } from '../document';
 import { presenceManager } from '../presence/PresenceManager';
 import { meterLevel, rmsLevel, isSilent } from '../model/audioLevel';
 import { calculateOptimalAudioWidth, resampleWaveform } from '../model/audioPlayback';
-import { mediaUploadUrl, roomRequestHeaders } from '../../utils/endpoints';
-import { queueOfflineMedia } from '../../utils/offlineMediaQueue';
-import { localSrcFor, registerLocalMedia, releaseLocalMedia } from '../../utils/pendingMedia';
+import { localSrcFor, registerLocalMedia } from '../../utils/pendingMedia';
+import { uploadMedia } from '../media/upload';
+import { audioExtension, pickRecordingType, recordedAudioType, uploadAudioType } from '../media/audioFormat';
 import {
   createTranscriber,
   setTranscriptionWanted,
@@ -52,28 +52,10 @@ const STORED_PEAKS = 240;
  */
 const VOICE_BITRATE = 24_000;
 
-/**
- * Container and codec, in order of preference.
- *
- * Opus in WebM is what Chrome and Firefox want; Safari records MP4/AAC and
- * supports none of the WebM entries. An empty string is the last resort,
- * meaning "whatever you would have picked anyway" — better than refusing to
- * record because no preferred type matched.
- */
-const PREFERRED_MIME_TYPES = [
-  'audio/webm;codecs=opus',
-  'audio/webm',
-  'audio/mp4;codecs=mp4a.40.2',
-  'audio/mp4',
-  '',
-];
-
+/** The best container this browser can record. See `audioFormat.ts` for the order. */
 function bestMimeType(): string {
   if (typeof MediaRecorder === 'undefined') return '';
-  for (const type of PREFERRED_MIME_TYPES) {
-    if (type === '' || MediaRecorder.isTypeSupported(type)) return type;
-  }
-  return '';
+  return pickRecordingType((type) => MediaRecorder.isTypeSupported(type));
 }
 
 /** How many recent levels the HUD's rolling meter shows. */
@@ -196,7 +178,11 @@ export class AudioTool implements Tool {
         }
       };
 
-      this.mediaRecorder.start(100);
+      // No timeslice. Sliced recording gains nothing here (the take is only
+      // used whole) and costs a WebM with no duration in its header and, on
+      // some Safari builds, MP4 fragments that do not reassemble into a file
+      // that plays.
+      this.mediaRecorder.start();
       this.elapsedBeforePause = 0;
       this.runStartedAt = Date.now();
       this.isRecording = true;
@@ -459,16 +445,25 @@ export class AudioTool implements Tool {
     this.transcript = '';
     this.teardown(ctx);
 
-    this.mediaRecorder.onstop = async () => {
-      /**
-       * Labelled with what was actually recorded.
-       *
-       * This was hardcoded to `audio/webm`, which is a lie on Safari — it
-       * records MP4/AAC — and a blob whose type contradicts its bytes is a
-       * note that will not play back on the machine that made it.
-       */
-      const recordedType = this.mediaRecorder?.mimeType || 'audio/webm';
-      const audioBlob = new Blob(this.audioChunks, { type: recordedType });
+    const recorder = this.mediaRecorder;
+    recorder.onstop = () => {
+      // The microphone is let go first: the take is complete, and the upload
+      // that follows must not keep the browser's recording indicator lit.
+      this.releaseHardware();
+      const chunks = this.audioChunks;
+      this.audioChunks = [];
+      const recordedType = recordedAudioType(recorder.mimeType, chunks);
+      const audioBlob = new Blob(chunks, { type: recordedType });
+
+      // A take with no bytes cannot be played by anyone, so it is not placed.
+      if (audioBlob.size === 0) {
+        window.dispatchEvent(
+          new CustomEvent('audio-recording-error', {
+            detail: { message: 'Nothing was recorded. Check your microphone and try again.' },
+          })
+        );
+        return;
+      }
 
       const { x, y } = this.dropPoint;
       const objId = nanoid();
@@ -477,64 +472,30 @@ export class AudioTool implements Tool {
       // not go into a shared document.
       const uploadId = nanoid();
       registerLocalMedia(uploadId, audioBlob);
-      const ext = recordedType.includes('mp4') ? 'mp4' : 'webm';
-
-      let resolvedUrl = localSrcFor(uploadId);
-      let uploadSucceeded = false;
-
-      try {
-        const formData = new FormData();
-        formData.append('media', audioBlob, `voice-note.${ext}`);
-
-        const res = await fetch(mediaUploadUrl(roomId), {
-          method: 'POST',
-          headers: roomRequestHeaders(),
-          body: formData,
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.url) {
-            resolvedUrl = data.url;
-            uploadSucceeded = true;
-          }
-        }
-      } catch (err) {
-        console.warn('Network upload failed, queuing voice note for offline sync...', err);
-      }
-
       const author = localAuthor();
-      const width = calculateOptimalAudioWidth(author.name, durationMs);
 
+      // Placed at once and playable at once, from the bytes on this device.
+      // `uploadMedia` swaps in the stored URL when the server has it, keeps
+      // the bytes for Retry when the server refuses, and queues them when the
+      // network is down.
       ctx.editor.createNode({
         id: objId,
         type: 'audio',
         x,
         y,
-        width,
+        width: calculateOptimalAudioWidth(author.name, durationMs),
         height: 64,
-        src: resolvedUrl,
+        src: localSrcFor(uploadId),
         durationMs,
         waveform: resampleWaveform(peaks, STORED_PEAKS),
         author,
         ...(transcript ? { transcript } : {}),
       });
 
-      if (uploadSucceeded) {
-        // After `createNode` above, which has already written the real URL.
-        releaseLocalMedia(uploadId);
-      } else {
-        queueOfflineMedia({
-          id: uploadId,
-          objectId: objId,
-          roomId,
-          fileBlob: audioBlob,
-          fileName: `voice-note.${ext}`,
-          fileType: recordedType,
-          mediaType: 'audio',
-        });
-      }
-
-      this.releaseHardware();
+      const file = new File([audioBlob], `voice-note.${audioExtension(recordedType)}`, {
+        type: uploadAudioType(recordedType),
+      });
+      void uploadMedia({ uploadId, objectId: objId, roomId, file, mediaType: 'audio' });
     };
 
     this.mediaRecorder.stop();

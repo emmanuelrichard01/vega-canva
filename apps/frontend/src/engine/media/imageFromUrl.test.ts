@@ -86,3 +86,23 @@ describe('replaceLinkWithImage', () => {
     expect(nodes.get('n1')!.type).toBe('link');
   });
 });
+
+describe('insertImageFromUrl, slow and refused pictures', () => {
+  it('keeps asking while the server says the picture is still being stored', async () => {
+    answers.push({ meta: { type: 'image' }, pending: true }, { meta: { type: 'image' }, pending: true }, { meta: picture });
+    expect((await insertImageFromUrl('https://example.com/big.jpg')).ok).toBe(true);
+    expect(nodes.size).toBe(1);
+  });
+
+  it.each([
+    ['too-large', /too large/],
+    ['svg', /SVG/],
+    ['avif', /format/],
+    ['unreachable', /did not hand over/],
+  ])('reports %s specifically', async (issue, words) => {
+    answers.push({ meta: { type: 'image', imageIssue: issue } });
+    const out = await insertImageFromUrl('https://example.com/x');
+    expect(out).toMatchObject({ ok: false, kind: 'failed' });
+    expect((out as { reason: string }).reason).toMatch(words);
+  });
+});

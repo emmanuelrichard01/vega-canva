@@ -97,6 +97,14 @@ export function useDocumentHead({ title, unread = 0, indexable = true }: Options
     meta.name = 'robots';
     meta.content = 'noindex, nofollow';
     document.head.appendChild(meta);
-    return () => meta.remove();
+    // `index.html` names the home page as canonical. On a page that must not
+    // be indexed, that line would tell a crawler this board *is* the home
+    // page, so it is taken out for as long as the page is mounted.
+    const canonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+    canonical?.remove();
+    return () => {
+      meta.remove();
+      if (canonical) document.head.appendChild(canonical);
+    };
   }, [indexable]);
 }

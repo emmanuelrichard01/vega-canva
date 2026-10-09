@@ -140,3 +140,109 @@ describe('geometry helpers', () => {
     expect(out).toHaveLength(3);
   });
 });
+
+describe('recognizeShape: extended shapes', () => {
+  const regular = (cx: number, cy: number, r: number, n: number, phase = -Math.PI / 2) =>
+    Array.from({ length: n }, (_, i) => ({ x: cx + Math.cos(phase + (i * Math.PI * 2) / n) * r, y: cy + Math.sin(phase + (i * Math.PI * 2) / n) * r }));
+  const closeRing = (v: Point[]) => [...v, { x: v[0].x + 2, y: v[0].y + 3 }];
+  const starVertices = (cx: number, cy: number, R: number, ratio = 0.45) =>
+    Array.from({ length: 10 }, (_, i) => {
+      const r = i % 2 === 0 ? R : R * ratio;
+      const a = -Math.PI / 2 + (i * Math.PI) / 5;
+      return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r };
+    });
+  const heartCurve = (n = 120) =>
+    Array.from({ length: n + 1 }, (_, i) => {
+      const t = (i / n) * Math.PI * 2 + 0.3;
+      return { x: 200 + 10 * 16 * Math.sin(t) ** 3 / 1, y: 200 - 10 * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) };
+    });
+  const roundedRect = (w: number, h: number, r: number) => {
+    const pts: Point[] = [];
+    const arc = (cx: number, cy: number, from: number) => {
+      for (let i = 0; i <= 10; i += 1) {
+        const a = from + (i / 10) * (Math.PI / 2);
+        pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+      }
+    };
+    arc(w - r, r, -Math.PI / 2);
+    arc(w - r, h - r, 0);
+    arc(r, h - r, Math.PI / 2);
+    arc(r, r, Math.PI);
+    pts.push({ ...pts[0] });
+    return polyline(pts, 3);
+  };
+
+  for (const seed of [1, 2, 3]) {
+    it(`recognises an outline star (seed ${seed})`, () => {
+      expect(recognizeShape(hand(polyline(closeRing(starVertices(200, 200, 120))), 4, seed), 20)?.kind).toBe('star');
+    });
+
+    it(`recognises a pentagram stroke as a star (seed ${seed})`, () => {
+      const tips = regular(200, 200, 120, 5);
+      const order = [0, 2, 4, 1, 3, 0].map((i) => tips[i]);
+      expect(recognizeShape(hand(polyline(order), 4, seed), 20)?.kind).toBe('star');
+    });
+
+    it(`recognises a pentagon (seed ${seed})`, () => {
+      expect(recognizeShape(hand(polyline(closeRing(regular(200, 200, 110, 5))), 3, seed), 20)?.kind).toBe('pentagon');
+    });
+
+    it(`recognises a hexagon (seed ${seed})`, () => {
+      expect(recognizeShape(hand(polyline(closeRing(regular(200, 200, 110, 6, 0))), 3, seed), 20)?.kind).toBe('hexagon');
+    });
+
+    it(`recognises a heart (seed ${seed})`, () => {
+      expect(recognizeShape(hand(heartCurve(), 4, seed), 20)?.kind).toBe('heart');
+    });
+
+    it(`recognises a rounded rectangle (seed ${seed})`, () => {
+      expect(recognizeShape(hand(roundedRect(300, 180, 45), 3, seed), 20)?.kind).toBe('roundedRectangle');
+    });
+  }
+
+  it('recognises a double-headed arrow', () => {
+    const raw = hand(polyline([
+      { x: 40, y: 70 }, { x: 0, y: 100 }, { x: 40, y: 130 }, { x: 0, y: 100 }, { x: 300, y: 100 },
+      { x: 260, y: 70 }, { x: 300, y: 100 }, { x: 260, y: 130 },
+    ]), 2);
+    expect(recognizeShape(raw, 20)?.kind).toBe('doubleArrow');
+  });
+
+  it('recognises a circular arc', () => {
+    const arc = Array.from({ length: 80 }, (_, i) => {
+      const t = Math.PI * 0.1 + (i / 79) * Math.PI * 1.1;
+      return { x: 200 + Math.cos(t) * 120, y: 200 + Math.sin(t) * 120 };
+    });
+    const r = recognizeShape(hand(arc, 3), 20);
+    expect(r?.kind).toBe('arc');
+    expect(r?.closed).toBe(false);
+  });
+
+  it('recognises a check mark', () => {
+    const raw = hand(polyline([{ x: 0, y: 60 }, { x: 40, y: 110 }, { x: 150, y: 0 }]), 2);
+    expect(recognizeShape(raw, 20)?.kind).toBe('check');
+  });
+
+  it('does not confuse the shapes with one another', () => {
+    const kinds = (pts: Point[]) => recognizeShape(pts, 20)?.kind ?? null;
+    const circle = ellipse(200, 200, 100, 100);
+    expect(kinds(hand(circle, 4))).toBe('circle');
+    expect(kinds(hand(ellipse(200, 200, 150, 70), 4))).toBe('ellipse');
+    expect(kinds(hand(polyline([{ x: 0, y: 0 }, { x: 260, y: 4 }, { x: 258, y: 150 }, { x: -3, y: 146 }, { x: 2, y: 3 }]), 4))).toBe('rectangle');
+    expect(kinds(hand(polyline([{ x: 100, y: 0 }, { x: 200, y: 170 }, { x: 0, y: 172 }, { x: 98, y: 4 }]), 3))).toBe('triangle');
+    expect(kinds(hand(polyline([{ x: 100, y: 0 }, { x: 200, y: 100 }, { x: 100, y: 200 }, { x: 0, y: 100 }, { x: 98, y: 3 }]), 3))).toBe('diamond');
+    expect(kinds(hand(polyline(closeRing(regular(200, 200, 110, 4, 0))), 3))).not.toMatch(/star|heart|pentagon|hexagon|roundedRectangle/);
+  });
+
+  it('leaves a zigzag, an S curve and a spiral alone', () => {
+    const zig = polyline([{ x: 0, y: 0 }, { x: 60, y: 90 }, { x: 120, y: 0 }, { x: 180, y: 90 }, { x: 240, y: 0 }, { x: 300, y: 90 }], 20);
+    expect(recognizeShape(zig, 20)).toBeNull();
+    const s = Array.from({ length: 100 }, (_, i) => ({ x: i * 3, y: Math.sin((i / 99) * Math.PI * 2) * 60 }));
+    expect(recognizeShape(s, 20)).toBeNull();
+    const spiral = Array.from({ length: 160 }, (_, i) => {
+      const t = (i / 159) * Math.PI * 4;
+      return { x: 200 + Math.cos(t) * (20 + t * 8), y: 200 + Math.sin(t) * (20 + t * 8) };
+    });
+    expect(recognizeShape(spiral, 20)).toBeNull();
+  });
+});

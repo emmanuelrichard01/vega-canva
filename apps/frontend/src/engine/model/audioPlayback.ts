@@ -246,3 +246,61 @@ export function releasePlayback(player: Pausable): void {
 export function currentPlayer(): Pausable | null {
   return activePlayer;
 }
+
+/**
+ * The clock a voice note shows: its length while it rests, the position once
+ * it has been started or scrubbed. One figure rather than "0:12 / 0:43", so
+ * the waveform keeps the width; the full pair is the scrubber's value text.
+ */
+export function playbackReadout(currentSeconds: number, durationMs: number, engaged: boolean): string {
+  return engaged ? formatClock(currentSeconds * 1000) : formatClock(durationMs);
+}
+
+/** Why an `<audio>` element gave up, in the terms the player acts on. */
+export type AudioLoadFailure = 'network' | 'unsupported' | 'decode';
+
+/**
+ * `MediaError.code` → what to offer. A network failure is worth trying again
+ * (a sleeping server, a dropped connection); a format this browser cannot
+ * decode is not, and the honest answer is the file itself.
+ */
+export function classifyMediaError(code: number | null | undefined): AudioLoadFailure {
+  if (code === 3) return 'decode';
+  if (code === 4) return 'unsupported';
+  return 'network';
+}
+
+/**
+ * Whether a rejected `play()` means the recording is broken.
+ *
+ * It mostly does not. `AbortError` is a pause or a new source arriving before
+ * playback began, which is a second click on a note still buffering from a
+ * slow server; `NotAllowedError` is the browser's autoplay policy. Treating
+ * either as a failure stuck "Couldn't load this recording" on notes that were
+ * perfectly playable.
+ */
+export function isFatalPlayRejection(error: unknown): boolean {
+  const name = (error as { name?: unknown } | null)?.name;
+  return name !== 'AbortError' && name !== 'NotAllowedError';
+}
+
+/**
+ * Which address the `<audio>` element should hold right now.
+ *
+ * When an upload lands, the node's src moves from the local blob to the stored
+ * URL. Switching the element mid-playback cuts the listener off and restarts
+ * the load, so a note that is playing from its blob keeps that blob until it
+ * stops; the stored URL takes over at the next rest.
+ */
+export function nextElementSrc(current: string, incoming: string, playing: boolean): string {
+  if (current === incoming) return current;
+  if (playing && current.startsWith('blob:') && incoming) return current;
+  return incoming;
+}
+
+/** Card density from the node's size: `lg` once it has been made tall enough to earn it. */
+export function audioCardSize(width: number, height: number): 'sm' | 'md' | 'lg' {
+  if (height >= 84 && width >= 300) return 'lg';
+  if (width < 236) return 'sm';
+  return 'md';
+}

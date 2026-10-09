@@ -307,7 +307,10 @@ export function useRoomContextMenuActions({
             showToast('There are no letters in that box to outline');
             return;
           }
-          land(result.id);
+          // One line lands in point editing; a paragraph lands as its group of
+          // lines, selected, ready to move or recolour line by line.
+          if (result.ids.length === 1) land(result.id);
+          else setSelectedIds(result.ids);
           if (result.dropped.length > 0) {
             showToast(`Outlined. ${result.dropped.join(', ')} could not come along.`);
           }

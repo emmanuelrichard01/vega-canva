@@ -9,6 +9,7 @@ import {
   type ContourGeometry,
 } from './pathGeometry';
 import type { HandleMode } from './pathGeometry';
+import { anchorIndexOf, anchorsInBox, boundsOfAnchors, flatOf, nearestAnchor } from './anchorIndex';
 
 /**
  * Editing several anchors at once, across every contour of a path.
@@ -162,7 +163,7 @@ export function setAnchorAlignment(
       subs[ref.sub] = fromAnchors(anchors, sub.closed);
     }
     if (result.kind === 'compound') {
-      result = { kind: 'compound', subpaths: subs };
+      result = { ...result, kind: 'compound', subpaths: subs };
     } else {
       result = subs[0] ?? result;
     }
@@ -188,12 +189,15 @@ export function contours(geo: ContourGeometry): Contour[] {
 
 /** The point one ref names, or `null` when it names nothing. */
 export function anchorAt(geo: ContourGeometry, ref: AnchorRef): Point | null {
-  const a = contours(geo)[ref.sub]?.anchors[ref.index];
-  return a ? { x: a.x, y: a.y } : null;
+  const index = anchorIndexOf(geo);
+  const i = flatOf(index, ref);
+  return i < 0 ? null : { x: index.xs[i], y: index.ys[i] };
 }
 
 export function handleAt(geo: ContourGeometry, ref: HandleRef): Point | null {
-  const a = contours(geo)[ref.sub]?.anchors[ref.index];
+  const index = anchorIndexOf(geo);
+  const i = flatOf(index, ref);
+  const a = i < 0 ? undefined : index.anchors[i];
   if (!a) return null;
   const x = ref.side === 'in' ? a.inX : a.outX;
   const y = ref.side === 'in' ? a.inY : a.outY;
@@ -210,7 +214,7 @@ export function handleAt(geo: ContourGeometry, ref: HandleRef): Point | null {
  */
 function rebuild(geo: ContourGeometry, subs: Contour[]): ContourGeometry {
   const built = subs.map((c) => fromAnchors(c.anchors, c.closed));
-  if (geo.kind === 'compound') return { kind: 'compound', subpaths: built };
+  if (geo.kind === 'compound') return { ...geo, subpaths: built };
   return built[0] ?? geo;
 }
 
@@ -276,7 +280,7 @@ export function dragHandle(
 
   const edited = moveHandle(target, ref.index, ref.side, to, opts);
   if (geo.kind !== 'compound') return edited;
-  return { kind: 'compound', subpaths: subs.map((s, i) => (i === ref.sub ? edited : s)) };
+  return { ...geo, subpaths: subs.map((s, i) => (i === ref.sub ? edited : s)) };
 }
 
 /** Straighten or round every named anchor, in one pass. */
@@ -292,7 +296,7 @@ export function setAnchorsMode(
     subs[ref.sub] = setAnchorMode(target, ref.index, mode);
   }
   if (geo.kind !== 'compound') return subs[0] ?? geo;
-  return { kind: 'compound', subpaths: subs };
+  return { ...geo, subpaths: subs };
 }
 
 export interface Rect {
@@ -309,13 +313,7 @@ export function anchorsInRect(geo: ContourGeometry, rect: Rect): AnchorRef[] {
   const y1 = Math.min(rect.y, rect.y + rect.height);
   const y2 = Math.max(rect.y, rect.y + rect.height);
 
-  const found: AnchorRef[] = [];
-  for (const c of contours(geo)) {
-    c.anchors.forEach((a, index) => {
-      if (a.x >= x1 && a.x <= x2 && a.y >= y1 && a.y <= y2) found.push({ sub: c.sub, index });
-    });
-  }
-  return found;
+  return anchorsInBox(anchorIndexOf(geo), { x: x1, y: y1, width: x2 - x1, height: y2 - y1 });
 }
 
 /**
@@ -326,18 +324,7 @@ export function anchorsInRect(geo: ContourGeometry, rect: Rect): AnchorRef[] {
  * have to apply the same way every time.
  */
 export function anchorNear(geo: ContourGeometry, p: Point, radius: number): AnchorRef | null {
-  let best: AnchorRef | null = null;
-  let bestDist = radius;
-  for (const c of contours(geo)) {
-    c.anchors.forEach((a, index) => {
-      const d = Math.hypot(a.x - p.x, a.y - p.y);
-      if (d <= bestDist) {
-        bestDist = d;
-        best = { sub: c.sub, index };
-      }
-    });
-  }
-  return best;
+  return nearestAnchor(anchorIndexOf(geo), p, radius);
 }
 
 /** The nearest *handle* to a point, searching only the anchors given. */
@@ -458,29 +445,43 @@ export function alignAnchors(
   edge: AlignEdge
 ): ContourGeometry {
   if (refs.length < 2) return geo;
-  const points = refs.map((r) => anchorAt(geo, r)).filter((p): p is Point => p !== null);
-  if (points.length < 2) return geo;
-
-  const xs = points.map((p) => p.x);
-  const ys = points.map((p) => p.y);
+  const box = anchorBounds(geo, refs);
+  if (!box) return geo;
   const target = {
-    left: Math.min(...xs),
-    right: Math.max(...xs),
-    centerX: (Math.min(...xs) + Math.max(...xs)) / 2,
-    top: Math.min(...ys),
-    bottom: Math.max(...ys),
-    middleY: (Math.min(...ys) + Math.max(...ys)) / 2,
+    left: box.x,
+    right: box.x + box.width,
+    centerX: box.x + box.width / 2,
+    top: box.y,
+    bottom: box.y + box.height,
+    middleY: box.y + box.height / 2,
   }[edge];
 
   const horizontal = edge === 'left' || edge === 'right' || edge === 'centerX';
+  const chosen = new Set(refs.map(anchorKey));
 
-  let next = geo;
-  for (const ref of refs) {
-    const at = anchorAt(next, ref);
-    if (!at) continue;
-    const dx = horizontal ? target - at.x : 0;
-    const dy = horizontal ? 0 : target - at.y;
-    if (dx !== 0 || dy !== 0) next = moveAnchors(next, [ref], dx, dy);
+  // One pass over the contours: each picked anchor (and its handles) moves by
+  // its own offset to the target line.
+  const subs = contours(geo).map((c) => ({
+    ...c,
+    anchors: c.anchors.map((a, index) => {
+      if (!chosen.has(anchorKey({ sub: c.sub, index }))) return a;
+      const dx = horizontal ? target - a.x : 0;
+      const dy = horizontal ? 0 : target - a.y;
+      return shiftAnchor(a, dx, dy);
+    }),
+  }));
+  return rebuild(geo, subs);
+}
+
+function shiftAnchor(a: Anchor, dx: number, dy: number): Anchor {
+  const next: Anchor = { ...a, x: a.x + dx, y: a.y + dy };
+  if (next.inX !== undefined && next.inY !== undefined) {
+    next.inX += dx;
+    next.inY += dy;
+  }
+  if (next.outX !== undefined && next.outY !== undefined) {
+    next.outX += dx;
+    next.outY += dy;
   }
   return next;
 }
@@ -494,16 +495,7 @@ export function alignAnchors(
  * area no part of the drawing occupies.
  */
 export function anchorBounds(geo: ContourGeometry, refs: readonly AnchorRef[]): Rect | null {
-  const points = refs.map((r) => anchorAt(geo, r)).filter((p): p is Point => p !== null);
-  if (points.length === 0) return null;
-  const xs = points.map((p) => p.x);
-  const ys = points.map((p) => p.y);
-  return {
-    x: Math.min(...xs),
-    y: Math.min(...ys),
-    width: Math.max(...xs) - Math.min(...xs),
-    height: Math.max(...ys) - Math.min(...ys),
-  };
+  return boundsOfAnchors(anchorIndexOf(geo), refs);
 }
 
 /**

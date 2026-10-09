@@ -6,7 +6,7 @@
         {
           "type": "header",
           "key": "user-agent",
-          "value": ".*(Slackbot|Slack-ImgProxy|Twitterbot|facebookexternalhit|Facebot|LinkedInBot|Discordbot|WhatsApp/|TelegramBot|SkypeUriPreview|Applebot|Googlebot|Google-InspectionTool|bingbot|BingPreview|redditbot|Embedly|Pinterestbot|vkShare|Mastodon|Iframely|MicrosoftPreview|Bluesky Cardyb|DuckDuckBot|YandexBot).*"
+          "value": ".*(Slackbot|Slack-ImgProxy|Twitterbot|facebookexternalhit|Facebot|LinkedInBot|Discordbot|WhatsApp/|TelegramBot|SkypeUriPreview|MicrosoftPreview|redditbot|Embedly|Iframely|Pinterestbot|vkShare|Mastodon|Pleroma|Misskey|Bluesky Cardyb|Snap URL Preview|Google-PageRenderer|Synapse|Discourse|XING-contenttabreceiver|Quora Link Preview|Applebot|Googlebot|Google-InspectionTool|bingbot|BingPreview|DuckDuckBot|YandexBot).*"
         }
       ],
       "missing": [{ "type": "query", "key": "app" }],
@@ -18,16 +18,14 @@
         {
           "type": "header",
           "key": "user-agent",
-          "value": ".*(Slackbot|Slack-ImgProxy|Twitterbot|facebookexternalhit|Facebot|LinkedInBot|Discordbot|WhatsApp/|TelegramBot|SkypeUriPreview|Applebot|Googlebot|Google-InspectionTool|bingbot|BingPreview|redditbot|Embedly|Pinterestbot|vkShare|Mastodon|Iframely|MicrosoftPreview|Bluesky Cardyb|DuckDuckBot|YandexBot).*"
+          "value": ".*(Slackbot|Slack-ImgProxy|Twitterbot|facebookexternalhit|Facebot|LinkedInBot|Discordbot|WhatsApp/|TelegramBot|SkypeUriPreview|MicrosoftPreview|redditbot|Embedly|Iframely|Pinterestbot|vkShare|Mastodon|Pleroma|Misskey|Bluesky Cardyb|Snap URL Preview|Google-PageRenderer|Synapse|Discourse|XING-contenttabreceiver|Quora Link Preview|Applebot|Googlebot|Google-InspectionTool|bingbot|BingPreview|DuckDuckBot|YandexBot).*"
         }
       ],
       "missing": [{ "type": "query", "key": "app" }],
       "destination": "/api/share?kind=invite&id=:token"
     },
-    {
-      "source": "/((?!api/).*)",
-      "destination": "/index.html"
-    }
+    { "source": "/templates", "destination": "/templates.html" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ],
   "headers": [
     {
@@ -52,11 +50,15 @@
       "headers": [{ "key": "X-Robots-Tag", "value": "noindex" }]
     },
     {
+      "source": "/api/(.*)",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex" }]
+    },
+    {
       "source": "/assets/(.*)",
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
     },
     {
-      "source": "/(favicon.svg|favicon.ico|favicon-96x96.png|apple-touch-icon.png|og-image.png|og-board.png|site.webmanifest)",
+      "source": "/(favicon.svg|favicon.ico|favicon-96x96.png|apple-touch-icon.png|og-image.png|og-square.png|og-board.png|site.webmanifest)",
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }]
     },
     {
@@ -70,6 +72,10 @@
     {
       "source": "/icons/(.*)",
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }]
+    },
+    {
+      "source": "/(robots.txt|sitemap.xml)",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=3600, stale-while-revalidate=86400" }]
     }
   ]
 }

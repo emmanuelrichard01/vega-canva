@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import { applyNodePatches, doc, nextZIndex, DERIVED_ORIGIN } from '../document';
+import { applyNodePatches, doc, nextZIndex, updateNode, DERIVED_ORIGIN } from '../document';
 import { isElectedWriter } from '../document/election';
 import { editor } from '../api/EditorAPI';
 import { requestEditOnMount } from '../interaction/pendingEdit';
@@ -10,6 +10,7 @@ import {
   fitInCell,
   isSlottable,
   planGridUpdate,
+  textAlignIn,
   planSlotRelease,
   type ReflowPatch,
   type SlottableNode,
@@ -29,6 +30,7 @@ import {
   type SlotFit,
 } from './gridSlot';
 import type { Rect } from '../model/imageCrop';
+import type { CellAlign } from './gridLayout';
 
 /**
  * Putting pictures into a grid, and keeping them there.
@@ -229,7 +231,12 @@ function placementPatch(
           },
         }
       : content.type === 'text'
-        ? { resize: 'fixed' as const }
+        ? {
+            // The one rule for text in a cell -- typed in or dropped, the same
+            // object comes out. See `textAlignIn`.
+            resize: 'fixed' as const,
+            typography: { ...content.typography, ...textAlignIn(grid.grid.spec.contentAlign) },
+          }
         : null;
 
   return {
@@ -653,45 +660,66 @@ export function addTextToCell(gridId: string, cell: number): string | null {
   const objects = useStore.getState().objects;
   const grid = objects[gridId];
   if (!isGrid(grid)) return null;
+  if (!gridCellsOf(grid).some((c) => c.index === cell)) return null;
 
-  const target = gridCellsOf(grid).find((c) => c.index === cell);
-  if (!target) return null;
-
-  const box = slotBox(grid, target);
   const id = nanoid();
+  /**
+   * A plain new text object, then adopted by `placementPatch` -- the very
+   * function a drop goes through -- so typing into a module and dropping text
+   * on it cannot drift apart again. The draft's box is a placeholder that the
+   * patch replaces with the module's.
+   */
+  const draft = {
+    id,
+    type: 'text' as const,
+    x: grid.x,
+    y: grid.y,
+    width: 1,
+    height: 1,
+    rotation: 0,
+    text: '',
+    resize: 'fixed' as const,
+    typography: { ...DEFAULT_TYPOGRAPHY },
+    parentId: grid.parentId,
+    frameId: grid.frameId,
+  };
+  const placed = placementPatch(grid, draft as unknown as SlottableNode, cell, nextZIndex());
+  if (!placed) return null;
 
   requestEditOnMount(id);
-
   doc.transact(() => {
-    editor.createNode({
-      id,
-      type: 'text',
-      x: box.x,
-      y: box.y,
-      width: box.width,
-      height: box.height,
-      rotation: box.rotation,
-      zIndex: nextZIndex(),
-      text: '',
-      resize: 'fixed',
-      typography: {
-        ...DEFAULT_TYPOGRAPHY,
-        /**
-         * Centred both ways, because a caption in a box is not a paragraph.
-         * Left-aligned at the top is right for a text object you placed on open
-         * canvas and wrong for one filling a module, where the module's own
-         * geometry is the composition and ragged text fights it.
-         */
-        align: 'center',
-        verticalAlign: 'middle',
-      },
-      gridSlot: { gridId, cell },
-      parentId: grid.parentId,
-      frameId: grid.frameId,
-    } as never);
+    editor.createNode({ ...draft, ...placed.changes } as never);
   });
 
   return id;
+}
+
+/**
+ * Set a grid's Item placement and re-set the text in it to match, as one
+ * undo step. Pictures and other items follow through the reflow, which reads
+ * the placement; text alignment is a property of each text object, so it is
+ * written here, once, rather than fought over on every reflow.
+ */
+export function setItemPlacement(gridId: string, align: CellAlign | undefined): void {
+  const objects = useStore.getState().objects;
+  const grid = objects[gridId];
+  if (!isGrid(grid)) return;
+  const next = align && !(align.x === 'stretch' && align.y === 'stretch') ? align : undefined;
+  const set = textAlignIn(next);
+  const patches: ReflowPatch[] = [];
+  for (const node of imagesInGrid(objects, gridId)) {
+    if (node.type !== 'text') continue;
+    const t = node.typography;
+    if (t.align === set.align && t.verticalAlign === set.verticalAlign) continue;
+    patches.push({ id: node.id, changes: { typography: { ...t, ...set } } });
+  }
+  doc.transact(() => {
+    const spec = { ...grid.grid.spec, x: 0, y: 0, width: grid.width, height: grid.height };
+    if (next) spec.contentAlign = next;
+    else delete spec.contentAlign;
+    updateNode(gridId, { grid: { ...grid.grid, spec } });
+    if (patches.length > 0) applyNodePatches(patches);
+  });
 }
 
 /**

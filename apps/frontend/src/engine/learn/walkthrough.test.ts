@@ -150,6 +150,22 @@ describe('a walkthrough refers to a lesson rather than restating it', () => {
         'text-box',
         'text-to-path',
         'voice-note',
+        // Taught by the reference and its animated demo: each is a view, a
+        // held key or a setting that the document does not record as a fact.
+        'collab-cursors',
+        'collab-follow',
+        'collab-ping',
+        'collab-reactions',
+        'collab-share',
+        'collab-spotlight',
+        'export-files',
+        'grid-edit-cells',
+        'shadows-effects',
+        'sketch-board',
+        'slides-deck',
+        'template-gallery',
+        'touch-gestures',
+        'version-history',
       ].sort()
     );
   });
