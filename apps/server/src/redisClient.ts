@@ -75,6 +75,10 @@ export function createSharedRedis(
 
   const client = new IORedis({
     ...redisConnectionOptions(redis),
+    // ioredis 6 defaults to RESP3, which needs `HELLO 3` (Redis 6+) and is
+    // not supported by every managed Redis. RESP2 is what v5 spoke and what
+    // the Hocuspocus extension's own ioredis 5 client still uses.
+    protocol: 2,
     // Fail fast rather than queue: a limiter that waits for Redis holds every
     // request open during an outage.
     enableOfflineQueue: false,
