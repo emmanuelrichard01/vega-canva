@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { PanelRightClose } from 'lucide-react';
+import { LayoutDashboard, PanelRightClose } from 'lucide-react';
 import { localAuthorId, provider, updateNodes } from '../engine/document';
 import { restackSelection, type RestackOp } from '../engine/model/restack';
 import { useStore } from '../hooks/useStore';
@@ -86,10 +86,12 @@ const DEFAULT_INNER_SHADOW: Shadow = {
 
 export const PANEL_WIDTH_KEY = 'vega.panel.width';
 export const PANEL_MIN_W = 240;
-export const PANEL_MAX_W = 360;
+export const PANEL_MAX_W = 400;
+/** Wide enough for a label column beside a pair of fields without truncating either. */
+export const PANEL_DEFAULT_W = 288;
 
 export function clampPanelWidth(w: number): number {
-  if (!Number.isFinite(w)) return 260;
+  if (!Number.isFinite(w)) return PANEL_DEFAULT_W;
   return Math.round(Math.min(PANEL_MAX_W, Math.max(PANEL_MIN_W, w)));
 }
 
@@ -116,11 +118,12 @@ function typographyOf(node: AnyNode): Typography | null {
 }
 
 /**
- * The panel's left edge, dragged to set its width (240–360px). The width is
- * remembered per browser; arrow keys move it by 8px for keyboard users.
+ * The panel's left edge, dragged to set its width (240–400px, 288 to start).
+ * The width is remembered per browser; arrow keys move it by 8px for keyboard
+ * users and a double-click puts it back.
  */
 const WidthHandle: React.FC = () => {
-  const [width, setWidth] = useState(() => clampPanelWidth(Number(storageGet(PANEL_WIDTH_KEY) ?? 260)));
+  const [width, setWidth] = useState(() => clampPanelWidth(Number(storageGet(PANEL_WIDTH_KEY) ?? PANEL_DEFAULT_W)));
   const drag = useRef<{ x: number; w: number } | null>(null);
 
   useEffect(() => applyPanelWidth(width), [width]);
@@ -159,7 +162,7 @@ const WidthHandle: React.FC = () => {
       onPointerCancel={() => {
         drag.current = null;
       }}
-      onDoubleClick={() => commit(260)}
+      onDoubleClick={() => commit(PANEL_DEFAULT_W)}
       onKeyDown={(e) => {
         if (e.key === 'ArrowLeft') {
           e.preventDefault();
@@ -228,6 +231,9 @@ const PropertiesPanelInner: React.FC<PropertiesPanelProps> = ({ selectedIds, ove
           <WidthHandle />
           <div ref={setScroller} className="props-panel custom-scrollbar">
             <header className="panel-head">
+              <span className="panel-head__glyph" aria-hidden="true">
+                <LayoutDashboard size={14} />
+              </span>
               <span className="panel-head__name">Board</span>
               {onCollapse && (
                 <button
@@ -241,7 +247,6 @@ const PropertiesPanelInner: React.FC<PropertiesPanelProps> = ({ selectedIds, ove
                 </button>
               )}
             </header>
-            <p className="props-panel__hint">Select something on the board to edit it here.</p>
             <BoardSection />
           </div>
         </div>
@@ -261,6 +266,10 @@ const PropertiesPanelInner: React.FC<PropertiesPanelProps> = ({ selectedIds, ove
     : objectRegistry.get(node.type)?.capabilities ?? {};
   const typography = typographyOf(node);
   const appearance = appearanceOf(node);
+  // A frame's corners are set once, in the Frame section; Appearance does not repeat them.
+  const appearanceCapabilities = nodes.every((n) => n.type === 'frame')
+    ? { ...capabilities, supportsRadius: false }
+    : capabilities;
 
   const openShape = nodes.some((n) => n.type === 'shape' && isOpenShape(n.geometry.kind));
   const offered = new Set(resolveAffordances(nodes, { surface: 'panel' }).map((a) => a.id));
@@ -603,7 +612,7 @@ const PropertiesPanelInner: React.FC<PropertiesPanelProps> = ({ selectedIds, ove
           />
 
           <AppearanceSection
-            capabilities={capabilities}
+            capabilities={appearanceCapabilities}
             appearance={appearance ?? undefined}
             openShape={openShape}
             hasConnector={hasConnector}

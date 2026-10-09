@@ -34,7 +34,7 @@ export interface NumberFieldProps {
 }
 
 /**
- * A number in a 28px field: type it, step it with ↑ and ↓, or scrub it by
+ * A number in a field one control tall: type it, step it with ↑ and ↓, or scrub it by
  * dragging the glyph. A scrub previews live on the board and lands as one
  * undo step; on a mixed field it moves every object by the same amount.
  */
@@ -54,12 +54,12 @@ export const NumberField: React.FC<NumberFieldProps> = ({
   disabledReason,
 }) => {
   const mixed = value === 'mixed';
-  const letter = typeof glyph === 'string' ? glyph : undefined;
-  const icon = typeof glyph === 'string' ? undefined : glyph;
+  // A letter sits inside the field like an icon does, so every field in a
+  // column starts its number on the same line and the letter is the scrub handle.
+  const icon = typeof glyph === 'string' ? <span className="pg-glyph-text">{glyph}</span> : glyph;
   return (
     <NumberStepper
       aria-label={label}
-      label={letter}
       glyph={icon}
       value={mixed ? 0 : value}
       mixed={mixed}

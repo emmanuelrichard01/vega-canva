@@ -3,14 +3,14 @@ import { storageGet, storageSet } from '../../utils/safeStorage';
 
 /** The same range the properties panel takes, so the two columns match. */
 const MIN_W = 240;
-const MAX_W = 360;
+const MAX_W = 400;
 const DEFAULT_W = 260;
 const KEY = 'vega.panel.left.width';
 
 const clamp = (w: number) => (Number.isFinite(w) ? Math.round(Math.min(MAX_W, Math.max(MIN_W, w))) : DEFAULT_W);
 
 /**
- * The left panel's right edge, dragged to set its width (240–360px), published
+ * The left panel's right edge, dragged to set its width (240–400px), published
  * as `--layers-w` on the root so the panel, the radar under it and the insets
  * all read one number. Remembered per browser; arrow keys move it by 8px.
  */

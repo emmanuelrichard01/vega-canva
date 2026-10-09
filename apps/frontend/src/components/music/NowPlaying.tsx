@@ -1,5 +1,6 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
 import { Maximize2, Minimize2 } from 'lucide-react';
+import { stationTint } from '../../engine/music/tint';
 import { Turntable } from './Turntable';
 import { TrackArt } from './TrackArt';
 import { SeekBar } from './SeekBar';
@@ -112,7 +113,7 @@ function useStationModel(): Model | null {
     title: t.title,
     subtitle: t.artist,
     source: `${categoryLabel(t.category)} station`,
-    stage: <Turntable playing={library.playing} progress={duration > 0 ? position / duration : null} label={<TrackArt artwork={t.artwork} category={t.category} size={64} />} size={148} />,
+    stage: <Turntable playing={library.playing} progress={duration > 0 ? position / duration : null} label={<TrackArt artwork={t.artwork} category={t.category} size={64} />} size={148} tint={stationTint(t.category)} />,
     tile: <TrackArt artwork={t.artwork} category={t.category} size={44} />,
     glow: null,
     playing: library.playing,

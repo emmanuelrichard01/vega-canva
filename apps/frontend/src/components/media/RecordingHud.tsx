@@ -20,7 +20,7 @@ export interface RecordingOverlay {
 }
 
 /** Hairlines in the meter. Their width is fixed in CSS; these divide it. */
-const BAR_COUNT = 20;
+const BAR_COUNT = 28;
 
 /** Start counting down when the cap is this close. */
 const WARN_AT_MS = 30_000;
@@ -156,6 +156,7 @@ export const RecordingHud: React.FC<{ overlay: RecordingOverlay; onStop: () => v
         <button type="button" className="rec-hud-done" onClick={onStop}>
           <Check size={14} />
           Keep
+          <kbd className="rec-hud-kbd" aria-hidden="true">↵</kbd>
         </button>
 
         {maxMs ? (
@@ -172,7 +173,7 @@ export const RecordingHud: React.FC<{ overlay: RecordingOverlay; onStop: () => v
         {silent && !paused ? ', no sound is being picked up' : ''}
       </span>
 
-      <span className="rec-hud-hint">Space to pause · Esc to discard{maxMs ? ` · stops at ${formatClock(maxMs)}` : ''}</span>
+      <span className="rec-hud-hint">Space pause · Enter keep · Esc discard{maxMs ? ` · stops at ${formatClock(maxMs)}` : ''}</span>
     </div>
   );
 };

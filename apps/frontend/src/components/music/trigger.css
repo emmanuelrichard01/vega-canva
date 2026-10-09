@@ -46,17 +46,22 @@
   .btn-icon.music-trigger--line { display: grid; width: var(--btn-size, var(--control-h-md)); padding: 0; }
 }
 
-.vinyl-glyph { display: block; flex: none; }
+.vinyl-glyph { display: block; flex: none; overflow: visible; }
+.vinyl-glyph__disc { transform-box: view-box; transform-origin: 9px 10px; }
 /* Cut from the surface colour, so the record reads in every theme. A context may override either. */
 .vinyl-glyph__groove { stroke: var(--vinyl-groove, color-mix(in srgb, var(--surface-elevated) 78%, transparent)); }
 .vinyl-glyph__label { fill: var(--vinyl-label, var(--surface-elevated)); }
-.vinyl-glyph.is-spinning {
-  /* 33⅓ rpm is one turn every 1.8 s. */
-  animation: vinylSpin 1.8s linear infinite;
+/* Two soft light arcs, as light catches real grooves. They stay put while the disc turns beneath. */
+.vinyl-glyph__sheen { fill: none; stroke: var(--vinyl-groove, color-mix(in srgb, var(--surface-elevated) 78%, transparent)); stroke-width: 0.7; stroke-linecap: round; opacity: 0.55; }
+/* The tonearm rests off the record and lowers onto it while playing: 240ms, eased, no rebound. */
+.vinyl-glyph__arm {
+  transform-box: view-box;
+  transform-origin: 17px 3.4px;
+  transform: rotate(-16deg);
+  opacity: 0.7;
+  transition: transform 240ms var(--ease-settle), opacity 160ms ease;
 }
-@keyframes vinylSpin {
-  to { transform: rotate(360deg); }
-}
+.vinyl-glyph.is-playing .vinyl-glyph__arm { transform: none; opacity: 1; }
 
 :root[data-contrast='more'] .music-trigger.is-playing::after {
   box-shadow: inset 0 0 0 1.5px var(--text-primary);
@@ -99,5 +104,5 @@
 
 @media (prefers-reduced-motion: reduce) {
   .music-panel { animation: none; }
-  .vinyl-glyph.is-spinning { animation: none; }
+  .vinyl-glyph__arm { transition: none; }
 }

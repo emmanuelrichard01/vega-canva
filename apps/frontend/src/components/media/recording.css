@@ -112,3 +112,52 @@
     outline: 1px solid var(--border-strong);
   }
 }
+
+/* ---- Wave 8: calmer HUD ------------------------------------------------- */
+
+/* A wider, rounder meter that reads as a waveform rather than a gauge. */
+.rec-hud-meter {
+  width: 112px;
+  height: 24px;
+  gap: 2px;
+}
+
+.rec-hud-tick {
+  border-radius: 999px;
+  background: var(--status-danger);
+}
+
+.rec-hud-panel.is-paused .rec-hud-tick {
+  background: var(--text-tertiary);
+}
+
+/* The recording dot breathes instead of blinking. */
+.rec-hud-dot {
+  animation-duration: 2.4s;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-danger) 18%, transparent);
+}
+
+/* Keep is the one obvious action. */
+.rec-hud-done {
+  padding: 8px 14px 8px 16px;
+}
+
+.rec-hud-kbd {
+  font-family: inherit;
+  font-size: var(--text-2xs);
+  opacity: 0.6;
+  margin-left: 2px;
+}
+
+.rec-hud-hint {
+  letter-spacing: 0.01em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rec-hud-dot {
+    animation: none;
+  }
+  .rec-hud-tick {
+    transition: none;
+  }
+}

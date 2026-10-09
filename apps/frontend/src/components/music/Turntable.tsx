@@ -23,7 +23,9 @@ export const Turntable: React.FC<{
   /** The record label: cover art, sized by CSS to fill a circle. */
   label: React.ReactNode;
   size?: number;
-}> = ({ playing, progress, label, size = 132 }) => {
+  /** The station's accent: a thin ring on the label. */
+  tint?: string | null;
+}> = ({ playing, progress, label, size = 132, tint = null }) => {
   const recordRef = useRef<HTMLDivElement>(null);
   const armRef = useRef<SVGGElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -115,7 +117,7 @@ export const Turntable: React.FC<{
     <div
       ref={hostRef}
       className={`tt${playing ? ' is-playing' : ''}${reduced ? ' is-still' : ''}`}
-      style={{ '--tt-size': `${size}px` } as React.CSSProperties}
+      style={{ '--tt-size': `${size}px`, ...(tint ? { '--tt-label-edge': tint } : null) } as React.CSSProperties}
       role="img"
       aria-label={playing ? 'Record playing' : 'Record stopped'}
     >

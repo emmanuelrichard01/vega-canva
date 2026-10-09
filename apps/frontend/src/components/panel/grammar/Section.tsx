@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useId, useRef, useState, useSyncExternalStore } from 'react';
-import { ChevronRight, MoreHorizontal, Plus } from 'lucide-react';
+import React, { createContext, useContext, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
+import { ChevronDown, MoreHorizontal, Plus } from 'lucide-react';
 import { Menu } from '../../menu/Menu';
 import type { MenuEntry } from '../../menu/menuModel';
 import { isSectionOpen, setSectionOpen, subscribeSections } from './sectionState';
@@ -41,6 +41,15 @@ export interface SectionProps {
   children?: React.ReactNode;
 }
 
+/** How long a fold takes to open or close; the CSS transition matches it. */
+export const FOLD_MS = 180;
+
+/** True where a fold should snap rather than glide: reduced motion, or no `matchMedia` (tests, SSR). */
+function snapFolds(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true;
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 function useSectionOpen(subject: string, id: string, fallback: boolean, enabled: boolean) {
   const read = () => (enabled ? isSectionOpen(subject, id, fallback) : true);
   return useSyncExternalStore(subscribeSections, read, read);
@@ -70,15 +79,32 @@ export const Section: React.FC<SectionProps> = ({
   const [addOpen, setAddOpen] = useState(false);
   const canAdd = Boolean(onAdd) || Boolean(addMenu && addMenu.length > 0);
 
-  const showBody = !empty && open && children != null;
-  const toggle = () => setSectionOpen(key, id, !open);
+  /**
+   * A fold glides: the body stays mounted for one `FOLD_MS` after closing so
+   * its height and opacity can run down, and is marked while opening so it
+   * clips while it grows. Snaps under reduced motion.
+   */
+  const [phase, setPhase] = useState<'idle' | 'opening' | 'closing'>('idle');
+  useEffect(() => {
+    if (phase === 'idle') return;
+    const t = setTimeout(() => setPhase('idle'), FOLD_MS);
+    return () => clearTimeout(t);
+  }, [phase]);
+
+  const hasBody = !empty && children != null;
+  const showBody = hasBody && (open || phase === 'closing');
+  const toggle = () => {
+    if (!snapFolds()) setPhase(open ? 'closing' : 'opening');
+    setSectionOpen(key, id, !open);
+  };
 
   return (
     <section
       className="pg-section"
       data-section={id}
       data-empty={empty || undefined}
-      data-open={showBody || undefined}
+      data-open={(hasBody && open) || undefined}
+      data-collapsible={(collapsible && !empty) || undefined}
       aria-label={title}
     >
       <div className="pg-section__head">
@@ -90,9 +116,9 @@ export const Section: React.FC<SectionProps> = ({
             aria-controls={bodyId}
             onClick={toggle}
           >
-            <ChevronRight size={12} className="pg-section__chevron" aria-hidden="true" />
             <span className="pg-section__label">{title}</span>
             {meta != null && <span className="pg-section__meta">{meta}</span>}
+            <ChevronDown size={13} strokeWidth={2.25} className="pg-section__chevron" aria-hidden="true" />
           </button>
         ) : (
           <h3 className="pg-section__title">
@@ -131,11 +157,18 @@ export const Section: React.FC<SectionProps> = ({
           )}
         </span>
       </div>
-      {showBody && (
-        <div id={bodyId} className="pg-section__body">
-          {children}
-        </div>
-      )}
+      {showBody &&
+        (collapsible ? (
+          <div className="pg-section__fold" data-phase={phase === 'idle' ? undefined : phase}>
+            <div id={bodyId} className="pg-section__body">
+              {children}
+            </div>
+          </div>
+        ) : (
+          <div id={bodyId} className="pg-section__body">
+            {children}
+          </div>
+        ))}
       {addOpen && addMenu && addButton.current && (
         <Menu
           entries={addMenu}

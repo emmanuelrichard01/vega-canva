@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { FlipHorizontal2, FlipVertical2, Lock, RotateCw, Unlock } from 'lucide-react';
 import { IconToggle, NumberField, PairRow, Section } from '../grammar';
 import type { AnyNode } from '../../../engine/model/schema';
@@ -32,7 +32,9 @@ interface TransformSectionProps {
  * every design tool, because it is the most-read block in the panel.
  *
  * Every field scrubs by its letter. Values are written once per edit (Enter,
- * an arrow, or the end of a drag), so a scrub is one undo step.
+ * an arrow, or the end of a drag), so a scrub is one undo step. Skew is the
+ * one advanced control: it shows when the selection is skewed, and otherwise
+ * waits behind the section's ⋯.
  */
 export const TransformSection: React.FC<TransformSectionProps> = ({
   bounds,
@@ -52,13 +54,28 @@ export const TransformSection: React.FC<TransformSectionProps> = ({
 }) => {
   const skewX = shared((n) => n.skewX ?? 0);
   const skewY = shared((n) => n.skewY ?? 0);
+  const skewed = skewX.mixed || skewY.mixed || Boolean(skewX.value) || Boolean(skewY.value);
+  const [skewAsked, setSkewAsked] = useState(false);
+  const showSkew = skewed || skewAsked;
   return (
-    <Section id="layout" title="Layout">
+    <Section
+      id="layout"
+      title="Layout"
+      menu={[
+        {
+          kind: 'item',
+          id: 'skew',
+          label: 'Show skew',
+          checked: showSkew,
+          disabled: skewed,
+          onSelect: () => setSkewAsked((v) => !v),
+        },
+      ]}
+    >
       <PairRow linked>
         <NumberField
           label="X position"
           glyph="X"
-          unit="px"
           value={Math.round(bounds?.x ?? node.x)}
           onChange={(v) => setOrigin('x', v)}
         />
@@ -66,7 +83,6 @@ export const TransformSection: React.FC<TransformSectionProps> = ({
         <NumberField
           label="Y position"
           glyph="Y"
-          unit="px"
           value={Math.round(bounds?.y ?? node.y)}
           onChange={(v) => setOrigin('y', v)}
         />
@@ -75,7 +91,6 @@ export const TransformSection: React.FC<TransformSectionProps> = ({
         <NumberField
           label="Width"
           glyph="W"
-          unit="px"
           min={1}
           value={Math.round(bounds?.width ?? node.width)}
           disabledReason={resizeBlockedReason}
@@ -91,7 +106,6 @@ export const TransformSection: React.FC<TransformSectionProps> = ({
         <NumberField
           label="Height"
           glyph="H"
-          unit="px"
           min={1}
           value={Math.round(bounds?.height ?? node.height)}
           disabledReason={resizeBlockedReason}
@@ -125,30 +139,32 @@ export const TransformSection: React.FC<TransformSectionProps> = ({
           <FlipVertical2 size={14} />
         </IconToggle>
       </div>
-      <PairRow>
-        <NumberField
-          label="Skew horizontal"
-          glyph="SX"
-          unit="deg"
-          step={5}
-          min={-89}
-          max={89}
-          value={skewX.mixed ? 'mixed' : Math.round(skewX.value ?? 0)}
-          onNudge={(d) => nudgeEach('skewX', d)}
-          onChange={(v) => set({ skewX: v === 0 ? undefined : v } as Partial<AnyNode>)}
-        />
-        <NumberField
-          label="Skew vertical"
-          glyph="SY"
-          unit="deg"
-          step={5}
-          min={-89}
-          max={89}
-          value={skewY.mixed ? 'mixed' : Math.round(skewY.value ?? 0)}
-          onNudge={(d) => nudgeEach('skewY', d)}
-          onChange={(v) => set({ skewY: v === 0 ? undefined : v } as Partial<AnyNode>)}
-        />
-      </PairRow>
+      {showSkew && (
+        <PairRow>
+          <NumberField
+            label="Skew horizontal"
+            glyph="SX"
+            unit="deg"
+            step={5}
+            min={-89}
+            max={89}
+            value={skewX.mixed ? 'mixed' : Math.round(skewX.value ?? 0)}
+            onNudge={(d) => nudgeEach('skewX', d)}
+            onChange={(v) => set({ skewX: v === 0 ? undefined : v } as Partial<AnyNode>)}
+          />
+          <NumberField
+            label="Skew vertical"
+            glyph="SY"
+            unit="deg"
+            step={5}
+            min={-89}
+            max={89}
+            value={skewY.mixed ? 'mixed' : Math.round(skewY.value ?? 0)}
+            onNudge={(d) => nudgeEach('skewY', d)}
+            onChange={(v) => set({ skewY: v === 0 ? undefined : v } as Partial<AnyNode>)}
+          />
+        </PairRow>
+      )}
       {children}
     </Section>
   );

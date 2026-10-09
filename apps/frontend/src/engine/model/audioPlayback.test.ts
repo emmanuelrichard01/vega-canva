@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   barCountFor,
   calculateOptimalAudioWidth,
@@ -228,3 +228,36 @@ describe('calculateOptimalAudioWidth', () => {
   });
 });
 
+
+import { claimPlayback, currentPlayer, releasePlayback, seekSeconds, resampleWaveform as resample } from './audioPlayback';
+
+describe('seekSeconds', () => {
+  it('maps and clamps a pointer fraction', () => {
+    expect(seekSeconds(0.5, 20)).toBe(10);
+    expect(seekSeconds(-1, 20)).toBe(0);
+    expect(seekSeconds(2, 20)).toBe(20);
+    expect(seekSeconds(0.5, 0)).toBe(0);
+    expect(seekSeconds(Number.NaN, 20)).toBe(0);
+  });
+});
+
+describe('single playback slot', () => {
+  it('pauses the previous holder and ignores a stale release', () => {
+    const a = { pause: vi.fn() };
+    const b = { pause: vi.fn() };
+    claimPlayback(a);
+    claimPlayback(b);
+    expect(a.pause).toHaveBeenCalledTimes(1);
+    expect(b.pause).not.toHaveBeenCalled();
+    releasePlayback(a);
+    expect(currentPlayer()).toBe(b);
+    releasePlayback(b);
+    expect(currentPlayer()).toBeNull();
+  });
+});
+
+describe('waveform downsampling', () => {
+  it('keeps the loudest peak per bucket', () => {
+    expect(resample([0.1, 0.9, 0.2, 0.3, 0.8, 0.1], 3)).toEqual([0.9, 0.3, 0.8]);
+  });
+});

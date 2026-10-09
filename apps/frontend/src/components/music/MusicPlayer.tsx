@@ -15,7 +15,7 @@ const MusicPanel = lazy(() => import('./MusicPanel'));
  * and Spotify load the first time it is opened.
  */
 export const MusicButton: React.FC<{ className?: string }> = ({ className }) => {
-  const { playing, line } = usePlayingSignal();
+  const { playing, line, tint } = usePlayingSignal();
   const mini = useMiniMode();
   const showLine = mini && playing && line !== null;
   const [open, setOpen] = useState(false);
@@ -41,7 +41,7 @@ export const MusicButton: React.FC<{ className?: string }> = ({ className }) => 
         data-tooltip-pos="bottom"
         onClick={() => setOpen((v) => !v)}
       >
-        <VinylGlyph spinning={playing} size={18} />
+        <VinylGlyph spinning={playing} size={18} arm tint={tint} />
         {showLine && <span className="music-trigger__line">{line}</span>}
       </button>
       <span className="sr-only" role="status" aria-live="polite">

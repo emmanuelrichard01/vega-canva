@@ -9,14 +9,17 @@ import '../../media/voiceNote.css';
 import { localMediaType, useResolvedSrc } from '../../../utils/pendingMedia';
 import {
   barCountFor,
+  claimPlayback,
   clamp01,
   formatAuthorShortName,
   formatClock,
   fractionFromPointer,
   keyboardSeek,
   normalizeWaveform,
+  releasePlayback,
   resampleWaveform,
   resolveDurationMs,
+  seekSeconds,
 } from '../../../engine/model/audioPlayback';
 
 interface Props {
@@ -25,15 +28,6 @@ interface Props {
 
 /** Cycled by the speed control. Slower than 1× is absent by design. */
 const SPEEDS = [1, 1.5, 2] as const;
-
-/**
- * Only one voice note plays at a time.
- *
- * Two players talking over each other with no way to tell which to silence is
- * not a canvas-specific problem and does not get a canvas-specific answer.
- * It also means at most one frame loop is ever running for playback.
- */
-let nowPlaying: HTMLAudioElement | null = null;
 
 /**
  * Voice note player.
@@ -156,12 +150,16 @@ export const AudioRenderer: React.FC<Props> = React.memo(({ node }) => {
       if (!scrubbingRef.current) setCurrentSeconds(el.currentTime);
     };
     const onEnd = () => {
+      releasePlayback(el);
       setIsPlaying(false);
       setCurrentSeconds(0);
       el.currentTime = 0;
     };
     const onPlay = () => setIsPlaying(true);
-    const onPause = () => setIsPlaying(false);
+    const onPause = () => {
+      releasePlayback(el);
+      setIsPlaying(false);
+    };
     const onError = () => {
       setFailed(true);
       setIsPlaying(false);
@@ -227,7 +225,7 @@ export const AudioRenderer: React.FC<Props> = React.memo(({ node }) => {
   useEffect(() => {
     const el = audioRef.current;
     return () => {
-      if (nowPlaying === el) nowPlaying = null;
+      if (el) releasePlayback(el);
       el?.pause();
     };
   }, []);
@@ -239,8 +237,7 @@ export const AudioRenderer: React.FC<Props> = React.memo(({ node }) => {
       el.pause();
       return;
     }
-    if (nowPlaying && nowPlaying !== el) nowPlaying.pause();
-    nowPlaying = el;
+    claimPlayback(el);
     el.play().catch(() => {
       setFailed(true);
       setIsPlaying(false);
@@ -277,7 +274,7 @@ export const AudioRenderer: React.FC<Props> = React.memo(({ node }) => {
     (fraction: number) => {
       const el = audioRef.current;
       if (!el || !(durationSeconds > 0)) return;
-      const time = fraction * durationSeconds;
+      const time = seekSeconds(fraction, durationSeconds);
       setCurrentSeconds(time);
       if (Number.isFinite(time)) el.currentTime = time;
     },
@@ -475,7 +472,7 @@ export const AudioRenderer: React.FC<Props> = React.memo(({ node }) => {
             onClick={() => setSpeedIndex((i) => (i + 1) % SPEEDS.length)}
             data-raised={speed !== 1 || undefined}
             aria-label={`Speed ${speed} times. Click to change.`}
-            title="Playback speed"
+            data-tooltip="Playback speed"
           >
             {speed}×
           </button>

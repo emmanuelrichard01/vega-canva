@@ -215,3 +215,34 @@ export function calculateOptimalAudioWidth(name: string | undefined, durationMs?
   return Math.max(MIN_AUDIO_WIDTH, Math.min(MAX_DEFAULT_AUDIO_WIDTH, Math.round(totalCalculated)));
 }
 
+
+/** Seconds a pointer fraction lands on, clamped to the clip. Never NaN. */
+export function seekSeconds(fraction: number, durationSeconds: number): number {
+  if (!(durationSeconds > 0) || !Number.isFinite(fraction)) return 0;
+  return clamp01(fraction) * durationSeconds;
+}
+
+/** The slice of an audio element the playback slot needs. */
+export interface Pausable {
+  pause(): void;
+}
+
+let activePlayer: Pausable | null = null;
+
+/**
+ * Take the board's single playback slot, silencing whoever held it.
+ * Two voice notes never talk over each other.
+ */
+export function claimPlayback(player: Pausable): void {
+  if (activePlayer && activePlayer !== player) activePlayer.pause();
+  activePlayer = player;
+}
+
+/** Give the slot up (paused, ended, unmounted). A no-op for a non-holder. */
+export function releasePlayback(player: Pausable): void {
+  if (activePlayer === player) activePlayer = null;
+}
+
+export function currentPlayer(): Pausable | null {
+  return activePlayer;
+}

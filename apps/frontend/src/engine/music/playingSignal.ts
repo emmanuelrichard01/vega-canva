@@ -13,13 +13,15 @@ export interface PlayingSignal {
   playing: boolean;
   /** "Lo-fi · Late Rain", "Innovating Care by Aylex"; null when idle. */
   line: string | null;
+  /** The record label's colour: the station's accent or the album cover's average; absent for the neutral label. */
+  tint?: string | null;
 }
 
 let snapshot: PlayingSignal = { playing: false, line: null };
 const listeners = new Set<() => void>();
 
 export function setPlayingSignal(next: PlayingSignal): void {
-  if (next.playing === snapshot.playing && next.line === snapshot.line) return;
+  if (next.playing === snapshot.playing && next.line === snapshot.line && (next.tint ?? null) === (snapshot.tint ?? null)) return;
   snapshot = next;
   listeners.forEach((fn) => fn());
 }

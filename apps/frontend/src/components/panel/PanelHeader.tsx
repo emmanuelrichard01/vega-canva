@@ -90,11 +90,13 @@ function initials(name: string): string {
 }
 
 /**
- * One 40px row: what is selected, its name, who else has it, and its menu.
+ * One 40px row: what is selected, its name, who else has it, a lock, and
+ * its menu.
  *
  * The name is the same `title` the Layers panel renames, edited in place with
- * a single click. Arrange, flip and lock are in the ⋯ menu and on their
- * shortcuts; they are occasional commands, not the first thing to show.
+ * a single click. Lock is the one quick action shown, because a locked object
+ * explains why the board ignores your drags; arrange and flip are in the ⋯
+ * menu and on their shortcuts.
  */
 export const PanelHeader: React.FC<PanelHeaderProps> = ({
   nodes,
@@ -145,20 +147,6 @@ export const PanelHeader: React.FC<PanelHeaderProps> = ({
     { kind: 'item', id: 'flip-h', label: 'Flip horizontal', icon: <FlipHorizontal2 size={14} />, checked: flipped.x, onSelect: () => onFlip('x') },
     { kind: 'item', id: 'flip-v', label: 'Flip vertical', icon: <FlipVertical2 size={14} />, checked: flipped.y, onSelect: () => onFlip('y') },
   ];
-  if (canLock) {
-    entries.push(
-      { kind: 'separator', id: 'sep-lock' },
-      {
-        kind: 'item',
-        id: 'lock',
-        label: locked ? 'Unlock' : 'Lock',
-        icon: locked ? <Unlock size={14} /> : <Lock size={14} />,
-        shortcut: SHORTCUTS.lock,
-        onSelect: onToggleLock,
-      }
-    );
-  }
-
   const shownEditors = editors.slice(0, 3);
   const extra = editors.length - shownEditors.length;
   const editorsLabel =
@@ -169,7 +157,7 @@ export const PanelHeader: React.FC<PanelHeaderProps> = ({
   return (
     <header className="panel-head">
       <span className="panel-head__glyph" aria-hidden="true" data-tooltip={isMulti ? undefined : typeName}>
-        <Icon size={15} />
+        <Icon size={14} />
       </span>
       {editing && !isMulti ? (
         <input
@@ -222,11 +210,24 @@ export const PanelHeader: React.FC<PanelHeaderProps> = ({
           {extra > 0 && <span className="panel-head__avatar panel-head__avatar--more">+{extra}</span>}
         </span>
       )}
+      {canLock && (
+        <button
+          type="button"
+          className="pg-icon-btn panel-head__lock"
+          aria-pressed={locked}
+          aria-label={locked ? 'Unlock' : 'Lock'}
+          data-tooltip={locked ? 'Locked · click to unlock' : 'Lock'}
+          data-locked={locked || undefined}
+          onClick={onToggleLock}
+        >
+          {locked ? <Lock size={14} aria-hidden="true" /> : <Unlock size={14} aria-hidden="true" />}
+        </button>
+      )}
       <button
         ref={menuButton}
         type="button"
         className="pg-icon-btn"
-        aria-label="Arrange, flip and lock"
+        aria-label="Arrange and flip"
         aria-haspopup="menu"
         aria-expanded={menuOpen}
         data-tooltip="More"
@@ -248,7 +249,7 @@ export const PanelHeader: React.FC<PanelHeaderProps> = ({
       {menuOpen && menuButton.current && (
         <Menu
           entries={entries}
-          label="Arrange, flip and lock"
+          label="Arrange and flip"
           anchor={{ kind: 'rect', rect: menuButton.current.getBoundingClientRect(), align: 'end' }}
           onClose={() => setMenuOpen(false)}
         />

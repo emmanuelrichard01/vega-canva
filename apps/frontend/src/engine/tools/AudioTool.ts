@@ -399,6 +399,13 @@ export class AudioTool implements Tool {
       // Space pauses, the way it does in every transport control anywhere —
       // and the recording HUD is the only thing on screen at the time, so
       // there is nothing for it to conflict with.
+      const onControl = e.target instanceof HTMLElement && !!e.target.closest('button, input, textarea, [contenteditable]');
+      // Enter keeps the take — unless a focused control already owns the key.
+      if (e.key === 'Enter' && this.isRecording && !onControl) {
+        e.preventDefault();
+        this.stopRecording(ctx);
+        return;
+      }
       if (e.key === ' ' && this.isRecording) {
         e.preventDefault();
         this.togglePause(ctx);

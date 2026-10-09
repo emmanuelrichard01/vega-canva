@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { RotateCcw } from 'lucide-react';
+import { MousePointer2, RotateCcw } from 'lucide-react';
 import { useStore } from '../../../hooks/useStore';
 import { setBoardMetadata } from '../../../engine/document';
 import { isCssColor } from '../../../engine/text/cssColor';
@@ -80,6 +80,20 @@ export const BoardSection: React.FC = () => {
 
   return (
     <>
+      <div className="props-idle">
+        <span className="props-idle__mark" aria-hidden="true">
+          <MousePointer2 size={15} />
+        </span>
+        <div className="props-idle__copy">
+          <p className="props-idle__title">Nothing selected</p>
+          <p className="props-idle__text">
+            {count === 0
+              ? 'An empty board. Pick a tool from the dock to start.'
+              : 'Select an object to edit it. These settings apply to the whole board.'}
+          </p>
+        </div>
+      </div>
+
       <Section id="board-background" title="Background" subject="board">
         <Row label="Colour" hint="The board's own colour, seen by everyone in it. Reset follows the light or dark theme.">
           <ColorChip
@@ -122,12 +136,8 @@ export const BoardSection: React.FC = () => {
         </Row>
       </Section>
 
-      {count === 0 ? (
-        <Section id="board" title="Board" subject="board">
-          <Note>An empty board. Pick a tool from the dock to start.</Note>
-        </Section>
-      ) : (
-        <Section id="board-colours" title="Colours on this board" meta={colours.length || undefined} subject="board">
+      {count > 0 && (
+        <Section id="board-colours" title="Colours" meta={colours.length || undefined} subject="board">
           {colours.length === 0 ? (
             <Note>Nothing on the board is painted yet.</Note>
           ) : (
@@ -149,7 +159,7 @@ export const BoardSection: React.FC = () => {
         </Section>
       )}
       {styles.length > 0 && (
-        <Section id="board-type" title="Text styles on this board" meta={styles.length} subject="board">
+        <Section id="board-type" title="Text styles" meta={styles.length} subject="board">
           <ul className="board-styles">
             {styles.map((s) => (
               <li key={`${s.family}-${s.size}-${s.weight}`}>
