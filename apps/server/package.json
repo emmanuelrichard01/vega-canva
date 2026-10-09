@@ -18,7 +18,7 @@
     "@hocuspocus/extension-redis": "^4.7.0",
     "@hocuspocus/server": "^4.4.0",
     "@resvg/resvg-wasm": "^2.6.2",
-    "@sentry/node": "^10.73.0",
+    "@sentry/node": "^11.4.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "fontkit": "^2.0.4",
