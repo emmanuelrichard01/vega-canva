@@ -36,7 +36,7 @@
     "@types/fontkit": "^2.0.9",
     "@types/multer": "^2.3.0",
     "@types/multer-s3": "^3.0.3",
-    "@types/node": "^22.15.0",
+    "@types/node": "^26.6.5",
     "@types/pg": "^8.23.1",
     "@types/ws": "^8.18.2",
     "tsx": "^4.23.15",
