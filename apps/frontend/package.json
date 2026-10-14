@@ -48,7 +48,7 @@
     "@types/fontkit": "^2.0.9",
     "@types/lodash": "^4.17.25",
     "@types/matter-js": "^0.20.2",
-    "@types/node": "^24.13.2",
+    "@types/node": "^26.6.5",
     "@types/rbush": "^4.0.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
