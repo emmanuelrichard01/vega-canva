@@ -159,6 +159,9 @@ const LIBRARY_SHARED = new RegExp(
     '/engine/chart/expression\\.',
     '/engine/room/roomCode\\.',
     '/engine/export/(filenames|ExportTypes|DocumentImport|pendingRestore)\\.',
+    // The dashboard draws the logo too; left to `app-workspace` (the board shell
+    // uses it) it made the dashboard download the whole dock.
+    '/components/ui/Logo\\.',
   ].join('|')
 );
 
@@ -260,6 +263,8 @@ export default defineConfig(({ mode }) => ({
             { name: 'app-properties', priority: 10, test: inSource(/\/components\/(PropertiesPanel|panel\/)/) },
             { name: 'app-learn', priority: 10, test: inSource(/\/components\/learn\//) },
             { name: 'app-table', priority: 10, test: inSource(/\/components\/table\//) },
+            { name: 'app-canvas', priority: 10, test: inSource(/\/components\/(Canvas\.tsx|canvas\/|ObjectRenderer\.tsx)/) },
+            { name: 'app-workspace', priority: 10, test: inSource(/\/components\/workspace\//) },
           ],
         },
       },

@@ -29,6 +29,26 @@ export type CommenterVerdict = { ok: true } | { ok: false; reason: string };
 const OPEN_ROOTS = new Set(['comments', 'identities']);
 const NODE_KEYS_A_REACTION_SETS = new Set(['reactions', 'updatedAt']);
 
+/**
+ * Cache encoded snapshot of doc to avoid re-encoding multi-megabyte docs repeatedly.
+ * Automatically invalidated when the document changes via `doc.on('update')`.
+ */
+const docSnapshots = new WeakMap<Y.Doc, Uint8Array>();
+
+function getOrEncodeSnapshot(doc: Y.Doc): Uint8Array {
+  let cached = docSnapshots.get(doc);
+  if (!cached) {
+    cached = Y.encodeStateAsUpdate(doc);
+    docSnapshots.set(doc, cached);
+    const onUpdate = () => {
+      docSnapshots.delete(doc);
+      doc.off('update', onUpdate);
+    };
+    doc.on('update', onUpdate);
+  }
+  return cached;
+}
+
 function rootName(doc: Y.Doc, root: Y.AbstractType<any>): string | null {
   for (const [name, type] of doc.share) if (type === root) return name;
   return null;
@@ -59,9 +79,28 @@ function judge(name: string | null, path: string[], keys: Set<string | null>): s
 }
 
 export function commenterMayApply(doc: Y.Doc, update: Uint8Array): CommenterVerdict {
+  let decoded: { structs: any[]; ds: any };
+  try {
+    decoded = Y.decodeUpdate(update);
+  } catch {
+    return { ok: false, reason: 'unreadable update' };
+  }
+
+  // Fast pre-flight check: reject illegal root operations in O(1) without cloning or applying
+  for (const s of decoded.structs) {
+    if (typeof s.parent === 'string') {
+      if (!OPEN_ROOTS.has(s.parent)) {
+        if (s.parent === 'objects') {
+          return { ok: false, reason: 'adds or removes a node' };
+        }
+        return { ok: false, reason: `writes to "${s.parent}"` };
+      }
+    }
+  }
+
   const scratch = new Y.Doc({ gc: false });
   try {
-    Y.applyUpdate(scratch, Y.encodeStateAsUpdate(doc));
+    Y.applyUpdate(scratch, getOrEncodeSnapshot(doc));
 
     let refusal: string | null = null;
     scratch.on('afterTransaction', (tr: Y.Transaction) => {

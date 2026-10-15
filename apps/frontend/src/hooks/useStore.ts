@@ -794,6 +794,41 @@ function readGroups(objects: Record<string, AnyNode>): Groups {
   return canonicalGroups(Object.fromEntries(groupsMap.entries()) as Groups, parentsOf(objects));
 }
 
+function nodesEqual(a: AnyNode | undefined, b: AnyNode | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (
+    a.id !== b.id ||
+    a.type !== b.type ||
+    a.x !== b.x ||
+    a.y !== b.y ||
+    a.width !== b.width ||
+    a.height !== b.height ||
+    a.rotation !== b.rotation ||
+    a.zIndex !== b.zIndex ||
+    a.parentId !== b.parentId ||
+    a.locked !== b.locked ||
+    a.hidden !== b.hidden ||
+    a.updatedAt !== b.updatedAt
+  ) {
+    return false;
+  }
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const k of keysA) {
+    const valA = (a as any)[k];
+    const valB = (b as any)[k];
+    if (valA === valB) continue;
+    if (typeof valA === 'object' && valA !== null && typeof valB === 'object' && valB !== null) {
+      if (JSON.stringify(valA) !== JSON.stringify(valB)) return false;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
 /**
  * Read one node from the document in canonical form.
  *
@@ -854,6 +889,29 @@ export const initSyncBridge = () => {
     if (useStore.getState().isReplaying) return;
 
     useStore.setState((state) => {
+      if (changed.size === 0 && removed.size === 0) return state;
+
+      const actuallyRemoved: string[] = [];
+      removed.forEach((id) => {
+        if (id in state.objects) actuallyRemoved.push(id);
+      });
+
+      const actuallyChanged: Array<{ id: string; node: AnyNode }> = [];
+      changed.forEach((id) => {
+        const node = readCanonical(id);
+        if (!node) return;
+        const prev = state.objects[id];
+        if (!prev || !nodesEqual(prev, node)) {
+          actuallyChanged.push({ id, node });
+        }
+      });
+
+      // If no canonical node data actually changed or was removed, skip
+      // cloning the entire objects dictionary and avoid unnecessary subscriber updates.
+      if (actuallyRemoved.length === 0 && actuallyChanged.length === 0) {
+        return state;
+      }
+
       const objects = { ...state.objects };
       let objectCount = state.objectCount;
 
@@ -864,16 +922,14 @@ export const initSyncBridge = () => {
         if (parent && !groupsMap.has(parent)) groupsStale = true;
       };
 
-      removed.forEach((id) => {
+      actuallyRemoved.forEach((id) => {
         touch(objects[id]?.parentId);
         if (id in objects) objectCount -= 1;
         delete objects[id];
         sceneGraph.removeNode(id);
       });
 
-      changed.forEach((id) => {
-        const node = readCanonical(id);
-        if (!node) return;
+      actuallyChanged.forEach(({ id, node }) => {
         touch(objects[id]?.parentId);
         touch(node.parentId);
         if (!(id in objects)) objectCount += 1;
@@ -885,8 +941,8 @@ export const initSyncBridge = () => {
         objects,
         objectCount,
         version: state.version + 1,
-        lastChangedIds: [...changed],
-        lastRemovedIds: [...removed],
+        lastChangedIds: actuallyChanged.map((c) => c.id),
+        lastRemovedIds: actuallyRemoved,
         lastChangeLocal: local,
         ...(groupsStale ? { groups: readGroups(objects) } : null),
       };
