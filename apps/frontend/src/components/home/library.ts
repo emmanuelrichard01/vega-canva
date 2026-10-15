@@ -207,9 +207,15 @@ export const MIN_FOR_TIME_GROUPS = 16;
 /**
  * The boards, in the groups the page shows.
  *
- * Pinned boards lead, newest pin first, under their own heading — but only
- * when the library is being browsed. A search or a name sort is a question
- * with one answer, so it gets one flat list and pins do not reorder it.
+ * Pinned boards lead, newest pin first, inside the same grid as the rest —
+ * each carries a pin badge rather than a heading of its own, because a
+ * "Pinned" section over one or two boards spent a whole row of the page on a
+ * label. Only a library big enough for time headings (`MIN_FOR_TIME_GROUPS`)
+ * keeps a Pinned heading, since there the rows are full and the heading is
+ * how you find your way back to them.
+ *
+ * A search is a question with one answer, so it gets one flat list and pins
+ * do not reorder it.
  */
 export function libraryGroups(
   boards: readonly ShelfBoard[],
@@ -228,22 +234,35 @@ export function libraryGroups(
     .sort((a, b) => opts.pins[b.id] - opts.pins[a.id]);
   const rest = named.filter((b) => !opts.pins[b.id]);
 
-  const groups: LibraryGroup[] = [];
-  if (pinned.length) groups.push({ id: 'pinned', label: 'Pinned', boards: pinned });
-  if (rest.length === 0) return groups;
-
   if (opts.sort === 'name') {
-    groups.push({ id: 'all', label: pinned.length ? 'All boards' : '', boards: sortBoards(rest, 'name') });
-    return groups;
+    return named.length ? [{ id: 'all', label: '', boards: [...pinned, ...sortBoards(rest, 'name')] }] : [];
   }
 
   if (rest.length < MIN_FOR_TIME_GROUPS) {
-    groups.push({ id: 'recent', label: pinned.length ? 'Recent' : '', boards: sortBoards(rest, 'recent') });
-    return groups;
+    return named.length ? [{ id: 'recent', label: '', boards: [...pinned, ...sortBoards(rest, 'recent')] }] : [];
   }
 
+  const groups: LibraryGroup[] = [];
+  if (pinned.length) groups.push({ id: 'pinned', label: 'Pinned', boards: pinned });
   for (const group of groupBoards(rest, opts.now)) groups.push(group);
   return groups;
+}
+
+/** A library needs at least this many boards before "Continue" is worth a row. */
+export const MIN_FOR_CONTINUE = 4;
+
+/**
+ * The few boards most recently opened on this device, for the strip at the top.
+ *
+ * By when they were opened, whatever the grid is sorted by, and with local
+ * names applied. Empty below `MIN_FOR_CONTINUE`, where the strip would only
+ * repeat the whole library.
+ */
+export function continueBoards(boards: readonly ShelfBoard[], names: NameMap, count = 3): ShelfBoard[] {
+  if (boards.length < MIN_FOR_CONTINUE) return [];
+  return sortBoards(boards, 'recent')
+    .slice(0, count)
+    .map((b) => (names[b.id] ? { ...b, name: names[b.id].name } : b));
 }
 
 /* ------------------------------------------------------------- keyboard grid */

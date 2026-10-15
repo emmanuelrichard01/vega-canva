@@ -1346,6 +1346,7 @@ export const DIAGRAMS: Template[] = [
     teaches: ['Sequence diagram', 'Mermaid', 'Anchored connectors'],
     tags: ['sequence diagram', 'oauth', 'pkce', 'auth', 'security', 'uml', 'mermaid', 'login'],
     accent: 'violet',
+    featured: true,
     build: pkceSequence,
   },
   {
@@ -1356,6 +1357,7 @@ export const DIAGRAMS: Template[] = [
     teaches: ['ERD', 'Line ends', 'Tables', 'Code blocks'],
     tags: ['erd', 'schema', 'database', 'postgres', 'sql', 'data model', 'saas', 'multi-tenant'],
     accent: 'sky',
+    featured: true,
     build: saasSchema,
   },
   {

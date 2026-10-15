@@ -9,6 +9,8 @@ import {
   focusAfterRemoval,
   inviteExpired,
   libraryGroups,
+  continueBoards,
+  MIN_FOR_CONTINUE,
   mutatePins,
   mutateRecents,
   readNames,
@@ -35,22 +37,24 @@ describe('libraryGroups', () => {
     board('d', 'Delta', 10 * MIN),
   ];
 
-  it('leads with pinned boards, newest pin first, and keeps them out of the rest', () => {
+  it('puts pinned boards first in the one grid, newest pin first, with no heading', () => {
     const groups = libraryGroups(boards, { pins: { c: 1, b: 2 }, names: {}, sort: 'recent', query: '', now: NOW });
-    expect(groups[0]).toMatchObject({ id: 'pinned', label: 'Pinned' });
-    expect(groups[0].boards.map((b) => b.id)).toEqual(['b', 'c']);
-    const rest = groups.slice(1).flatMap((g) => g.boards.map((b) => b.id));
-    expect(rest).toEqual(['a', 'd']);
-  });
-
-  it('labels an otherwise unlabelled run that follows the pins', () => {
-    const groups = libraryGroups(boards, { pins: { c: 1 }, names: {}, sort: 'recent', query: '', now: NOW });
-    expect(groups[1].label).toBe('Recent');
+    expect(groups).toHaveLength(1);
+    expect(groups[0].label).toBe('');
+    expect(groups[0].boards.map((b) => b.id)).toEqual(['b', 'c', 'a', 'd']);
   });
 
   it('has no pinned group when nothing is pinned', () => {
     const groups = libraryGroups(boards, { pins: {}, names: {}, sort: 'recent', query: '', now: NOW });
     expect(groups.some((g) => g.id === 'pinned')).toBe(false);
+    expect(groups[0].boards.map((b) => b.id)).toEqual(['a', 'd', 'b', 'c']);
+  });
+
+  it('keeps a Pinned heading only once the library is big enough for time headings', () => {
+    const many = Array.from({ length: 20 }, (_, i) => board(`m${i}`, `Board ${i}`, i * DAY));
+    const groups = libraryGroups(many, { pins: { m7: 1 }, names: {}, sort: 'recent', query: '', now: NOW });
+    expect(groups[0]).toMatchObject({ id: 'pinned', label: 'Pinned' });
+    expect(groups[0].boards.map((b) => b.id)).toEqual(['m7']);
   });
 
   it('searches as one flat list that pins do not reorder, using local names', () => {
@@ -60,10 +64,30 @@ describe('libraryGroups', () => {
     expect(libraryGroups(boards, { pins: {}, names: {}, sort: 'recent', query: 'zzz', now: NOW })).toEqual([]);
   });
 
-  it('sorts by name after the pins', () => {
+  it('sorts by name after the pins, in the same grid', () => {
     const groups = libraryGroups(boards, { pins: { a: 1 }, names: {}, sort: 'name', query: '', now: NOW });
-    expect(groups.map((g) => g.label)).toEqual(['Pinned', 'All boards']);
-    expect(groups[1].boards.map((b) => b.name)).toEqual(['Bravo', 'Charlie', 'Delta']);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].boards.map((b) => b.name)).toEqual(['Alpha', 'Bravo', 'Charlie', 'Delta']);
+    const pinnedLast = libraryGroups(boards, { pins: { d: 1 }, names: {}, sort: 'name', query: '', now: NOW });
+    expect(pinnedLast[0].boards.map((b) => b.name)).toEqual(['Delta', 'Alpha', 'Bravo', 'Charlie']);
+  });
+});
+
+describe('continueBoards', () => {
+  const boards = [
+    board('a', 'Alpha', 5 * MIN),
+    board('b', 'Bravo', 2 * DAY),
+    board('c', 'Charlie', 40 * DAY),
+    board('d', 'Delta', 10 * MIN),
+  ];
+
+  it('is the three most recently opened, with local names', () => {
+    const list = continueBoards(boards, { d: { name: 'Roadmap', sent: false } });
+    expect(list.map((b) => b.name)).toEqual(['Alpha', 'Roadmap', 'Bravo']);
+  });
+
+  it('is empty for a library small enough to see whole', () => {
+    expect(continueBoards(boards.slice(0, MIN_FOR_CONTINUE - 1), {})).toEqual([]);
   });
 });
 

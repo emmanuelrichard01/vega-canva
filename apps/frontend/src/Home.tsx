@@ -19,13 +19,15 @@ import { QuickStart } from './components/home/QuickStart';
 import { TemplateCard } from './components/home/TemplateCard';
 import { TemplateGallery } from './components/home/TemplateGallery';
 import { TemplatePeek } from './components/home/TemplatePeek';
+import { TemplateBand } from './components/home/TemplateBand';
+import { ContinueStrip } from './components/home/ContinueStrip';
 import { searchTemplates } from './components/home/templateSearch';
 import { showcaseOf } from './components/home/templateFacts';
 import { useBoardStatus } from './components/home/useBoardStatus';
 import { useGridColumns } from './components/home/useGridColumns';
 import { useRovingGrid } from './components/home/useRovingGrid';
 import {
-  LIBRARY_KEYS, REMOVED_LIMIT, canEditBoard, cleanBoardName, displayName, focusAfterRemoval, insertAt, inviteExpired, libraryGroups,
+  LIBRARY_KEYS, REMOVED_LIMIT, canEditBoard, continueBoards, cleanBoardName, displayName, focusAfterRemoval, insertAt, inviteExpired, libraryGroups,
   mutateNames, mutatePins, mutateRecents, mutateRemoved, readNames, readPins, readRecents, readRemoved, reconcileName, togglePin,
   upsertRecent, type LibraryBoard, type NameMap, type PinMap, type RemovedBoard,
 } from './components/home/library';
@@ -46,6 +48,8 @@ const loadRemote = () => import('./components/home/remoteBoard');
 const VIEW_KEY = 'vega_home_view';
 const LAYOUT_KEY = 'vega_home_layout';
 const SORT_KEY = 'vega_home_sort';
+/** A library smaller than this gets the template band near the top instead of the seam at the foot. */
+const SMALL_LIBRARY = 6;
 
 type View = 'boards' | 'templates';
 
@@ -251,11 +255,22 @@ export const Home: React.FC = () => {
   const seamColumns = useHeldWhile(useGridColumns(seamGrid, 5), peekId !== null);
   const suggestedTemplates = useMemo(() => templatePool.slice(0, Math.max(1, seamColumns)), [templatePool, seamColumns]);
   const starters = useMemo(() => templatePool.slice(0, 3), [templatePool]);
+  /**
+   * The band a small library shows instead of the seam: a fixed list, so the
+   * peek (which narrows the stage) can never change which templates are in it.
+   */
+  const bandTemplates = useMemo(() => {
+    const first = FIRST_BOARD ? templateById(FIRST_BOARD) : undefined;
+    const lead = [...(first ? [first] : []), ...showcaseOf(TEMPLATES, 8)];
+    return [...new Set([...lead, ...TEMPLATES])].slice(0, 12);
+  }, []);
   /** Browsing every category, each one is a single row; its button shows the rest. */
   const [shelfGrid, setShelfGrid] = useState<HTMLDivElement | null>(null);
   const shelfColumns = useHeldWhile(useGridColumns(shelfGrid, 5), peekId !== null);
 
   const hasRooms = recentRooms.length > 0;
+  /** Below this many boards the templates come up the page, as a band. */
+  const smallLibrary = recentRooms.length < SMALL_LIBRARY;
 
   /** The templates on screen, in the order they appear — what the peek steps through. */
   const visibleTemplates = useMemo<Template[]>(() => {
@@ -264,13 +279,15 @@ export const Home: React.FC = () => {
       return [...featured, ...CATEGORIES.flatMap((c) => rest.filter((t) => t.category === c.id).slice(0, shelfColumns))];
     }
     if (!hasRooms) return starters;
-    return query.trim() ? [] : suggestedTemplates;
-  }, [view, showFeatured, rest, featured, shelfColumns, hasRooms, starters, query, suggestedTemplates]);
+    if (query.trim()) return [];
+    return smallLibrary ? bandTemplates : suggestedTemplates;
+  }, [view, showFeatured, rest, featured, shelfColumns, hasRooms, starters, query, smallLibrary, bandTemplates, suggestedTemplates]);
 
   const boardGroups = useMemo(
     () => libraryGroups(recentRooms, { pins, names, sort, query }),
     [recentRooms, pins, names, sort, query]
   );
+  const continuing = useMemo(() => (query.trim() ? [] : continueBoards(recentRooms, names)), [recentRooms, names, query]);
 
   const peekTemplate = peekId ? TEMPLATES.find((t) => t.id === peekId) ?? null : null;
   const peekIndex = peekTemplate ? visibleTemplates.findIndex((t) => t.id === peekTemplate.id) : -1;
@@ -859,6 +876,8 @@ export const Home: React.FC = () => {
     </div>
   ) : (
     <>
+      <ContinueStrip boards={continuing} statusOf={statusOf} pinned={pinnedSet} onOpen={(_board, cover) => armCover(cover)} />
+      {continuing.length > 0 && !boardGroups[0]?.label && <h2 className="lgroup__lead">All boards</h2>}
       {listHead}
       {boardGroups.map((group) => (
         <section key={group.id} className="lgroup" aria-label={group.label || 'Your boards'}>
@@ -891,6 +910,16 @@ export const Home: React.FC = () => {
           </div>
         </section>
       ))}
+      {smallLibrary && !query.trim() && (
+        <TemplateBand
+          templates={bandTemplates}
+          total={TEMPLATES.length}
+          peekId={peekId}
+          onPeek={peek}
+          onUse={openTemplate}
+          onBrowse={() => goTemplates(null)}
+        />
+      )}
     </>
   );
 
@@ -1219,7 +1248,7 @@ export const Home: React.FC = () => {
             </section>
           )}
 
-          {view === 'boards' && hasRooms && !query.trim() && (
+          {view === 'boards' && hasRooms && !smallLibrary && !query.trim() && (
             <section className="lseam" aria-labelledby="lseam-title">
               <header className="lseam__head">
                 <h2 className="lseam__title" id="lseam-title">Start from a template</h2>

@@ -2124,7 +2124,6 @@ export const DATA: Template[] = [
     teaches: ['Histograms', 'Density curves', 'Shaded integrals', 'Seeded data'],
     tags: ['probability', 'statistics', 'normal', 'poisson', 'binomial', 'exponential', 'clt', 'teaching'],
     accent: 'indigo',
-    featured: true,
     build: distributionsBoard,
   },
   {
@@ -2145,7 +2144,6 @@ export const DATA: Template[] = [
     teaches: ['Pen paths', 'Polar plots', 'Parametric plots', 'Equations'],
     tags: ['maths', 'geometry', 'polar', 'parametric', 'golden ratio', 'chaos', 'art'],
     accent: 'rose',
-    featured: true,
     build: curvesBoard,
   },
   {

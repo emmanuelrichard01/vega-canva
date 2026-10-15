@@ -9070,6 +9070,81 @@ body[data-rulers='off'] {
   color: var(--text-secondary);
 }
 
+/* ## A board this device has never opened
+   A generated composition (`home/generatedCover.ts`) on paper tinted from its
+   key note colour. The ground and the ink are the only theme-dependent parts;
+   the notes keep their paper colours, pulled down a step in dark the way the
+   board pulls them down. */
+.cover--gen {
+  --gc-paper: #FCFBF8;
+  --gc-ink: #2B2F38;
+  --gc-dot: rgba(30, 33, 40, 0.11);
+  --gc-frame: rgba(255, 255, 255, 0.72);
+  --gc-shadow: rgba(30, 33, 40, 0.1);
+  background-color: color-mix(in srgb, var(--gc-key, #FFE9A8) 30%, var(--gc-paper));
+  background-image: radial-gradient(circle, var(--gc-dot) 1px, transparent 1.2px);
+  background-size: 12px 12px;
+  color: var(--gc-ink);
+}
+
+.dark-theme .cover--gen {
+  --gc-paper: #16181D;
+  --gc-ink: #D9DCE3;
+  --gc-dot: rgba(255, 255, 255, 0.08);
+  --gc-frame: rgba(255, 255, 255, 0.035);
+  --gc-shadow: rgba(0, 0, 0, 0.35);
+  background-color: color-mix(in srgb, var(--gc-key, #FFE9A8) 9%, var(--gc-paper));
+}
+
+.cover__gen {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.dark-theme .cover__gen { filter: brightness(0.9) saturate(0.92); }
+
+.gc-frame {
+  fill: var(--gc-frame);
+  stroke: currentColor;
+  stroke-opacity: 0.22;
+  stroke-width: 0.6;
+}
+
+.gc-frame__label { fill: currentColor; opacity: 0.32; }
+
+.gc-link path {
+  fill: none;
+  stroke: currentColor;
+  stroke-opacity: 0.62;
+  stroke-width: 1.1;
+  stroke-linecap: round;
+}
+
+.gc-link polygon { fill: currentColor; fill-opacity: 0.62; }
+
+.gc-note__shadow { fill: var(--gc-shadow); }
+
+/* The one deep shape stays deep in dark, where the palette ink would sink
+   into the ground: lifted to its own paper colour instead. */
+.dark-theme .gc-shape { filter: brightness(2.4) saturate(0.7); }
+
+/* Small and in the corner: an explanation for anyone who wonders, not the
+   subject of the picture. Secondary ink on the primary surface clears AA. */
+.cover__hint--gen {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-primary) 88%, transparent);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 /* ------------------------------------------------------ properties rows --- */
 
 /* A fixed label column, so every control in the panel starts at the same x.
@@ -10003,7 +10078,8 @@ html.dark-theme,
   gap: var(--space-5);
   /* The top padding clears the masthead, so a short window scrolls the card
      rather than sliding it under the wordmark. */
-  padding: calc(var(--space-8) + 48px) clamp(var(--space-6), 6vw, 72px) var(--space-8);
+  /* Symmetric, so the card centres on the pane rather than 24px below it. */
+  padding: calc(var(--space-8) + 48px) clamp(var(--space-6), 6vw, 72px);
   border-left: 1px solid var(--lib-line);
   overflow-y: auto;
 }
@@ -10016,7 +10092,8 @@ html.dark-theme,
 .auth__card {
   width: 100%;
   max-width: 380px;
-  margin: 0 auto;
+  /* Auto on every side: centred in the pane, and a short window scrolls the card instead of clipping its top. */
+  margin: auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
@@ -10052,515 +10129,194 @@ html.dark-theme,
 }
 
 /* ===========================================================================
-   THE SHOWCASE — what this is, in the one free moment
+   THE SHOWCASE — a board with people on it
    ---------------------------------------------------------------------------
-   This absorbed the three-beat welcome card that used to open over the board.
-   Same ideas, said while somebody types their name instead of one screen later
-   on the surface whose whole promise is not being interrupted.
-
-   Everything animated is `transform`, `opacity` and `filter`, so none of it
-   causes layout while the app behind is still mounting.
+   The left half of the way in is a live mini-board (`AuthShowcase`): a frame
+   of notes, a selected shape, two connected shapes, three named cursors. One
+   calm twelve-second loop, transform and opacity only plus the connector's
+   dash, paused with the tab and still under reduced motion. Every animated
+   piece rests at its finished position, so the still is the composed frame.
    =========================================================================== */
-
-/* ## Why this pane is centred rather than padded
-   The column was left-aligned against a `clamp(…, 5vw, 76px)` padding and
-   capped at 460px, so on a 1512px screen the art sat in the top-left of a
-   795px-wide pane and about a third of the product's first screen was gradient
-   with nothing in it. Read as a panel whose content had failed to load rather
-   than as a composition.
-
-   `align-items: center` puts the stage and its progress rail on one optical
-   axis and lets the column take the width the pane actually has. The column is
-   still capped — a 700px measure would break the body text — but it is capped
-   at a size that fills this half instead of a size that fits the old one. */
 .showcase {
   position: relative;
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  gap: var(--space-6);
+  gap: var(--space-8);
   padding: clamp(var(--space-6), 4vw, 64px);
   overflow: hidden;
   isolation: isolate;
 
-  /* ## The ground, as tokens
-     It was a hardcoded near-black with a light ink, which made the whole left
-     half of the first screen ignore the theme the person had just been asked
-     to choose two hundred pixels to its right. A panel that argues with the
-     setting beside it is worse than one with no setting at all.
-
-     Light is not the dark one inverted. Inverting gives a white panel next to a
-     white form, which is two blank halves and a hairline: the split stops
-     reading as a composition. So light is a *warm tinted page* -- paper with
-     colour blooming through it -- against the cool neutral of the form. The
-     two halves are then different materials, which is the thing that made the
-     dark version work in the first place. */
-  --showcase-bg: #FBF7F2;
+  /* Warm paper against the cool form column in light; near-black in dark. The
+     two halves read as two materials either way. */
+  --showcase-bg: #F6F1EA;
   --showcase-ink: #1A1613;
-  --showcase-accent: var(--brand-orange, #F3A024);
-  /* The three fields. Warm, cool and neutral, so the wash has a temperature
-     range rather than being one colour at three opacities. */
-  --showcase-glow-a: #F3A024;
-  --showcase-glow-b: #6B8CFF;
-  --showcase-glow-c: #FF7A59;
-  --showcase-glow-a-o: 0.2;
-  --showcase-glow-b-o: 0.14;
-  --showcase-glow-c-o: 0.1;
-  --showcase-grain-o: 0.24;
-  --showcase-vignette: 26%;
-  --showcase-hairline: 8%;
-
+  --sc-board: #FFFFFF;
+  --sc-dot: rgba(26, 22, 19, 0.13);
+  --sc-ink: #2A2F3A;
+  --sc-frame: rgba(26, 22, 19, 0.025);
+  --sc-frame-line: rgba(26, 22, 19, 0.16);
+  --sc-hero: #1F2937;
+  --sc-hero-ink: #FFFFFF;
+  --sc-cast: rgba(26, 22, 19, 0.12);
   background: var(--showcase-bg);
+  /* The board's dot grid, faint, so the pane is the canvas the board sits on. */
+  background-image: radial-gradient(circle, rgba(26, 22, 19, 0.07) 1px, transparent 1.2px);
+  background-size: 22px 22px;
   color: var(--showcase-ink);
 }
 
 .dark-theme .showcase {
-  --showcase-bg: #0A0C12;
-  --showcase-ink: #F6F7F9;
-  /* Dimmer in the dark, not brighter. A field at the same opacity over a
-     near-black ground has four times the contrast it had over paper, and the
-     whole panel starts to glow like a screensaver. */
-  --showcase-glow-a-o: 0.26;
-  --showcase-glow-b-o: 0.2;
-  --showcase-glow-c-o: 0.12;
-  --showcase-grain-o: 0.3;
-  --showcase-vignette: 52%;
-  --showcase-hairline: 11%;
+  --showcase-bg: #0B0D12;
+  --showcase-ink: #F3F4F6;
+  --sc-board: #16191F;
+  --sc-dot: rgba(255, 255, 255, 0.09);
+  --sc-ink: #D9DCE3;
+  --sc-frame: rgba(255, 255, 255, 0.025);
+  --sc-frame-line: rgba(255, 255, 255, 0.16);
+  --sc-hero: #E9ECF3;
+  --sc-hero-ink: #16191F;
+  --sc-cast: rgba(0, 0, 0, 0.4);
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.05) 1px, transparent 1.2px);
 }
 
-/* Three soft fields on a slow drift.
-   Two was the first version and it read as a gradient with a wobble. Three at
-   different sizes, rates and directions never quite repeat against each other,
-   which is what makes a still panel feel lit rather than painted -- and none of
-   them is bright enough to be the thing you look at, which is the requirement:
-   this is the room, not the subject. */
-.showcase__wash {
-  position: absolute;
-  inset: -25%;
-  z-index: -1;
-  pointer-events: none;
-}
-
-.showcase__field {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(110px);
-  will-change: transform;
-}
-
-.showcase__field--one {
-  width: 64%;
-  aspect-ratio: 1;
-  bottom: -6%;
-  right: -10%;
-  background: var(--showcase-glow-a);
-  opacity: var(--showcase-glow-a-o);
-  animation: showcaseFieldA 26s ease-in-out infinite alternate;
-}
-
-.showcase__field--two {
-  width: 58%;
-  aspect-ratio: 1;
-  top: -14%;
-  left: -12%;
-  background: var(--showcase-glow-b);
-  opacity: var(--showcase-glow-b-o);
-  animation: showcaseFieldB 34s ease-in-out infinite alternate;
-}
-
-.showcase__field--three {
-  width: 42%;
-  aspect-ratio: 1;
-  top: 34%;
-  left: 46%;
-  background: var(--showcase-glow-c);
-  opacity: var(--showcase-glow-c-o);
-  animation: showcaseFieldC 44s ease-in-out infinite alternate;
-}
-
-@keyframes showcaseFieldA {
-  from { transform: translate3d(0, 0, 0) scale(1); }
-  to   { transform: translate3d(-8%, -7%, 0) scale(1.16); }
-}
-
-@keyframes showcaseFieldB {
-  from { transform: translate3d(0, 0, 0) scale(1.1); }
-  to   { transform: translate3d(9%, 8%, 0) scale(0.92); }
-}
-
-@keyframes showcaseFieldC {
-  from { transform: translate3d(0, 0, 0) scale(0.9); }
-  to   { transform: translate3d(-12%, 10%, 0) scale(1.2); }
-}
-
-/* Grain.
-   A fill this large bands across the gradient behind it, and grain is what
-   breaks it up. Generated rather than fetched: a turbulence filter in a data
-   URI is a couple of hundred bytes and needs no request, where a noise tile is
-   a file to ship and a round trip to wait for.
-
-   `soft-light` rather than `overlay`, because overlay over a pale ground
-   crushes the highlights into dirt. Soft-light keeps its hand off both ends. */
-.showcase__grain {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  opacity: var(--showcase-grain-o);
-  mix-blend-mode: soft-light;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
-}
-
-/* A vignette, so the corners fall away and the type is the brightest thing.
-   In light it darkens; in dark it darkens further. Either way it is the same
-   direction of travel -- towards the ground colour -- so one rule with a token
-   for its strength covers both, and a light panel does not need a white
-   vignette that would wash its own edges out. */
-.showcase__vignette {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background: radial-gradient(
-    118% 88% at 50% 40%,
-    transparent 44%,
-    color-mix(in srgb, #000 var(--showcase-vignette), transparent) 100%
-  );
-}
-
-.showcase__stage {
-  position: relative;
-  /* The stage holds its own height so the four beats can be stacked without
-     the panel resizing as they swap. Tall enough for the longest of them at
-     the narrowest column this pane is ever given.
-
-     Keyed to the viewport as well as to a ceiling: the art below is allowed to
-     grow with the window, so a fixed 460 would either clip the picture on a
-     tall screen or reserve dead space on a short one. */
-  width: min(540px, 100%);
-  min-height: clamp(400px, 60vh, 580px);
-}
-
-/* Three beats in one place, one of them on screen.
-   Keyed remounting gave each an entrance and no exit: the outgoing text
-   vanished on a frame boundary and the incoming text rose into the hole. That
-   reads as a slideshow. Stacking them means the two overlap, which is what a
-   dissolve is. */
-.showcase__beat {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  pointer-events: none;
-}
-
-.showcase__beat[data-state="idle"] { opacity: 0; visibility: hidden; }
-
-.showcase__beat[data-state="active"] { pointer-events: auto; }
-
-/* The stagger is one authored moment, not an effect on every element: the art,
-   then the claim, then the detail, which is the order they should be read in
-   and the only reason it exists. */
-.showcase__beat[data-state="active"] .showcase__frame,
-.showcase__beat[data-state="active"] .showcase__title,
-.showcase__beat[data-state="active"] .showcase__body {
-  animation: showcaseRise 760ms var(--ease-settle) both;
-}
-
-/* Three steps now the kicker is gone, and the gaps reclose rather than leaving
-   the hole it used to fill: art, claim, detail. */
-.showcase__beat[data-state="active"] .showcase__frame { animation-delay: 60ms; }
-.showcase__beat[data-state="active"] .showcase__title { animation-delay: 180ms; }
-.showcase__beat[data-state="active"] .showcase__body  { animation-delay: 270ms; }
-
-/* Leaving is faster than arriving and moves the other way. Symmetrical timing
-   makes a swap feel like a hesitation; the eye should be released quickly and
-   caught slowly. */
-.showcase__beat[data-state="leaving"] > * {
-  animation: showcaseFall 420ms var(--ease-settle) both;
-}
-
-@keyframes showcaseRise {
-  from { opacity: 0; transform: translateY(18px); filter: blur(6px); }
-  to   { opacity: 1; transform: none; filter: none; }
-}
-
-@keyframes showcaseFall {
-  from { opacity: 1; transform: none; filter: none; }
-  to   { opacity: 0; transform: translateY(-14px); filter: blur(4px); }
-}
-
-/* The picture carries the pane, so it is sized by the pane and by the window's
-   height — `aspect-ratio` against a `max-height` shrinks the width to keep the
-   drawing's proportions rather than letting a short window crop it. */
-.showcase__frame {
-  width: 100%;
-  aspect-ratio: 320 / 220;
-  max-height: 42vh;
-  margin-bottom: var(--space-5);
-  border-radius: var(--radius-2xl);
-  /* A hairline rather than a border: the art is drawn on the same dark ground,
-     and a real border would draw a box around a picture whose whole point is
-     that it does not end. The wash inside it is a single stop of lift, which
-     is what separates the frame from the panel without fencing it. */
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--showcase-ink) var(--showcase-hairline), transparent);
-  background:
-    linear-gradient(
-      to bottom,
-      color-mix(in srgb, var(--showcase-ink) 5%, transparent),
-      color-mix(in srgb, var(--showcase-ink) 1.5%, transparent)
-    );
+/* The board: one surface, one elevation (a shadow, no border). Sized by the
+   pane and by the window's height, so a short window shrinks it rather than
+   cropping it. */
+.showcase__board {
+  width: min(640px, 100%, calc((100vh - 260px) * 600 / 440));
+  aspect-ratio: 600 / 440;
+  border-radius: 20px;
+  background: var(--sc-board);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 24px 60px -18px rgba(26, 22, 19, 0.28);
   overflow: hidden;
+  animation: authRise 720ms var(--ease-settle) both;
 }
 
-.showcase__art { display: block; width: 100%; height: 100%; }
+.dark-theme .showcase__board {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 28px 70px -20px rgba(0, 0, 0, 0.7);
+}
 
-/* `.showcase__eyebrow` was here. It is gone on purpose and must not come back —
-   see the note on the `Beat` interface in `auth/AuthShowcase.tsx`. It was an
-   uppercase kicker in brand orange over the heading it labelled: banned by the
-   No Eyebrow Rule, and 2.1:1 against this ground. */
+.sc-board { display: block; width: 100%; height: 100%; }
+
+.sc-label { fill: var(--sc-ink); opacity: 0.7; }
+.sc-frame { fill: var(--sc-frame); stroke: var(--sc-frame-line); stroke-width: 1; }
+.sc-cast { fill: var(--sc-cast); }
+.sc-hero { fill: var(--sc-hero); }
+.sc-hero-ink { fill: var(--sc-hero-ink); }
+.sc-hero-rule { fill: var(--sc-hero-ink); opacity: 0.35; }
+
+.sc-link {
+  fill: none;
+  stroke: var(--sc-ink);
+  stroke-width: 2.25;
+  stroke-linecap: round;
+}
+
+.sc-link-head { fill: var(--sc-ink); }
+
+.showcase__caption {
+  max-width: 440px;
+  text-align: center;
+}
 
 .showcase__title {
   margin: 0;
-  font-size: clamp(27px, 2.7vw, 36px);
+  font-size: var(--text-xl);
   font-weight: 650;
-  line-height: 1.1;
-  letter-spacing: -0.035em;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
   text-wrap: balance;
+  color: var(--showcase-ink);
 }
 
 .showcase__body {
-  margin: 0;
-  max-width: 44ch;
-  color: color-mix(in srgb, var(--showcase-ink) 68%, transparent);
+  margin: var(--space-2) 0 0;
   font-size: var(--text-md);
-  line-height: 1.62;
+  line-height: 1.55;
+  text-wrap: pretty;
+  color: color-mix(in srgb, var(--showcase-ink) 72%, var(--showcase-bg));
 }
 
-/* The progress rail. Each tick fills over the beat's own duration, so the
-   panel never changes without having said it was about to, which is the whole
-   difference between an auto-advancing panel and one that steals the page. */
-.showcase__rail {
-  display: flex;
-  gap: 8px;
-  margin-top: var(--space-4);
+/* ## The loop
+   Twelve seconds: Ada carries a note in and sets it down, Kai draws the
+   connector from Research to Launch, Noor drifts by the shape she has
+   selected. The note and the connector fade together at the end and the loop
+   starts clean. Paths along the connector are linear so the hand and the line
+   stay together; everything else eases. */
+@media (prefers-reduced-motion: no-preference) {
+  .sc-hand--ada { animation: scAda 12s cubic-bezier(0.45, 0, 0.25, 1) infinite; }
+  .sc-placed {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: scPlace 12s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+  }
+  .sc-hand--kai { animation: scKai 12s cubic-bezier(0.45, 0, 0.25, 1) infinite; }
+  .sc-link {
+    stroke-dasharray: 1;
+    animation: scDraw 12s linear infinite;
+  }
+  .sc-link-head { animation: scHead 12s linear infinite; }
+  .sc-hand--noor { animation: scNoor 12s ease-in-out infinite; }
+
+  .showcase[data-paused] .sc-board *,
+  .showcase[data-paused] .showcase__board { animation-play-state: paused; }
 }
 
-.showcase__tick {
-  width: 46px;
-  height: 3px;
-  padding: 0;
-  border: none;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--showcase-ink) 16%, transparent);
-  cursor: pointer;
-  overflow: hidden;
-  transition: background-color var(--motion-hover);
+@keyframes scAda {
+  0%       { transform: translate(250px, -190px); }
+  30%, 40% { transform: translate(0, 0); }
+  68%      { transform: translate(46px, 52px); }
+  100%     { transform: translate(250px, -190px); }
 }
 
-.showcase__tick:hover { background: color-mix(in srgb, var(--showcase-ink) 30%, transparent); }
-
-.showcase__tick-fill {
-  display: block;
-  width: 100%;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--showcase-ink);
-  transform-origin: left center;
-  transform: scaleX(0);
+@keyframes scPlace {
+  0%       { transform: translate(250px, -190px) rotate(-6deg) scale(1.06); opacity: 0; }
+  6%       { opacity: 1; }
+  30%      { transform: translate(0, 0) rotate(-6deg) scale(1.06); }
+  38%      { transform: translate(0, 0) rotate(0) scale(1); }
+  88%      { transform: none; opacity: 1; }
+  96%, 100% { transform: none; opacity: 0; }
 }
 
-.showcase__tick.is-active .showcase__tick-fill { transform: scaleX(1); }
-.showcase__tick-fill[data-running] { animation: showcaseTick 7000ms linear both; }
-
-@keyframes showcaseTick {
-  from { transform: scaleX(0); }
-  to   { transform: scaleX(1); }
+@keyframes scKai {
+  0%       { transform: translate(-150px, 96px); }
+  30%, 38% { transform: translate(-170px, 50px); animation-timing-function: linear; }
+  44%      { transform: translate(-119px, 42px); animation-timing-function: linear; }
+  50%      { transform: translate(-85px, 25px); animation-timing-function: linear; }
+  56%      { transform: translate(-50px, 8px); animation-timing-function: linear; }
+  62%, 72% { transform: translate(0, 0); }
+  86%      { transform: translate(24px, 46px); }
+  100%     { transform: translate(-150px, 96px); }
 }
 
-/* --------------------------------------------------------------- the art */
-
-/* One direction, for ever. The first version drifted back and forth, which is a
-   field of dots wobbling and says the opposite of the sentence beside it. The
-   tile is drawn wider than the frame and moved by exactly one cell period, so
-   the loop point cannot be seen and the field simply keeps going. */
-.showcase__drift { animation: showcaseDrift 9s linear infinite; }
-
-@keyframes showcaseDrift {
-  from { transform: translate3d(0, 0, 0); }
-  to   { transform: translate3d(18px, 18px, 0); }
+@keyframes scDraw {
+  0%, 38%  { stroke-dashoffset: 1; opacity: 1; }
+  62%, 90% { stroke-dashoffset: 0; opacity: 1; }
+  97%      { stroke-dashoffset: 0; opacity: 0; }
+  100%     { stroke-dashoffset: 1; opacity: 0; }
 }
 
-/* Two rates, which is what makes two rectangles read as two depths. */
-.showcase__near { animation: showcaseFloatNear 11s var(--ease-settle) infinite alternate; }
-.showcase__far  { animation: showcaseFloatFar 16s var(--ease-settle) infinite alternate-reverse; }
-
-@keyframes showcaseFloatNear {
-  from { transform: translate3d(0, 0, 0); }
-  to   { transform: translate3d(9px, -12px, 0); }
+@keyframes scHead {
+  0%, 59%  { opacity: 0; }
+  63%, 90% { opacity: 1; }
+  97%, 100% { opacity: 0; }
 }
 
-@keyframes showcaseFloatFar {
-  from { transform: translate3d(0, 0, 0); }
-  to   { transform: translate3d(4px, -5px, 0); }
-}
-
-/* Something arriving from outside the frame, once a loop. Nothing else in the
-   picture says you can keep going; a block that comes in from off the edge
-   does. */
-.showcase__arrive { animation: showcaseArrive 9s var(--ease-settle) infinite; }
-
-@keyframes showcaseArrive {
-  0%, 12%   { opacity: 0; transform: translate3d(64px, -22px, 0); }
-  38%, 78%  { opacity: 1; transform: none; }
-  96%, 100% { opacity: 0; transform: translate3d(0, -10px, 0); }
-}
-
-/* One cursor wanders; the other is holding something.
-   `hand--b` and the block it carries share a duration, a curve and an offset,
-   which is the only reason the pair reads as one gesture rather than as two
-   things that happen to be moving. Change one and change the other. */
-/* Selected, not moving. A ring that drifted would be a third thing in motion
-   and would stop reading as "somebody has this". It breathes instead, which is
-   what the board's own selection does while nobody is dragging it. */
-.showcase__picked { animation: showcasePicked 5.5s var(--ease-settle) infinite; }
-
-@keyframes showcasePicked {
-  0%, 100% { opacity: 0.86; }
-  50%      { opacity: 1; }
-}
-
-.showcase__hand--a { animation: showcaseHandA 9s var(--ease-settle) infinite alternate; }
-.showcase__hand--b { animation: showcaseHandB 10.5s var(--ease-settle) infinite alternate; }
-
-/* Ada holds the card she is dragging: her tip is on its bottom-left corner and
-   her chip hangs below it, in open ground. Same offset and same curve as the
-   card, which is the only reason the pair reads as one gesture. */
-@keyframes showcaseHandA {
-  from { transform: translate(164px, 180px); }
-  to   { transform: translate(186px, 162px); }
-}
-
-/* Kai is beside what he has selected rather than on it: his chip needs sixty
-   clear units and the card is already ringed. */
-@keyframes showcaseHandB {
-  from { transform: translate(56px, 122px); }
-  to   { transform: translate(84px, 140px); }
-}
-
-/* Carried. A cursor that only travels is a decoration; one that moves
-   something is the claim being made.
-   The scale-on-lift that was here has gone: it broke the registration with the
-   pointer holding the corner, which is a case of an effect undoing the thing it
-   was decorating. Same duration and curve as `hand--b`, deliberately. */
-.showcase__carried {
-  animation: showcaseCarry 10.5s var(--ease-settle) infinite alternate;
-}
-
-@keyframes showcaseCarry {
-  0%   { transform: translate(0, 0); }
-  100% { transform: translate(22px, -18px); }
-}
-
-/* The thread that breaks and rejoins. `stroke-dashoffset` rather than opacity:
-   the claim is that the two halves come back together, and a line that fades
-   out and back in is a line that was never severed. */
-.showcase__thread--live {
-  stroke-dasharray: 340;
-  animation: showcaseThread 10s var(--ease-settle) infinite;
-}
-
-@keyframes showcaseThread {
-  0%   { stroke-dashoffset: 340; }
-  34%  { stroke-dashoffset: 0; }
-  54%  { stroke-dashoffset: 0; }
-  70%  { stroke-dashoffset: -170; }
-  100% { stroke-dashoffset: -340; }
-}
-
-/* The merge arriving: a short bright dash running the whole length once the
-   halves have met. It is the part people actually worry about, so it is the
-   part that gets a moment of its own rather than being implied. */
-.showcase__pulse {
-  stroke-dasharray: 26 314;
-  opacity: 0;
-  animation: showcasePulseRun 10s linear infinite;
-}
-
-@keyframes showcasePulseRun {
-  0%, 36%   { stroke-dashoffset: 340; opacity: 0; }
-  40%       { opacity: 0.85; }
-  56%       { stroke-dashoffset: 0; opacity: 0.85; }
-  62%, 100% { stroke-dashoffset: 0; opacity: 0; }
-}
-
-.showcase__join { animation: showcaseJoin 10s var(--ease-settle) infinite; }
-
-@keyframes showcaseJoin {
-  0%, 26% { opacity: 0; transform: scale(0.4); transform-origin: 160px 74px; }
-  38%     { opacity: 1; transform: scale(1.12); transform-origin: 160px 74px; }
-  46%     { opacity: 1; transform: scale(1); transform-origin: 160px 74px; }
-  66%     { opacity: 1; transform: scale(1); transform-origin: 160px 74px; }
-  100%    { opacity: 0; transform: scale(0.4); transform-origin: 160px 74px; }
-}
-
-/* The hand-drawn shape, drawing itself. `pathLength` normalises the two marks
-   so one rule covers a rectangle and an ellipse of different real lengths. */
-.showcase__pen path {
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: showcasePen 7s var(--ease-settle) infinite;
-}
-
-.showcase__pen path:nth-child(2) { animation-delay: 0.5s; }
-
-@keyframes showcasePen {
-  0%       { stroke-dashoffset: 1; }
-  26%      { stroke-dashoffset: 0; }
-  86%      { stroke-dashoffset: 0; }
-  100%     { stroke-dashoffset: 1; }
-}
-
-.showcase__node--a { animation: showcasePulse 5s var(--ease-settle) infinite; }
-.showcase__node--b { animation: showcasePulse 5s var(--ease-settle) 2.5s infinite; }
-
-@keyframes showcasePulse {
-  0%, 100% { opacity: 0.5; }
-  50%      { opacity: 1; }
+@keyframes scNoor {
+  0%, 100% { transform: translate(0, 0); }
+  30%      { transform: translate(-26px, -58px); }
+  60%      { transform: translate(48px, -78px); }
+  80%      { transform: translate(18px, -18px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* Every loop stops and every beat resolves to its finished state. The panel
-     advances on click only in this mode: `AuthShowcase` never starts its timer,
-     so there is nothing here that has to freeze mid-transition. */
-  .showcase__field,
-  .showcase__picked,
-  .showcase__pen path,
-  .showcase__drift,
-  .showcase__near,
-  .showcase__far,
-  .showcase__arrive,
-  .showcase__hand--a,
-  .showcase__hand--b,
-  .showcase__carried,
-  .showcase__thread--live,
-  .showcase__pulse,
-  .showcase__join,
-  .showcase__node--a,
-  .showcase__node--b,
-  .showcase__tick-fill,
-  .showcase__beat > *,
+  .showcase__board,
   .auth__card,
   .auth__footnote { animation: none !important; }
-  .showcase__beat[data-state="leaving"] { opacity: 0; }
-  .showcase__thread--live { stroke-dasharray: none; }
-  .showcase__pulse { opacity: 0; }
-  .showcase__pen path { stroke-dasharray: none; stroke-dashoffset: 0; }
-  .showcase__arrive,
-  .showcase__join { opacity: 1; }
 }
+
 
 /* ------------------------------------------------- the look, asked for once */
 

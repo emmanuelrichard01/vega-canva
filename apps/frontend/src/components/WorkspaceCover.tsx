@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { loadPreview, previewPolygonPoints, type BoardPreview } from '../engine/model/boardPreview';
+import { GEN_H, GEN_W, generateCover } from './home/generatedCover';
 
 interface Props {
   workspaceId: string;
@@ -287,14 +288,92 @@ export const WorkspaceCover: React.FC<Props> = React.memo(({ workspaceId, name, 
    * replaced — and two boards with nothing on them should look alike, because
    * they are alike.
    */
-  const seen = preview !== null;
+  if (preview !== null) {
+    return (
+      <div className="cover cover--empty" role="img" aria-label={`${name}, an empty board`}>
+        <span className="cover__hint">Nothing on it yet</span>
+      </div>
+    );
+  }
 
-  return (
-    <div className="cover cover--empty" role="img" aria-label={seen ? `${name}, an empty board` : `${name}, not opened on this device`}>
-      <span className="cover__hint">
-        {seen ? 'Nothing on it yet' : 'Not opened on this device'}
-      </span>
-    </div>
-  );
+  /**
+   * Never opened here: a generated cover rather than a grey box.
+   *
+   * For a new person's library that is most of the tiles, and a wall of "not
+   * opened" placeholders read as a page that had failed to load. The picture
+   * is seeded from the board (`home/generatedCover`), so it is stable and tells
+   * boards apart without claiming to be their content, and the hint stays in
+   * the corner, small, for anyone wondering why it is not the real one.
+   */
+  return <GeneratedArt workspaceId={workspaceId} name={name} />;
 });
 WorkspaceCover.displayName = 'WorkspaceCover';
+
+const GeneratedArt: React.FC<{ workspaceId: string; name: string }> = ({ workspaceId, name }) => {
+  const cover = useMemo(() => generateCover(workspaceId, name), [workspaceId, name]);
+  return (
+    <div
+      className="cover cover--gen"
+      role="img"
+      aria-label={`${name}, not opened on this device yet`}
+      style={{ '--gc-key': cover.key } as React.CSSProperties}
+    >
+      <svg className="cover__gen" viewBox={`0 0 ${GEN_W} ${GEN_H}`} preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+        {cover.elements.map((el, i) => {
+          switch (el.k) {
+            case 'frame':
+              return (
+                <g key={i}>
+                  <rect x={el.x} y={el.y - 5} width={el.label} height={2} rx={1} className="gc-frame__label" />
+                  <rect x={el.x} y={el.y} width={el.w} height={el.h} rx={2.5} className="gc-frame" />
+                </g>
+              );
+            case 'link':
+              return (
+                <g key={i} className="gc-link">
+                  <path d={el.d} />
+                  <polygon points={el.head} />
+                </g>
+              );
+            case 'shape': {
+              if (el.form === 'ellipse') {
+                return <ellipse key={i} cx={el.x + el.w / 2} cy={el.y + el.h / 2} rx={el.w / 2} ry={el.h / 2} fill={el.fill} className="gc-shape" />;
+              }
+              if (el.form === 'diamond') {
+                const cx = el.x + el.w / 2;
+                const cy = el.y + el.h / 2;
+                return <polygon key={i} points={`${cx},${el.y} ${el.x + el.w},${cy} ${cx},${el.y + el.h} ${el.x},${cy}`} fill={el.fill} className="gc-shape" />;
+              }
+              return <rect key={i} x={el.x} y={el.y} width={el.w} height={el.h} rx={4} fill={el.fill} className="gc-shape" />;
+            }
+            case 'note': {
+              const cx = el.x + el.w / 2;
+              const cy = el.y + el.h / 2;
+              return (
+                <g key={i} transform={`rotate(${el.rot} ${cx} ${cy})`}>
+                  <rect x={el.x + 0.5} y={el.y + 1.2} width={el.w} height={el.h} rx={1.6} className="gc-note__shadow" />
+                  <rect x={el.x} y={el.y} width={el.w} height={el.h} rx={1.6} fill={el.fill} stroke={el.edge} strokeWidth={0.5} />
+                  {Array.from({ length: el.lines }).map((_, k) => (
+                    <rect
+                      key={k}
+                      x={el.x + el.w * 0.16}
+                      y={el.y + el.h * (0.24 + k * 0.2)}
+                      width={el.w * (k === el.lines - 1 && el.lines > 1 ? 0.42 : 0.66)}
+                      height={1.3}
+                      rx={0.65}
+                      fill={el.ink}
+                      opacity={0.42}
+                    />
+                  ))}
+                </g>
+              );
+            }
+            default:
+              return null;
+          }
+        })}
+      </svg>
+      <span className="cover__hint cover__hint--gen">Not opened here yet</span>
+    </div>
+  );
+};

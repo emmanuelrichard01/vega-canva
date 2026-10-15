@@ -176,7 +176,7 @@ export const AuthModal: React.FC = () => {
               exist. The question is the shortest form of itself and the line
               under it says only what it can deliver. */}
           <p className="auth__lede">
-            It&rsquo;s how everyone else on the board sees you.
+            One infinite canvas, shared live with your team. Your name is how they see you on it.
           </p>
         </div>
 

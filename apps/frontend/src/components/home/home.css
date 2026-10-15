@@ -717,3 +717,252 @@
   min-height: 44px;
   min-width: 44px;
 }
+
+/* ----------------------------------------------------------- pinned badge */
+
+/* Pinned boards lead the one grid; the badge on the picture says why. Shadow
+   only, no border: elevation declared once. */
+.bcard__pinbadge {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+  pointer-events: none;
+}
+
+[data-contrast='more'] .bcard__pinbadge { box-shadow: inset 0 0 0 1px var(--border-strong); }
+
+/* ------------------------------------------------- continue where you left off */
+
+.lcont { margin-bottom: var(--space-12); }
+
+.lcont__title,
+.lgroup__lead {
+  margin: 0 0 var(--space-4);
+  color: var(--text-primary);
+  font-size: var(--text-lg);
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.lcont__row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-5);
+}
+
+.lcont__card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  isolation: isolate;
+}
+
+.lcont__art {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--radius-xl);
+  background: var(--surface-secondary);
+  box-shadow: inset 0 0 0 1px var(--lib-line, var(--border-divider));
+  transition: transform var(--motion-hover), box-shadow var(--motion-hover);
+}
+
+.lcont__art .cover { width: 100%; height: 100%; }
+
+.lcont__card:hover .lcont__art {
+  transform: translateY(-2px);
+  box-shadow: inset 0 0 0 1px var(--border-strong), var(--shadow-md);
+}
+
+.lcont__card:has(.lcont__link:focus-visible) .lcont__art {
+  box-shadow:
+    inset 0 0 0 1px var(--border-strong),
+    0 0 0 2px var(--surface-canvas),
+    0 0 0 4px var(--focus-ring-color);
+}
+
+.lcont__body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--space-3) 2px 0;
+  min-width: 0;
+}
+
+.lcont__link {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  outline: none;
+}
+
+.lcont__link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: var(--radius-xl);
+}
+
+.lib .lcont__link:focus-visible { box-shadow: none; }
+
+.lcont__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px var(--space-3);
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.lcont__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+
+/* Narrow, the strip scrolls sideways rather than stacking three large
+   pictures above the library. */
+@media (max-width: 720px) {
+  .lcont__row {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: 78%;
+    gap: var(--space-3);
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    margin-inline: calc(-1 * var(--space-4));
+    padding: 4px var(--space-4) 6px;
+    scroll-padding-inline: var(--space-4);
+  }
+
+  .lcont__row::-webkit-scrollbar { display: none; }
+  .lcont__card { scroll-snap-align: start; }
+}
+
+/* ------------------------------------------------------ the template band */
+
+.lband { margin-top: var(--space-12); }
+
+.lband__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.lband__title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-lg);
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.lband__tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.lband__arrows { display: none; gap: 4px; }
+
+@media (hover: hover) and (pointer: fine) {
+  .lband__arrows { display: inline-flex; }
+}
+
+.lband__arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  border: 1px solid var(--lib-line, var(--border-strong));
+  border-radius: 50%;
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover), opacity var(--motion-hover);
+}
+
+.lband__arrow:hover:not(:disabled) { background: var(--surface-hover); }
+.lband__arrow:disabled { opacity: 0.4; cursor: default; }
+.lband__arrow:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 1px; box-shadow: none; }
+
+/* The edge with more behind it fades, so the band says it keeps going. */
+.lband__viewport {
+  --fade: 56px;
+  margin-inline: -8px;
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--fade), #000 calc(100% - var(--fade)), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 var(--fade), #000 calc(100% - var(--fade)), transparent 100%);
+}
+
+.lband__viewport[data-at-start] {
+  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - var(--fade)), transparent 100%);
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - var(--fade)), transparent 100%);
+}
+
+.lband__viewport[data-at-end] {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--fade), #000 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 var(--fade), #000 100%);
+}
+
+.lband__viewport[data-at-start][data-at-end] { -webkit-mask-image: none; mask-image: none; }
+
+.lband__track {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: clamp(248px, 26vw, 320px);
+  gap: var(--space-5);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scroll-padding-inline: 8px;
+  scrollbar-width: none;
+  /* Room for the hover lift and the focus ring, which the scroller would clip. */
+  padding: 8px 8px 10px;
+}
+
+.lband__track::-webkit-scrollbar { display: none; }
+
+.lband__track > .gcard { scroll-snap-align: start; }
+
+.lband .gcard__chips { display: none; }
+
+.lband .gcard__blurb {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@media (max-width: 720px) {
+  .lband__track { grid-auto-columns: 80%; gap: var(--space-3); }
+  .lband__viewport { --fade: 28px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lcont__art { transition: none; }
+}

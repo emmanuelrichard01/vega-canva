@@ -110,13 +110,13 @@ export const TEMPLATES: Template[] = [
  * The gallery's showcase, in order: ids of `featured` boards to lead with.
  * Featured boards not listed follow in category order, one per category.
  */
-export const SHOWCASE: readonly string[] = ['art-vega-hero', 'systems-youtube', 'data-saas-metrics', 'slides-pitch', 'design-dashboard', 'systems-rag'];
+export const SHOWCASE: readonly string[] = ['systems-youtube', 'diagrams-oauth-pkce-sequence', 'systems-rag', 'diagrams-saas-schema', 'data-saas-metrics', 'art-vega-hero'];
 
 /**
- * The board offered first to somebody with nothing yet: friendly, quick to
- * read and broad in what it shows. Falls back to the first showcase board.
+ * The board offered first to somebody with nothing yet: a real system, quick
+ * to read, drawn the way its engineers would. Falls back to the first showcase board.
  */
-export const FIRST_BOARD: string | null = 'product-q3-planning';
+export const FIRST_BOARD: string | null = 'systems-youtube';
 
 const BY_ID = new Map<string, Template>();
 TEMPLATES.forEach((template) => { if (!BY_ID.has(template.id)) BY_ID.set(template.id, template); });

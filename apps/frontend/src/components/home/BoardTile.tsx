@@ -115,14 +115,17 @@ export const BoardTile: React.FC<Props> = ({
       <div className="bcard__art" ref={artRef}>
         <WorkspaceCover workspaceId={board.id} name={board.name} preview={preview} />
         {layout === 'grid' && liveChip}
+        {/* Pinned boards lead the grid; the badge says why this one is first. */}
+        {layout === 'grid' && pinned && (
+          <span className="bcard__pinbadge" role="img" aria-label="Pinned">
+            <Pin size={12} aria-hidden="true" />
+          </span>
+        )}
       </div>
 
       {layout === 'grid' ? (
         <div className="bcard__body">
-          <h3 className="bcard__title">
-            {name}
-            {pinned && !renaming && <Pin size={12} className="bcard__pin" aria-label="Pinned" role="img" />}
-          </h3>
+          <h3 className="bcard__title">{name}</h3>
           <p className="bcard__meta" id={`bmeta-${board.id}`}>
             {changed && <span className="bcard__fresh" aria-hidden="true" />}
             {gridMeta}
